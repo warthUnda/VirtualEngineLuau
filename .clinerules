@@ -1,0 +1,64 @@
+# cline Custom Instructions
+
+## Workflow Command System (`/` shortcuts)
+
+The user can invoke predefined workflows by typing `/workflowname` (e.g., `/map-script`) followed by any required arguments.
+
+### How it works
+1. When the user types a command starting with `/`, treat the first word as the workflow name (e.g., `/map-script` maps to `map-script`).
+2. Look for a corresponding markdown file in `.agent/workflows/{workflowname}.md`.
+3. Execute the steps defined in that workflow file.
+4. Any text after the workflow name is passed as arguments to the workflow.
+
+### Available Workflows
+- `/map-script` — Reads a target script and creates/updates a skill file in `.agent/skills/`. Usage: `/map-script path/to/script.luau`
+- `/system-map` — Generates a visual directory tree of a given path showing folders and files with technical summaries. Usage: `/system-map src/server/`
+- `/lint` — Runs selene (Roblox Luau linter) on a specific script. Usage: `/lint path/to/script.luau`
+- `/check` — Reads and analyzes a script for bugs, syntax errors, and potential issues, then reports findings. Usage: `/check path/to/script.luau`
+- `/refactor` — Reads a script and suggests or applies refactoring improvements. Usage: `/refactor path/to/script.luau`
+- `/summarize` — Reads a script and prints a concise summary of what it does (no file creation). Usage: `/summarize path/to/script.luau`
+- `/build` — Builds the project using Rojo. Usage: `/build`
+
+### How to add a new workflow
+To create a new `/` command:
+1. Create a new `.md` file in `.agent/workflows/{command-name}.md`
+2. Add the workflow definition to the "Available Workflows" section above.
+3. The workflow file must follow the Antigravity standard layout: start with a required YAML frontmatter description, followed by a `# Workflow: ...` heading, and an ordered `## Steps` section.
+
+---
+
+## Workflow Definitions
+
+### 1. `.agent/workflows/map-script.md`
+---
+description: Reads a single script and builds an isolated functional skill file to optimize future token context windows.
+---
+# Workflow: Map Script to Skill
+
+## Steps
+1. **Identify the Target Script**: Locate the script specified by the user's argument. If the path is relative or just a file name, locate it in the workspace first.
+2. **Ingest and Analyze**: Read the target script using the file-viewing tool. Break down its remote events, functions, state attributes, local variables, dependencies, and side effects.
+3. **Generate Skill File**: Create a directory under `.agent/skills/` named after the script (e.g., `.agent/skills/chunk-generation/`). Create a `SKILL.md` file inside using this exact template:
+
+```markdown
+---
+name: [script-name]-mechanics
+description: Architectural map and logic breakdown of the [ScriptName] script. Read this to understand how it handles [core responsibility] and coordinates with other systems.
+---
+# [ScriptName] Mechanics Map
+
+## Overview
+[Brief summary of what the script does and why it exists.]
+
+## Key Entry Points & Event Listeners
+- **[Event/Remote Name]**: [What triggers it and what it does]
+
+## Core Logic & Functions
+- **[FunctionName]**: [Purpose and return values/effects]
+
+## State & Dependencies
+- **State Tracked**: [e.g., PlayerState, attributes, local variables]
+- **Dependencies**: [e.g., SpeedController, ModelMath]
+
+## Important Gotchas
+- [Highlight any non-obvious behavior, bugs to avoid, or performance notes]

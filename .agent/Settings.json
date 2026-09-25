@@ -1,0 +1,5 @@
+{
+    "project.default.model": "gemini-3.1-flash-lite",
+    "generation.temperature": 0.0,
+    "agent.thinking.level": "low"
+}

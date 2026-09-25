@@ -1,0 +1,13 @@
+# Exclude directories from AI indexing and code intelligence in Antigravity IDE
+/Packages/
+/ServerPackages/
+sourcemap.json
+*.lock
+*.rbxlx
+
+# User-requested exclusions
+/src/server/SpeedController/
+/src/shared/
+/src/client/
+/FREDCode/
+/.vscode/

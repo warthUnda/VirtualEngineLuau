@@ -1,3 +1,6 @@
+--!native
+--!optimize 2
+
 local Workspace = game:WaitForChild("Workspace")
 
 local PartStore = require(game.StarterPlayer.StarterPlayerScripts.Client.Renderer.Stores.PartStores)

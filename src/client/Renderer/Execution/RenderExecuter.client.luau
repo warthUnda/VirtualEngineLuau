@@ -1,200 +1,96 @@
--- Services
-local AssetService = game:GetService("AssetService")
-local RunService = game:GetService("RunService")
-local Workspace = game:GetService("Workspace")
+--!native
+--!optimize 2
 
--- Screen Dimensions
-local WIDTH = 320
-local HEIGHT = 240
-local TOTAL_PIXELS = WIDTH * HEIGHT
-local BUFFER_SIZE = TOTAL_PIXELS * 4
+-- Caching --
+local ClearTable = table.clear
+local Floor = math.floor
 
-local Player = game:GetService("Players").LocalPlayer
-local PlayerGui = Player:WaitForChild("PlayerGui")
+local Round = math.round
 
--- References
-local imageLabel = PlayerGui:WaitForChild("ScreenGui").ImageLabel
-local camera = Workspace.CurrentCamera
+-- Static References --
+local Player = game:GetService("Players").LocalPlayer :: Player
+local PlayerGui = Player:WaitForChild("PlayerGui") :: PlayerGui
 
-local PartStore = require(game.StarterPlayer.StarterPlayerScripts.Client.Renderer.Stores.PartStores)
+local Camera = workspace.CurrentCamera :: Camera
 
--- Output Screen EditableImage
-local editableImage = AssetService:CreateEditableImage({
+local ImageLabel = PlayerGui:WaitForChild("ScreenGui").ImageLabel :: ImageLabel
+
+-- Services --
+local AssetService = game:GetService("AssetService") :: AssetService
+local RunService = game:GetService("RunService") :: RunService
+
+local MathModule = require(game.StarterPlayer.StarterPlayerScripts.Client.Renderer.Execution.MathModule) :: ModuleScript
+local RenderConfigs = require(game.StarterPlayer.StarterPlayerScripts.Client.Renderer.RenderConfigs) :: ModuleScript
+local PartStore = require(game.StarterPlayer.StarterPlayerScripts.Client.Renderer.Stores.PartStores) :: ModuleScript
+
+-- Configs
+local WIDTH = 240 :: number
+local HEIGHT = 120 :: number
+local TOTAL_PIXELS = WIDTH * HEIGHT :: number
+local BUFFER_SIZE = TOTAL_PIXELS * 4 :: number
+
+local PixelBuffer = buffer.create(BUFFER_SIZE) :: buffer
+local ZBuffer = table.create(TOTAL_PIXELS, 1000.0) :: { number }
+
+local PART_TRIANGLES = RenderConfigs.GetPartTriangles() :: { { number } }
+
+local WorldVertices = table.create(8)
+
+-- CONNECTING IMAGE + EDITABLE IMAGE
+local EditableImage = AssetService:CreateEditableImage({
 	Size = Vector2.new(WIDTH, HEIGHT),
-})
-imageLabel.ImageContent = Content.fromObject(editableImage)
-
--- Screen Buffers
-local pixelBuffer = buffer.create(BUFFER_SIZE)
-local zBuffer = table.create(TOTAL_PIXELS, 1000.0)
+}) :: EditableImage
+ImageLabel.ImageContent = Content.fromObject(EditableImage) :: Content
 
 -- ============================================================================
--- 1. GEOMETRY SETUP
+-- 1. RENDER LOOP
 -- ============================================================================
-
-local PART_TRIANGLES = {
-	{ 1, 3, 2 },
-	{ 1, 4, 3 }, -- Back
-	{ 5, 6, 7 },
-	{ 5, 7, 8 }, -- Front
-	{ 1, 2, 6 },
-	{ 1, 6, 5 }, -- Bottom
-	{ 3, 4, 8 },
-	{ 3, 8, 7 }, -- Top
-	{ 1, 5, 8 },
-	{ 1, 8, 4 }, -- Left
-	{ 2, 3, 7 },
-	{ 2, 7, 6 }, -- Right
-}
-
-local function getPartWorldVertices(part)
-	local cf = part.CFrame
-	local size = part.Size
-	local hX, hY, hZ = size.X / 2, size.Y / 2, size.Z / 2
-
-	return {
-		cf * Vector3.new(-hX, -hY, -hZ),
-		cf * Vector3.new(hX, -hY, -hZ),
-		cf * Vector3.new(hX, hY, -hZ),
-		cf * Vector3.new(-hX, hY, -hZ),
-		cf * Vector3.new(-hX, -hY, hZ),
-		cf * Vector3.new(hX, -hY, hZ),
-		cf * Vector3.new(hX, hY, hZ),
-		cf * Vector3.new(-hX, hY, hZ),
-	}
-end
-
-local function projectWorldPointToScreen(worldPoint, camCFrame, fovY)
-	local camLocalPoint = camCFrame:PointToObjectSpace(worldPoint)
-	local z = -camLocalPoint.Z
-	if z <= 0.1 then
-		return nil
-	end
-
-	local fovRad = math.rad(fovY)
-	local focalLength = (HEIGHT / 2) / math.tan(fovRad / 2)
-
-	local screenX = math.floor((camLocalPoint.X / z) * focalLength + (WIDTH / 2))
-	local screenY = math.floor((-camLocalPoint.Y / z) * focalLength + (HEIGHT / 2))
-
-	return { screenX, screenY, z }
-end
-
--- ============================================================================
--- 2. RASTERIZER (FLAT COLORED)
--- ============================================================================
-
-local function clearBuffers()
-	for i = 1, TOTAL_PIXELS do
-		zBuffer[i] = 1000.0
-		local offset = (i - 1) * 4
-		buffer.writeu8(pixelBuffer, offset + 0, 15)
-		buffer.writeu8(pixelBuffer, offset + 1, 15)
-		buffer.writeu8(pixelBuffer, offset + 2, 20)
-		buffer.writeu8(pixelBuffer, offset + 3, 255)
-	end
-end
-
-local function edgeFunction(ax, ay, bx, by, px, py)
-	return (px - ax) * (by - ay) - (py - ay) * (bx - ax)
-end
-
-local function drawTriangle(v0, v1, v2, r, g, b)
-	local x0, y0, z0 = v0[1], v0[2], v0[3]
-	local x1, y1, z1 = v1[1], v1[2], v1[3]
-	local x2, y2, z2 = v2[1], v2[2], v2[3]
-
-	local area = edgeFunction(x0, y0, x1, y1, x2, y2)
-	if area <= 0 then
-		return
-	end
-
-	local invZ0, invZ1, invZ2 = 1 / z0, 1 / z1, 1 / z2
-
-	local minX = math.max(0, math.min(x0, x1, x2))
-	local maxX = math.min(WIDTH - 1, math.max(x0, x1, x2))
-	local minY = math.max(0, math.min(y0, y1, y2))
-	local maxY = math.min(HEIGHT - 1, math.max(y0, y1, y2))
-
-	for y = minY, maxY do
-		for x = minX, maxX do
-			local w0 = edgeFunction(x1, y1, x2, y2, x, y)
-			local w1 = edgeFunction(x2, y2, x0, y0, x, y)
-			local w2 = edgeFunction(x0, y0, x1, y1, x, y)
-
-			if w0 >= 0 and w1 >= 0 and w2 >= 0 then
-				local l0 = w0 / area
-				local l1 = w1 / area
-				local l2 = w2 / area
-
-				local interpolatedInvZ = l0 * invZ0 + l1 * invZ1 + l2 * invZ2
-				local currentZ = 1 / interpolatedInvZ
-
-				local bufferIdx = (y * WIDTH + x) + 1
-
-				if currentZ < zBuffer[bufferIdx] then
-					zBuffer[bufferIdx] = currentZ
-
-					local screenOffset = (y * WIDTH + x) * 4
-					buffer.writeu8(pixelBuffer, screenOffset + 0, r)
-					buffer.writeu8(pixelBuffer, screenOffset + 1, g)
-					buffer.writeu8(pixelBuffer, screenOffset + 2, b)
-					buffer.writeu8(pixelBuffer, screenOffset + 3, 255)
-				end
-			end
-		end
-	end
-end
-
--- ============================================================================
--- 3. RENDER LOOP
--- ============================================================================
-
-for i, targetPart: BasePart in pairs(game.Workspace:GetDescendants()) do
-	if not targetPart:IsA("BasePart") then
-		continue
-	end
-	targetPart.Transparency = 1
-end
 
 RunService.RenderStepped:Connect(function()
-	clearBuffers()
+	const Clock = os.clock() :: number
+	MathModule.ClearBuffers(TOTAL_PIXELS, PixelBuffer, ZBuffer)
 
-	local PartArray = PartStore.ReturnArray()
+	local PartArray = PartStore.ReturnArray() :: { BasePart }
+
+	const CamCFrame = Camera.CFrame :: CFrame
+	const CamFOV = Camera.FieldOfView :: number
+
+	local ScreenVertices = {} :: { Vector2 }
 
 	for i = 1, #PartArray do
-		local targetPart = PartArray[i]
+		const TargetPart = PartArray[i] :: BasePart
 
-		if not targetPart then
+		if not TargetPart then
 			continue
 		end
 
-		local camCFrame = camera.CFrame
-		local camFOV = camera.FieldOfView
-
 		-- Fetch target part's current color (0-255 scale)
-		local partColor = targetPart.Color
-		local r = math.floor(partColor.R * 255)
-		local g = math.floor(partColor.G * 255
-		local b = math.floor(partColor.B * 255)
+		const PartColor = TargetPart.Color :: Color3
+		const R = Floor(PartColor.R * 255) :: number
+		const G = Floor(PartColor.G * 255) :: number
+		const B = Floor(PartColor.B * 255) :: number
 
-		local wrldVertices = getPartWorldVertice(targetPart)
-		local screenVertices = {}
+		MathModule.GetPartWorldVertices(TargetPart, WorldVertices) -- needs its own caching table in the future
 
-		for i, worldPos in ipairs(worldVertices) do
-			screenVertices[i] = projectWorldPointToScreen(worldPos, camCFrame, camFOV)
+		for i, WorldPos in ipairs(WorldVertices) do
+			ScreenVertices[i] =
+				MathModule.ProjectWorldPointToScreen(WorldPos, CamCFrame, CamFOV, WIDTH, HEIGHT) :: Vector3
 		end
 
-		for _, tri in ipairs(PART_TRIANGLES) do
-			local v0 = screenVertices[tri[1]]
-			local v1 = screenVertices[tri[2]]
-			local v2 = screenVertices[tri[3]]
+		for TriangleIndex = 1, #PART_TRIANGLES do
+			const tri = PART_TRIANGLES[TriangleIndex] :: { number }
+			const v0 = ScreenVertices[tri[1]] :: Vector3
+			const v1 = ScreenVertices[tri[2]] :: Vector3
+			const v2 = ScreenVertices[tri[3]] :: Vector3
 
-			if v0 and v1 and v2 the
-				drawTriangle(v0, v1, v2, r, g, b
+			if v0 and v1 and v2 then
+				MathModule.DrawTriangle(v0, v1, v2, R, G, B, WIDTH, HEIGHT, PixelBuffer, ZBuffer)
 			end
 		end
+
+		ClearTable(ScreenVertices)
 	end
 
-	editableImage:WritePixelsBuffer(Vector2.zero, Vector2.new(WIDTH, HEIGHT), pixelBuffer)
+	EditableImage:WritePixelsBuffer(Vector2.zero, Vector2.new(WIDTH, HEIGHT), PixelBuffer)
+	print("Rendering took " .. (os.clock() - Clock) .. " seconds")
 end)

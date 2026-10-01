@@ -20,6 +20,17 @@ local BufferWriteU8 = buffer.writeu8
 
 -- Pointer array functions
 
+local function BufferPixelWrite(PixelBuffer: buffer, screenOffset: number, r: number, g: number, b: number, a: number)
+	BufferWriteU8(PixelBuffer, screenOffset + 0, r)
+	BufferWriteU8(PixelBuffer, screenOffset + 1, g)
+	BufferWriteU8(PixelBuffer, screenOffset + 2, b)
+	BufferWriteU8(PixelBuffer, screenOffset + 3, a)
+end
+
+local function FailFunction()
+	return 2
+end
+
 local function Interpolation(
 	Area: number,
 	invZ0: number,
@@ -32,7 +43,7 @@ local function Interpolation(
 	x: number,
 	WIDTH: number,
 	ZBuffer: { number }
-): number
+)
 	const l0 = w0 / Area :: number
 	const l1 = w1 / Area :: number
 	const l2 = w2 / Area :: number
@@ -42,24 +53,11 @@ local function Interpolation(
 
 	const bufferIdx = (y * WIDTH + x) + 1 :: number
 
-	const isTrueBit = (ZBuffer[bufferIdx] > currentZ and 1 or 2) :: number
+	const isTrueBit = (ZBuffer[bufferIdx] > currentZ and BufferPixelWrite or FailFunction)
 	ZBuffer[bufferIdx] = Min(ZBuffer[bufferIdx], currentZ)
 
 	return isTrueBit
 end
-
-local function FailFunction()
-	return 2
-end
-
-local function BufferPixelWrite(PixelBuffer: buffer, screenOffset: number, r: number, g: number, b: number, a: number)
-	BufferWriteU8(PixelBuffer, screenOffset + 0, r)
-	BufferWriteU8(PixelBuffer, screenOffset + 1, g)
-	BufferWriteU8(PixelBuffer, screenOffset + 2, b)
-	BufferWriteU8(PixelBuffer, screenOffset + 3, a)
-end
-
-local BufferWriteTable = { BufferPixelWrite, FailFunction }
 
 function HelperFunction.EdgeFunction(ax: number, ay: number, bx: number, by: number, px: number, py: number): number
 	return (px - ax) * (by - ay) - (py - ay) * (bx - ax)
@@ -137,9 +135,9 @@ function HelperFunction.DrawTriangle(
 			const w2 = HelperFunction.EdgeFunction(x0, y0, x1, y1, x, y) :: number
 
 			if w0 >= 0 and w1 >= 0 and w2 >= 0 then
-				const CountBit = Interpolation(area, invZ0, invZ1, invZ2, w0, w1, w2, y, x, WIDTH, ZBuffer) :: number
+				const BufferWriteFnVar = Interpolation(area, invZ0, invZ1, invZ2, w0, w1, w2, y, x, WIDTH, ZBuffer)
 
-				BufferWriteTable[CountBit](PixelBuffer, ((y * WIDTH + x) * 4), r, g, b, 255)
+				BufferWriteFnVar(PixelBuffer, ((y * WIDTH + x) * 4), r, g, b, 255)
 			end
 		end
 	end

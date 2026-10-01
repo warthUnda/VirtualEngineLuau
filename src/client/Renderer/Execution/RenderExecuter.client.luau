@@ -64,13 +64,12 @@ RunService.RenderStepped:Connect(function()
 			continue
 		end
 
-		-- Fetch target part's current color (0-255 scale)
 		const PartColor = TargetPart.Color :: Color3
 		const R = Floor(PartColor.R * 255) :: number
 		const G = Floor(PartColor.G * 255) :: number
 		const B = Floor(PartColor.B * 255) :: number
 
-		MathModule.GetPartWorldVertices(TargetPart, WorldVertices) -- needs its own caching table in the future
+		MathModule.GetPartWorldVertices(TargetPart, WorldVertices)
 
 		for i, WorldPos in ipairs(WorldVertices) do
 			ScreenVertices[i] =

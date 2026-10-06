@@ -18,8 +18,7 @@ local Vector3New = Vector3.new
 
 local BufferWriteU8 = buffer.writeu8
 
--- Pointer array functions
-
+-- Local functions --
 local function BufferPixelWrite(PixelBuffer: buffer, screenOffset: number, r: number, g: number, b: number, a: number)
 	BufferWriteU8(PixelBuffer, screenOffset + 0, r)
 	BufferWriteU8(PixelBuffer, screenOffset + 1, g)
@@ -27,38 +26,34 @@ local function BufferPixelWrite(PixelBuffer: buffer, screenOffset: number, r: nu
 	BufferWriteU8(PixelBuffer, screenOffset + 3, a)
 end
 
-local function FailFunction()
-	return 2
+local function fastReciprocalSeed(d: number, bitBuffer: buffer): number
+	-- Write 32-bit float
+	buffer.writef32(bitBuffer, 0, d)
+
+	-- Read bit representation as 32-bit integer
+	local i = buffer.readi32(bitBuffer, 0)
+
+	-- Magic constant trick for 1/x reciprocal approximation (0x7EF311C2)
+	i = 0x7EF311C2 - i
+
+	-- Write modified integer back and read as 32-bit float
+	buffer.writei32(bitBuffer, 0, i)
+	return buffer.readf32(bitBuffer, 0)
 end
 
-local function Interpolation(
-	Area: number,
-	invZ0: number,
-	invZ1: number,
-	invZ2: number,
-	w0: number,
-	w1: number,
-	w2: number,
-	y: number,
-	x: number,
-	WIDTH: number,
-	ZBuffer: { number }
-)
-	const l0 = w0 / Area :: number
-	const l1 = w1 / Area :: number
-	const l2 = w2 / Area :: number
+-- Perspective Z solver (Pure Multiplication)
+local function solveCurrentZ(interpolatedInvZ: number, FRSBuffer: buffer): number
+	-- 1. Initial 1-cycle bit seed (x0 ≈ 1 / interpolatedInvZ)
+	local x0 = fastReciprocalSeed(interpolatedInvZ, FRSBuffer)
 
-	const interpolatedInvZ = l0 * invZ0 + l1 * invZ1 + l2 * invZ2 :: number
-	const currentZ = 1 / interpolatedInvZ :: number
+	-- 2. Newton-Raphson refinement iteration: x1 = x0 * (2.0 - D * x0)
+	-- Operates entirely via multiplication and subtraction (0 divisions)
+	local currentZ = x0 * (2.0 - interpolatedInvZ * x0)
 
-	const bufferIdx = (y * WIDTH + x) + 1 :: number
-
-	const isTrueBit = (ZBuffer[bufferIdx] > currentZ and BufferPixelWrite or FailFunction)
-	ZBuffer[bufferIdx] = Min(ZBuffer[bufferIdx], currentZ)
-
-	return isTrueBit
+	return currentZ
 end
 
+-- Main functions --
 function HelperFunction.EdgeFunction(ax: number, ay: number, bx: number, by: number, px: number, py: number): number
 	return (px - ax) * (by - ay) - (py - ay) * (bx - ax)
 end
@@ -110,7 +105,8 @@ function HelperFunction.DrawTriangle(
 	WIDTH: number,
 	HEIGHT: number,
 	PixelBuffer: buffer,
-	ZBuffer: { number }
+	ZBuffer: buffer,
+	FRSBuffer: buffer
 )
 	const x0: number, y0: number, z0: number = v0.X, v0.Y, v0.Z
 	const x1: number, y1: number, z1: number = v1.X, v1.Y, v1.Z
@@ -128,6 +124,8 @@ function HelperFunction.DrawTriangle(
 	const minY = Max(0, Min(y0, y1, y2)) :: number
 	const maxY = Min(HEIGHT - 1, Max(y0, y1, y2)) :: number
 
+	const InvArea = 1 / area :: number
+
 	for y = minY, maxY do
 		for x = minX, maxX do
 			const w0 = HelperFunction.EdgeFunction(x1, y1, x2, y2, x, y) :: number
@@ -135,17 +133,29 @@ function HelperFunction.DrawTriangle(
 			const w2 = HelperFunction.EdgeFunction(x0, y0, x1, y1, x, y) :: number
 
 			if w0 >= 0 and w1 >= 0 and w2 >= 0 then
-				const BufferWriteFnVar = Interpolation(area, invZ0, invZ1, invZ2, w0, w1, w2, y, x, WIDTH, ZBuffer)
+				const l0 = w0 * InvArea :: number
+				const l1 = w1 * InvArea :: number
+				const l2 = w2 * InvArea :: number
 
-				BufferWriteFnVar(PixelBuffer, ((y * WIDTH + x) * 4), r, g, b, 255)
+				const interpolatedInvZ = l0 * invZ0 + l1 * invZ1 + l2 * invZ2 :: number
+				const currentZ = solveCurrentZ(interpolatedInvZ, FRSBuffer) :: number
+
+				local XYWidth = y * WIDTH + x :: number
+
+				const bufferOffset = XYWidth * 4 :: number
+
+				if currentZ < buffer.readf32(ZBuffer, bufferOffset) then
+					buffer.writef32(ZBuffer, bufferOffset, currentZ)
+					BufferPixelWrite(PixelBuffer, (XYWidth * 4), r, g, b, 255)
+				end
 			end
 		end
 	end
 end
 
-function HelperFunction.ClearBuffers(TOTAL_PIXELS: number, PixelBuffer: buffer, ZBuffer: { number })
+function HelperFunction.ClearBuffers(TOTAL_PIXELS: number, PixelBuffer: buffer, ZBuffer: buffer)
 	for i = 1, TOTAL_PIXELS do
-		ZBuffer[i] = 1000.0
+		buffer.writef32(ZBuffer, (i - 1) * 4, 1000.0)
 		local offset = (i - 1) * 4 :: number
 		BufferWriteU8(PixelBuffer, offset + 0, 15)
 		BufferWriteU8(PixelBuffer, offset + 1, 15)

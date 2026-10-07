@@ -12,6 +12,7 @@ local Min = math.min
 -- Static References --
 local Player = game:GetService("Players").LocalPlayer :: Player
 local PlayerGui = Player:WaitForChild("PlayerGui") :: PlayerGui
+local StarterPlayerScripts = game.StarterPlayer:WaitForChild("StarterPlayerScripts") :: StarterPlayerScripts
 
 local Camera = workspace.CurrentCamera :: Camera
 
@@ -22,7 +23,7 @@ local AssetService = game:GetService("AssetService") :: AssetService
 local RunService = game:GetService("RunService") :: RunService
 
 local BufferHelper = require(ReplicatedStorage.Shared.Utilities.BufferHelper)
-local MathModule = require(game.StarterPlayer.StarterPlayerScripts.Client.Renderer.Execution.MathModule) :: ModuleScript
+local MathModule = require(game.ReplicatedStorage.Shared.Utilities.Render.MathModule) :: ModuleScript
 local RenderConfigs = require(game.StarterPlayer.StarterPlayerScripts.Client.Renderer.RenderConfigs) :: ModuleScript
 local PartStore = require(game.StarterPlayer.StarterPlayerScripts.Client.Renderer.Stores.PartStores) :: ModuleScript
 
@@ -31,10 +32,6 @@ local WIDTH = 240 :: number
 local HEIGHT = 120 :: number
 local TOTAL_PIXELS = WIDTH * HEIGHT :: number
 local BUFFER_SIZE = TOTAL_PIXELS * 4 :: number
-
-local PixelBuffer = buffer.create(BUFFER_SIZE) :: buffer
-local ZBuffer = buffer.create(TOTAL_PIXELS * 4) :: buffer -- F32 is what is gonna be inside
-local FRSBuffer = buffer.create(4) :: buffer -- Is used for the fast reciprocal seed calculation
 
 local BufferOffsetTable = {} :: { number }
 local BufferTable = {} :: { buffer }
@@ -49,6 +46,10 @@ local EditableImage = AssetService:CreateEditableImage({
 	Size = Vector2.new(WIDTH, HEIGHT),
 }) :: EditableImage
 ImageLabel.ImageContent = Content.fromObject(EditableImage) :: Content
+
+local SharedTableRegistry = game:GetService("SharedTableRegistry")
+
+local SharedState = SharedTable.new({})
 
 -- ============================================================================
 -- 1. RENDER LOOP
@@ -134,6 +135,11 @@ RunService.RenderStepped:Connect(function()
 		end
 
 		ClearTable(ScreenVertices)
+	end
+
+	for i, TargetActor: Actor in ipairs(StarterPlayerScripts:WaitForChild("RenderParralel")) do
+		local RenderBuffer = BufferTable[i] :: buffer
+		TargetActor:SendMessage("Execute Rendering", RenderBuffer)
 	end
 
 	BufferOffsetTable = {}

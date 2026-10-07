@@ -1,6 +1,10 @@
 --!native
 --!optimize 2
+
+local SelfActor = script.Parent :: Actor
+
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterPlayer = game:GetService("StarterPlayer")
 
 -- Caching --
 local ClearTable = table.clear
@@ -47,9 +51,9 @@ local EditableImage = AssetService:CreateEditableImage({
 }) :: EditableImage
 ImageLabel.ImageContent = Content.fromObject(EditableImage) :: Content
 
-local SharedTableRegistry = game:GetService("SharedTableRegistry")
-
-local SharedState = SharedTable.new({})
+SelfActor:BindToMessage("Return Render Calculations", function(ReturnedBuffer: buffer)
+	EditableImage:WritePixelsBuffer(Vector2.zero, Vector2.new(WIDTH, HEIGHT), ReturnedBuffer)
+end)
 
 -- ============================================================================
 -- 1. RENDER LOOP
@@ -57,7 +61,6 @@ local SharedState = SharedTable.new({})
 
 RunService.RenderStepped:Connect(function()
 	const Clock = os.clock() :: number
-	MathModule.ClearBuffers(TOTAL_PIXELS, PixelBuffer, ZBuffer)
 
 	local PartArray = PartStore.ReturnArray() :: { BasePart }
 
@@ -129,8 +132,6 @@ RunService.RenderStepped:Connect(function()
 
 				BufferOffsetTable[SVIndex] =
 					BufferHelper.CreateRenderBuffer(RenderBuffer, RBOffset, v0, v1, v2, R, G, B, WIDTH, HEIGHT)
-
-				MathModule.DrawTriangle(v0, v1, v2, R, G, B, WIDTH, HEIGHT, PixelBuffer, ZBuffer, FRSBuffer)
 			end
 		end
 
@@ -144,6 +145,5 @@ RunService.RenderStepped:Connect(function()
 
 	BufferOffsetTable = {}
 
-	EditableImage:WritePixelsBuffer(Vector2.zero, Vector2.new(WIDTH, HEIGHT), PixelBuffer)
 	print("Rendering took " .. (os.clock() - Clock) .. " seconds")
 end)

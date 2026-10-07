@@ -1,3 +1,9 @@
+local ControllerActor = game.ReplicatedStorage
+	:WaitForChild("Shared")
+	:WaitForChild("Utilities")
+	:WaitForChild("Render")
+	:WaitForChild("ControllerActor") :: Actor
+
 local Actor = script.Parent :: Actor
 
 local BufferHelper = require(game.ReplicatedStorage.Shared.Utilities.BufferHelper)
@@ -45,4 +51,6 @@ Actor:BindToMessage("Execute Renderer", function(RenderBuffer: buffer)
 
 		ReadMemoryOffset += BufferLayoutSize
 	end
+
+	ControllerActor:SendMessage("Return Render Calculations", PixelBuffer)
 end)

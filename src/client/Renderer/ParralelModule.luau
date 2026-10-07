@@ -1,42 +1,50 @@
 local ParralelModule = {}
 
-local RenderParralelTemplate = game.ReplicatedStorage
-	:WaitForChild("Shared")
-	:WaitForChild("Utilities")
-	:WaitForChild("RenderParralelTemplate") :: Folder
+local WorkerTemplate =
+	game.ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities"):WaitForChild("WorkerTemplate") :: Folder
 
 local ControllerTemplate = game.ReplicatedStorage
 	:WaitForChild("Shared")
 	:WaitForChild("Utilities")
 	:WaitForChild("Render")
-	:WaitForChild("ControllerActor")
+	:WaitForChild("ControllerFolder") :: Folder
+
+-- ============================================================================
+-- 1. CREATE WORKER - CONTROLLER SETUP
+-- ============================================================================
 
 function ParralelModule.CreateSetup()
-	local StarterPlayerScripts = game.StarterPlayer:WaitForChild("StarterPlayerScripts")
+	local PlayerScripts = game:GetService("Players").LocalPlayer:WaitForChild("PlayerScripts") :: Folder
 
-	local ParallelFolder = Instance.new("Folder")
-	ParallelFolder.Name = "RenderParralel"
-	ParallelFolder.Parent = StarterPlayerScripts
+	-- Workers
+	local WorkerFolder = Instance.new("Folder") :: Folder
+	WorkerFolder.Name = "WorkerFolder"
+	WorkerFolder.Parent = PlayerScripts
 
-	local ControllerFolder = Instance.new("Folder")
-	ControllerFolder.Parent = StarterPlayerScripts
-	local ControllerActor = Instance.new("Actor")
-
+	-- Controller for the workers
+	local ControllerActor = Instance.new("Actor") :: Actor
 	ControllerActor.Name = "Controller"
-	ControllerActor.Parent = ControllerFolder
+	ControllerActor.Parent = PlayerScripts
 
-	local ControllerScript = ControllerTemplate:Clone()
-	ControllerScript.Name = "ControllerScript"
+	-- Scripts of the controller
+	local ControllerScript = ControllerTemplate:WaitForChild("RenderExecuter"):Clone() :: Script -- Controls the actual workers
 	ControllerScript.Parent = ControllerActor
 
-	for i = 1, 6 do
-		local NewActor = Instance.new("Actor")
-		NewActor.Parent = ParallelFolder
-		NewActor.Name = "ParallelSetup" .. i
+	local ControllerPartStore = ControllerTemplate:WaitForChild("PartStores"):Clone() :: ModuleScript -- Provides the parts for Controller script
+	ControllerPartStore.Parent = ControllerActor
 
-		local NewRenderTemplate = RenderParralelTemplate:Clone()
+	local ControllerScanner = ControllerTemplate:WaitForChild("WorkspaceScanner"):Clone() :: Script -- scans for parts and puts them inside ControllerPartStore
+	ControllerScanner.Parent = ControllerActor
+
+	-- Creation of workers
+	for i = 1, 6 do
+		local NewWorkerActor = Instance.new("Actor") :: Actor
+		NewWorkerActor.Parent = WorkerFolder
+		NewWorkerActor.Name = "ParallelSetup" .. i
+
+		local NewRenderTemplate = WorkerTemplate:WaitForChild("ParralelWorker"):Clone() :: Script -- Executes the hard math in parralel
 		NewRenderTemplate.Name = "ParallelRender" .. i
-		NewRenderTemplate.Parent = NewActor
+		NewRenderTemplate.Parent = NewWorkerActor
 	end
 end
 

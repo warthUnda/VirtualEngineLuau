@@ -1,4 +1,8 @@
+local HeightmapImporterService = game:GetService("HeightmapImporterService")
 local RenderConfigs = {}
+
+local WIDTH = 240 :: number
+local HEIGHT = 120 :: number
 
 local PART_TRIANGLES = {
 	{ 1, 3, 2 },
@@ -17,6 +21,10 @@ local PART_TRIANGLES = {
 
 function RenderConfigs.GetPartTriangles()
 	return PART_TRIANGLES
+end
+
+function RenderConfigs.ReturnDimensions2D()
+	return WIDTH, HEIGHT
 end
 
 return RenderConfigs

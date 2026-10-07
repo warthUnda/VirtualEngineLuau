@@ -1,17 +1,17 @@
 --!native
 --!optimize 2
 
-local Workspace = game:WaitForChild("Workspace")
+local Workspace = game:WaitForChild("Workspace") :: Workspace
 
-local PartStore = require(game.StarterPlayer.StarterPlayerScripts.Client.Renderer.Stores.PartStores)
+local PartStore = require(script.Parent.PartStores) :: ModuleScript
 
-local FreeSpots = {}
+local FreeSpots = {} :: { number }
 
-local GlobalId = 0
-local FreeSpotsId = 0
+local GlobalId = 0 :: number
+local FreeSpotsId = 0 :: number
 
-local function AddPart(Child)
-	local PartArray = PartStore.ReturnArray()
+local function AddPart(Child: BasePart)
+	local PartArray = PartStore.ReturnArray() :: { BasePart }
 
 	if Child:IsA("BasePart") then
 		for i, Spot: number in pairs(FreeSpots) do
@@ -22,7 +22,6 @@ local function AddPart(Child)
 			Child:SetAttribute("GlobalId", Spot)
 
 			print("Added", Child.Name, Spot)
-
 			return
 		end
 
@@ -38,11 +37,11 @@ end
 
 Workspace.DescendantAdded:Connect(AddPart)
 
-Workspace.DescendantRemoving:Connect(function(Child)
-	local PartArray = PartStore.ReturnArray()
+Workspace.DescendantRemoving:Connect(function(Child: BasePart)
+	local PartArray = PartStore.ReturnArray() :: { BasePart }
 
 	if Child:IsA("BasePart") then
-		local ChildId = Child:GetAttribute("GlobalId")
+		local ChildId = Child:GetAttribute("GlobalId") :: number
 
 		if typeof(ChildId) == "number" then
 			print("Removed", Child.Name, ChildId)
@@ -55,6 +54,6 @@ Workspace.DescendantRemoving:Connect(function(Child)
 	end
 end)
 
-for _, Child in pairs(Workspace:GetDescendants()) do
+for _, Child: BasePart in pairs(Workspace:GetDescendants()) do
 	AddPart(Child)
 end

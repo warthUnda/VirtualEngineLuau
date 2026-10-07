@@ -1,5 +1,8 @@
 local BufferHelper = {}
 
+-- Caching --
+local BufferWriteU8 = buffer.writeu8
+
 function BufferHelper.WriteF32(Buffer, Offset, Value)
 	buffer.writef32(Buffer, Offset, Value)
 	Offset += 4
@@ -38,9 +41,7 @@ function BufferHelper.CreateRenderBuffer(
 	V2: Vector3,
 	R: number,
 	G: number,
-	B: number,
-	WIDTH: number,
-	HEIGHT: number
+	B: number
 )
 	-- v0, v1, v2, R, G, B, WIDTH, HEIGHT
 
@@ -62,11 +63,32 @@ function BufferHelper.CreateRenderBuffer(
 	MEMORYOFFSET = BufferHelper.WriteUINT16(TargetBuffer, MEMORYOFFSET, G)
 	MEMORYOFFSET = BufferHelper.WriteUINT16(TargetBuffer, MEMORYOFFSET, B)
 
-	-- Screen
-	MEMORYOFFSET = BufferHelper.WriteUINT16(TargetBuffer, MEMORYOFFSET, WIDTH)
-	MEMORYOFFSET = BufferHelper.WriteUINT16(TargetBuffer, MEMORYOFFSET, HEIGHT)
-
 	return MEMORYOFFSET
+end
+
+function BufferHelper.BufferPixelWrite(
+	PixelBuffer: buffer,
+	screenOffset: number,
+	r: number,
+	g: number,
+	b: number,
+	a: number
+)
+	BufferWriteU8(PixelBuffer, screenOffset + 0, r)
+	BufferWriteU8(PixelBuffer, screenOffset + 1, g)
+	BufferWriteU8(PixelBuffer, screenOffset + 2, b)
+	BufferWriteU8(PixelBuffer, screenOffset + 3, a)
+end
+
+function BufferHelper.ClearBuffers(TOTAL_PIXELS: number, PixelBuffer: buffer, ZBuffer: buffer)
+	for i = 1, TOTAL_PIXELS do
+		buffer.writef32(ZBuffer, (i - 1) * 4, 1000.0)
+		local offset = (i - 1) * 4 :: number
+		BufferWriteU8(PixelBuffer, offset + 0, 15)
+		BufferWriteU8(PixelBuffer, offset + 1, 15)
+		BufferWriteU8(PixelBuffer, offset + 2, 20)
+		BufferWriteU8(PixelBuffer, offset + 3, 255)
+	end
 end
 
 return BufferHelper

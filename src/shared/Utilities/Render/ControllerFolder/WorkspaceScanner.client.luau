@@ -57,3 +57,15 @@ end)
 for _, Child: BasePart in pairs(Workspace:GetDescendants()) do
 	AddPart(Child)
 end
+
+task.spawn(function() -- First priority updator
+	while true do
+		task.wait(16.77)
+	end
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(0.1)
+	end
+end)

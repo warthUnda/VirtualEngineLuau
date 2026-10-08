@@ -17,7 +17,7 @@ const WIDTH: number, HEIGHT: number = RenderConfigs.ReturnDimensions2D()
 
 const TOTAL_PIXELS = WIDTH * HEIGHT :: number
 
-local BufferLayoutSize = 46 :: number
+local BufferLayoutSize = 42 :: number
 local ReadMemoryOffset = 0 :: number
 
 -- Buffers

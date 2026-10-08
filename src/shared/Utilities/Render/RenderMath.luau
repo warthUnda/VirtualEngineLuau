@@ -21,6 +21,26 @@ local Vector3New = Vector3.new
 -- 1. FUNCTIONS - RENDERING MATH
 -- ============================================================================
 
+local function ApplyRandomCoordinateX(MinX: number, MaxX: number)
+	if MinX <= MaxX then
+		local X = math.random(MinX, MaxX)
+		return X
+	end
+
+	local X = math.random(MaxX, MinX)
+	return X
+end
+
+local function ApplyRandomCoordinateY(MinY: number, MaxY: number)
+	if MinY <= MaxY then
+		local Y = math.random(MinY, MaxY)
+		return Y
+	end
+
+	local Y = math.random(MaxY, MinY)
+	return Y
+end
+
 -- Gets the vertices of a part in 3D space
 function HelperFunction.GetPartWorldVertices(Part: Part, TargetTable: {}) -- Is local number only memory offset, wont get updated
 	-- Define matrix data
@@ -97,11 +117,52 @@ function HelperFunction.DrawTriangle(
 	const MinY = Max(0, Min(Y0, Y1, Y2)) :: number
 	const MaxY = Min(HEIGHT - 1, Max(Y0, Y1, Y2)) :: number
 
+	if MinX > MaxX or MinY > MaxY then
+		return
+	end
+
 	const InvArea = 1 / Area :: number
+
+	local Count = 0 :: number
+
+	-- Test if the entire object is even visible
+	local PassedTest = false
+	for i = 1, 20 do
+		local X = ApplyRandomCoordinateX(MinX, MaxX)
+		local Y = ApplyRandomCoordinateY(MinY, MaxY)
+
+		const W0 = MathModule.EdgeFunction(X1, Y1, X2, Y2, X, Y) :: number
+		const W1 = MathModule.EdgeFunction(X2, Y2, X0, Y0, X, Y) :: number
+		const W2 = MathModule.EdgeFunction(X0, Y0, X1, Y1, X, Y) :: number
+
+		-- Check if the object (triangle) is visible
+		if W0 >= 0 and W1 >= 0 and W2 >= 0 then
+			const L0 = W0 * InvArea :: number
+			const L1 = W1 * InvArea :: number
+			const L2 = W2 * InvArea :: number
+
+			const InterpolatedInvZ = L0 * invZ0 + L1 * invZ1 + L2 * invZ2 :: number
+			const CurrentZ = MathModule.solveCurrentZ(InterpolatedInvZ, FRSBuffer) :: number -- Checks if the object is in front of the camera
+
+			local XYWidth = Y * WIDTH + X :: number
+
+			const bufferOffset = XYWidth * 4 :: number
+
+			if CurrentZ < buffer.readf32(ZBuffer, bufferOffset) then -- Checks if the pixel is closer to the camera
+				PassedTest = true
+				break
+			end
+		end
+	end
+
+	if not PassedTest then
+		return
+	end
 
 	-- Begin drawing the raw pixels (Fills a box)
 	for Y: number = MinY, MaxY do
 		for X: number = MinX, MaxX do
+			Count += 1
 			const W0 = MathModule.EdgeFunction(X1, Y1, X2, Y2, X, Y) :: number
 			const W1 = MathModule.EdgeFunction(X2, Y2, X0, Y0, X, Y) :: number
 			const W2 = MathModule.EdgeFunction(X0, Y0, X1, Y1, X, Y) :: number

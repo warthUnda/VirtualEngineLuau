@@ -149,8 +149,8 @@ RunService.RenderStepped:Connect(function()
 				const MinY = Max(0, Min(Y0, Y1, Y2)) :: number
 				const MaxY = Min(HEIGHT - 1, Max(Y0, Y1, Y2)) :: number
 
-				const YHeight = MinY - MaxY :: number
-				const XWidth = MinX - MaxX :: Accessory
+				const YHeight = MaxY - MinY :: number
+				const XWidth = MaxX - MinX :: number
 
 				const Result = YHeight * XWidth :: number -- Calculate how many pixels the object covers
 				math.abs(Result)

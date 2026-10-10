@@ -21,7 +21,6 @@ local function AddPart(Child: BasePart)
 
 			Child:SetAttribute("GlobalId", Spot)
 
-			print("Added", Child.Name, Spot)
 			return
 		end
 
@@ -30,8 +29,6 @@ local function AddPart(Child: BasePart)
 		PartArray[GlobalId] = Child
 
 		Child:SetAttribute("GlobalId", GlobalId)
-
-		print("Added", Child.Name, GlobalId)
 	end
 end
 
@@ -44,8 +41,6 @@ Workspace.DescendantRemoving:Connect(function(Child: BasePart)
 		local ChildId = Child:GetAttribute("GlobalId") :: number
 
 		if typeof(ChildId) == "number" then
-			print("Removed", Child.Name, ChildId)
-
 			FreeSpotsId += 1
 
 			PartArray[ChildId] = nil
@@ -57,15 +52,3 @@ end)
 for _, Child: BasePart in pairs(Workspace:GetDescendants()) do
 	AddPart(Child)
 end
-
-task.spawn(function() -- First priority updator
-	while true do
-		task.wait(16.77)
-	end
-end)
-
-task.spawn(function()
-	while true do
-		task.wait(0.1)
-	end
-end)

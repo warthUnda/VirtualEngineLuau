@@ -1,5 +1,7 @@
 local BufferHelper = {}
 
+BufferHelper.RenderBufferLayoutSize = 32
+
 -- Caching --
 local BufferWriteU8 = buffer.writeu8
 
@@ -11,6 +13,12 @@ end
 
 function BufferHelper.WriteUINT16(Buffer, Offset, Value)
 	buffer.writeu16(Buffer, Offset, Value)
+	Offset += 2
+	return Offset
+end
+
+function BufferHelper.WriteI16(Buffer, Offset, Value)
+	buffer.writei16(Buffer, Offset, Value)
 	Offset += 2
 	return Offset
 end
@@ -43,19 +51,19 @@ function BufferHelper.CreateRenderBuffer(
 	G: number,
 	B: number
 )
-	-- v0, v1, v2, R, G, B, WIDTH, HEIGHT
+	-- Three 8-byte vertices, three 2-byte color channels, and 2 bytes of padding.
 
 	-- Vectors
-	MEMORYOFFSET = BufferHelper.WriteF32(TargetBuffer, MEMORYOFFSET, V0.X)
-	MEMORYOFFSET = BufferHelper.WriteF32(TargetBuffer, MEMORYOFFSET, V0.Y)
+	MEMORYOFFSET = BufferHelper.WriteI16(TargetBuffer, MEMORYOFFSET, V0.X)
+	MEMORYOFFSET = BufferHelper.WriteI16(TargetBuffer, MEMORYOFFSET, V0.Y)
 	MEMORYOFFSET = BufferHelper.WriteF32(TargetBuffer, MEMORYOFFSET, V0.Z)
 
-	MEMORYOFFSET = BufferHelper.WriteF32(TargetBuffer, MEMORYOFFSET, V1.X)
-	MEMORYOFFSET = BufferHelper.WriteF32(TargetBuffer, MEMORYOFFSET, V1.Y)
+	MEMORYOFFSET = BufferHelper.WriteI16(TargetBuffer, MEMORYOFFSET, V1.X)
+	MEMORYOFFSET = BufferHelper.WriteI16(TargetBuffer, MEMORYOFFSET, V1.Y)
 	MEMORYOFFSET = BufferHelper.WriteF32(TargetBuffer, MEMORYOFFSET, V1.Z)
 
-	MEMORYOFFSET = BufferHelper.WriteF32(TargetBuffer, MEMORYOFFSET, V2.X)
-	MEMORYOFFSET = BufferHelper.WriteF32(TargetBuffer, MEMORYOFFSET, V2.Y)
+	MEMORYOFFSET = BufferHelper.WriteI16(TargetBuffer, MEMORYOFFSET, V2.X)
+	MEMORYOFFSET = BufferHelper.WriteI16(TargetBuffer, MEMORYOFFSET, V2.Y)
 	MEMORYOFFSET = BufferHelper.WriteF32(TargetBuffer, MEMORYOFFSET, V2.Z)
 
 	-- Color
@@ -63,7 +71,17 @@ function BufferHelper.CreateRenderBuffer(
 	MEMORYOFFSET = BufferHelper.WriteUINT16(TargetBuffer, MEMORYOFFSET, G)
 	MEMORYOFFSET = BufferHelper.WriteUINT16(TargetBuffer, MEMORYOFFSET, B)
 
+	-- Padding
+	MEMORYOFFSET = BufferHelper.WriteUINT16(TargetBuffer, MEMORYOFFSET, 0)
+
 	return MEMORYOFFSET
+end
+
+function BufferHelper.CreateSeedLayout(TargetBuffer: buffer, MemoryOffset: number, X: number, Y: number)
+	MemoryOffset = BufferHelper.WriteI16(TargetBuffer, MemoryOffset, X)
+	MemoryOffset = BufferHelper.WriteI16(TargetBuffer, MemoryOffset, Y)
+
+	return MemoryOffset
 end
 
 function BufferHelper.BufferPixelWrite(

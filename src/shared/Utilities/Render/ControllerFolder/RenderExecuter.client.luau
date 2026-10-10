@@ -18,15 +18,32 @@ const Player = game:GetService("Players").LocalPlayer :: Player
 const PlayerGui = Player:WaitForChild("PlayerGui") :: PlayerGui
 const PlayerScripts = Player:WaitForChild("PlayerScripts") :: PlayerScripts
 
-const Camera = workspace.CurrentCamera :: Camera
 const ImageLabel = PlayerGui:WaitForChild("ScreenGui"):WaitForChild("ImageLabel") :: ImageLabel
+
+const Camera = workspace.CurrentCamera :: Camera
 
 const SelfActor = script.Parent :: Actor
 
 -- Modules --
+local CameraService = require(
+	ReplicatedStorage:WaitForChild("Shared")
+		:WaitForChild("Utilities")
+		:WaitForChild("Render")
+		:WaitForChild("ControllerFolder")
+		:WaitForChild("CameraService")
+)
 const BufferHelper = require(ReplicatedStorage.Shared.Utilities.BufferHelper) :: ModuleScript
 const MathModule = require(game.ReplicatedStorage.Shared.Utilities.Render.RenderMath) :: ModuleScript
-const RenderConfigs = require(game.StarterPlayer.StarterPlayerScripts.Client.Renderer.RenderConfigs) :: ModuleScript
+const RenderConfigs = require(game.StarterPlayer.StarterPlayerScripts.Client.RenderConfigs) :: ModuleScript
+const EdgeModule = require(game.ReplicatedStorage.Shared.Utilities.Functions.MathModule)
+const CameraStore = require(
+	ReplicatedStorage:WaitForChild("Shared")
+		:WaitForChild("Utilities")
+		:WaitForChild("Render")
+		:WaitForChild("ControllerFolder")
+		:WaitForChild("CameraStore")
+) :: ModuleScript
+
 const PartStore = require(script.Parent.PartStores) :: ModuleScript
 
 -- Configs --
@@ -41,6 +58,7 @@ local CurrentFrame = 0 :: number
 local BufferOffsetTable = {} :: { number }
 local BufferTable = {} :: { buffer }
 local BfrScoreTable = {} :: { number }
+local BfrSuccessRateTable = {} :: { number }
 
 local PART_TRIANGLES = RenderConfigs.GetPartTriangles() :: { { number } }
 local WorldVertices = table.create(8) :: { Vector3 }
@@ -52,6 +70,13 @@ const FinalZ = buffer.create(TOTAL_PIXELS * 4) :: buffer
 -- Connecting Editable image to ImageLabel --
 const EditableImage = AssetService:CreateEditableImage({ Size = Vector2.new(WIDTH, HEIGHT) }) :: EditableImage
 ImageLabel.ImageContent = Content.fromObject(EditableImage) :: Content
+
+CameraService:SetCameraHost()
+CameraService:SetCameraView("FirstPerson")
+
+for i = 1, 6 do
+	BfrSuccessRateTable[i] = buffer.create(10000 * 1)
+end
 
 -- ============================================================================
 -- 1. LISTENER - LISTENS TO RETURNING DATA
@@ -84,17 +109,18 @@ end)
 -- ============================================================================
 
 RunService.RenderStepped:Connect(function()
+	local Start = os.clock()
 	-- Tables
 	const PartArray = PartStore.ReturnArray() :: { BasePart }
 	const ScreenVertices = {} :: { Vector3 }
+	const CamTable = CameraStore.ReturnCameraTable()
 
 	-- Configs
-	const CamCFrame = Camera.CFrame :: CFrame
-	const CamFOV = Camera.FieldOfView :: number
+	const CamCFrame = CamTable.CameraCFrame :: CFrame
+	const CamFOV = CamTable.CameraFOV :: number
 
 	local SmallestValue = math.huge :: number
 	local SVIndex = 0 :: number
-
 	-- Pre loop Updates --
 	BufferHelper.ClearBuffers(TOTAL_PIXELS, FinalPixel, FinalZ)
 
@@ -103,7 +129,7 @@ RunService.RenderStepped:Connect(function()
 
 	-- Create Information Data for workers
 	for i = 1, 6 do
-		BufferTable[i] = buffer.create(TOTAL_PIXELS * 8)
+		BufferTable[i] = buffer.create(TOTAL_PIXELS * 32)
 		BfrScoreTable[i] = 2
 		BufferOffsetTable[i] = 0
 	end
@@ -149,11 +175,21 @@ RunService.RenderStepped:Connect(function()
 				const MinY = Max(0, Min(Y0, Y1, Y2)) :: number
 				const MaxY = Min(HEIGHT - 1, Max(Y0, Y1, Y2)) :: number
 
+				local Area = EdgeModule.EdgeFunction(X0, Y0, X1, Y1, X2, Y2)
+				if Area <= 0 then
+					continue
+				end
+
+				if MinX > MaxX or MinY > MaxY then
+					continue
+				end
+
 				const YHeight = MaxY - MinY :: number
 				const XWidth = MaxX - MinX :: number
+				math.abs(YHeight)
+				math.abs(XWidth)
 
 				const Result = YHeight * XWidth :: number -- Calculate how many pixels the object covers
-				math.abs(Result)
 
 				SmallestValue = math.huge :: number
 				SVIndex = 0 :: number
@@ -184,8 +220,17 @@ RunService.RenderStepped:Connect(function()
 	-- Sends the information to all workers workers
 	for i, TargetActor: Actor in ipairs(PlayerScripts:WaitForChild("WorkerFolder"):GetChildren()) do
 		const RenderBuffer = BufferTable[i] :: buffer
-		TargetActor:SendMessage("Execute Rendering", RenderBuffer, BufferOffsetTable[i], CurrentFrame)
+		const SuccessRateBuffer = BfrSuccessRateTable[i] :: buffer
+
+		TargetActor:SendMessage(
+			"Execute Rendering",
+			RenderBuffer,
+			BufferOffsetTable[i],
+			SuccessRateBuffer,
+			CurrentFrame
+		)
 	end
 
 	BufferOffsetTable = {}
+	print(os.clock() - Start)
 end)

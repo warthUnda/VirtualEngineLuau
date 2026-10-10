@@ -1,8 +1,8 @@
 local HeightmapImporterService = game:GetService("HeightmapImporterService")
 local RenderConfigs = {}
 
-local WIDTH = 240 :: number
-local HEIGHT = 120 :: number
+local WIDTH = 100 :: number
+local HEIGHT = 100 :: number
 
 local PART_TRIANGLES = {
 	{ 1, 3, 2 },

@@ -82,10 +82,9 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
 
--- > Player & Camera Objects < --
+-- > Player Objects < --
 local player = Players.LocalPlayer
 local mouse = player:GetMouse()
-local cam = workspace.CurrentCamera or workspace:WaitForChild("Camera")
 
 -- > Camera System Variables < --
 local TWEEN_INFO = TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
@@ -101,7 +100,7 @@ local wobbleAngle = 0
 local neckCache
 
 -- > MUNCHMALS INTERVENTION < --
-local CameraStore = require(script.Parent.Renderer.CameraStore)
+local CameraStore = require(script.Parent.CameraStore)
 local CamTable = CameraStore.ReturnCameraTable()
 
 --> Built-in camera views
@@ -418,7 +417,7 @@ end
 local lapsed = 1000 --> Used for dampening while jumping/falling
 local arrowKeyAngle = 0
 local pastCamRot = CFrame.Angles(0, 0, 0)
-local function updateCamera(deltaTime: number)
+function updateCamera(deltaTime: number)
 	local self = CameraService
 	--> Console has different inputs + logic. This helps set up CONSOLE camera movement
 	if UserInputService.GamepadEnabled then
@@ -479,10 +478,7 @@ local function updateCamera(deltaTime: number)
 		+ (rotationCFrame * Vector3.new(0, 0, self.Zoom))
 	local camPos = raycastWorld(currentCamPosition + offset, camCFrame.p - offset - currentCamPosition)
 	camCFrame = (camCFrame - camCFrame.p) + camPos
-	local targetCFrame = cam.CFrame:Lerp(camCFrame, lerpFactor)
-
-	--> Put it inside of camera store table
-	CamTable.CameraCFrame = targetCFrame
+	local targetCFrame = CamTable.CameraCFrame:Lerp(camCFrame, lerpFactor)
 
 	local desired2 = desiredTime
 	local lerp2
@@ -510,8 +506,11 @@ local function updateCamera(deltaTime: number)
 		desired2 = damper()
 	end
 
-	lerp2 = desired2 ~= desiredTime and cam.CFrame:Lerp(camCFrame, 1 - math.exp(-deltaTime / desired2)) or nil
-	cam.CFrame = self.Smoothness <= 0 and camCFrame
+	lerp2 = desired2 ~= desiredTime and CamTable.CameraCFrame:Lerp(camCFrame, 1 - math.exp(-deltaTime / desired2))
+		or nil
+
+	--> Store the final computed CFrame inside of the camera store table
+	CamTable.CameraCFrame = self.Smoothness <= 0 and camCFrame
 		or CFrame.new(targetCFrame.X, lerp2 and lerp2.Y or targetCFrame.Y, targetCFrame.Z)
 			* targetCFrame.Rotation
 			* yCFOffset
@@ -608,9 +607,9 @@ function CameraService:SetCameraView(__type: string)
 	if __type == "Default" then
 		--> Resets it back to non-scriptable, Roblox default camera
 		self.LockMouse = false
-		cam.CameraSubject = currentCharacter:WaitForChild("Humanoid")
+		CamTable.CameraSubject = currentCharacter:WaitForChild("Humanoid")
 		UserInputService.MouseBehavior = Enum.MouseBehavior.Default
-		cam.CameraType = Enum.CameraType.Custom
+		CamTable.CameraType = Enum.CameraType.Custom
 		workspace.Retargeting = Enum.AnimatorRetargetingMode.Default
 		currentCharacter:WaitForChild("Humanoid").AutoRotate = true
 	elseif cameraSettings[__type] then
@@ -621,8 +620,8 @@ function CameraService:SetCameraView(__type: string)
 		end
 		UserInputService.MouseBehavior = self.LockMouse and __type ~= "Default" and Enum.MouseBehavior.LockCenter
 			or Enum.MouseBehavior.Default
-		cam.CameraType = Enum.CameraType.Scriptable
-		cam.CameraSubject = nil
+		CamTable.CameraType = Enum.CameraType.Scriptable
+		CamTable.CameraSubject = nil
 
 		--> @updateZoom: for camera zooming in/out
 		local function updateZoom(input, gpe)
@@ -881,12 +880,18 @@ function CameraService:ChangeFOV(val: number, instant: boolean)
 
 	--> Set up FOV logic
 	if instant then
-		cam.FieldOfView = val
+		CamTable.CameraFOV = val
 	else
-		local tween = TweenService:Create(cam, TWEEN_INFO, { FieldOfView = val })
-		tween:Play()
-		tween.Completed:Wait()
-		tween:Destroy()
+		local startFOV = CamTable.CameraFOV
+		local startTime = os.clock()
+		local duration = TWEEN_INFO.Time
+		while os.clock() - startTime < duration do
+			local alpha = math.min(1, (os.clock() - startTime) / duration)
+			local eased = TweenService:GetValue(alpha, TWEEN_INFO.EasingStyle, TWEEN_INFO.EasingDirection)
+			CamTable.CameraFOV = startFOV + (val - startFOV) * eased
+			task.wait()
+		end
+		CamTable.CameraFOV = val
 	end
 end
 

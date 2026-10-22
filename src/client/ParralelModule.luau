@@ -1,5 +1,9 @@
 local ParralelModule = {}
 
+-- Modules --
+local RenderConfigs = require(script.Parent.RenderConfigs)
+
+-- References --
 local WorkerTemplate =
 	game.ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities"):WaitForChild("WorkerTemplate") :: Folder
 
@@ -8,6 +12,9 @@ local ControllerTemplate = game.ReplicatedStorage
 	:WaitForChild("Utilities")
 	:WaitForChild("Render")
 	:WaitForChild("ControllerFolder") :: Folder
+
+-- Configs --
+local ActorCount = RenderConfigs.GetActorCount()
 
 -- ============================================================================
 -- 1. CREATE WORKER - CONTROLLER SETUP
@@ -37,7 +44,7 @@ function ParralelModule.CreateSetup()
 	ControllerScanner.Parent = ControllerActor
 
 	-- Creation of workers
-	for i = 1, 6 do
+	for i = 1, ActorCount do
 		local NewWorkerActor = Instance.new("Actor") :: Actor
 		NewWorkerActor.Parent = WorkerFolder
 		NewWorkerActor.Name = "ParallelSetup" .. i

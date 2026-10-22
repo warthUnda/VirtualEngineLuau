@@ -77,11 +77,37 @@ function BufferHelper.CreateRenderBuffer(
 	return MEMORYOFFSET
 end
 
-function BufferHelper.CreateSeedLayout(TargetBuffer: buffer, MemoryOffset: number, X: number, Y: number)
-	MemoryOffset = BufferHelper.WriteI16(TargetBuffer, MemoryOffset, X)
-	MemoryOffset = BufferHelper.WriteI16(TargetBuffer, MemoryOffset, Y)
+function BufferHelper.Write3DVertices(TargetBuffer: buffer)
+	local cubeData = {
+		-1,
+		-1,
+		-1,
+		1,
+		-1,
+		-1,
+		1,
+		1,
+		-1,
+		-1,
+		1,
+		-1,
+		-1,
+		-1,
+		1,
+		1,
+		-1,
+		1,
+		1,
+		1,
+		1,
+		-1,
+		1,
+		1,
+	}
 
-	return MemoryOffset
+	for i = 1, #cubeData do
+		buffer.writei8(TargetBuffer, i - 1, cubeData[i])
+	end
 end
 
 function BufferHelper.BufferPixelWrite(

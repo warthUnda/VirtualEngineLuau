@@ -7,6 +7,7 @@ local UpVectorArray = {}
 local RightVectorArray = {}
 
 local PartPositionArray = {}
+local PartInstanceArray = {}
 
 local ColorArrayR = {}
 local ColorArrayG = {}
@@ -30,6 +31,10 @@ end
 
 function PartStore.ReturnPositionArray()
 	return PartPositionArray
+end
+
+function PartStore.ReturnInstanceArray()
+	return PartInstanceArray
 end
 
 function PartStore.ReturnLookVectorArray()

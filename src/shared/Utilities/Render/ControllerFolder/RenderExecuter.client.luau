@@ -45,6 +45,20 @@ const PartStore = require(script.Parent.PartStores) :: ModuleScript
 -- Configs --
 const WIDTH: number, HEIGHT: number = RenderConfigs.ReturnDimensions2D()
 const TOTAL_PIXELS = WIDTH * HEIGHT :: number
+const SUN_DIRECTION = Vector3.new(-0.4, 0.85, -0.35).Unit
+const SUN_RAY_LENGTH = 15000
+const AMBIENT_LIGHT = 0.3
+const RAY_ORIGIN_BIAS = 0.05
+const PART_VERTEX_SIGNS = {
+	Vector3.new(-1, -1, -1),
+	Vector3.new(1, -1, -1),
+	Vector3.new(1, 1, -1),
+	Vector3.new(-1, 1, -1),
+	Vector3.new(-1, -1, 1),
+	Vector3.new(1, -1, 1),
+	Vector3.new(1, 1, 1),
+	Vector3.new(-1, 1, 1),
+}
 
 const ActorCount = RenderConfigs.GetActorCount() :: number
 
@@ -62,6 +76,9 @@ local SphereVertices = RenderConfigs.GetSphereVertices() :: { Vector3 }
 -- Buffers
 const FinalPixel = buffer.create(TOTAL_PIXELS * 4) :: buffer
 const FinalZ = buffer.create(TOTAL_PIXELS * 4) :: buffer
+local ShadowRayExcludes = table.create(2) :: { Instance }
+local WorldVertices = table.create(8) :: { Vector3 }
+local FaceIllumination = table.create(12) :: { number }
 
 -- Create Information Data for workers
 for i = 1, ActorCount do
@@ -120,8 +137,9 @@ end)
 
 RunService.RenderStepped:Connect(function()
 	-- Tables
-	const PartSizeArray = PartStore.ReturnSizeArray() :: { CFrame }
+	const PartSizeArray = PartStore.ReturnSizeArray() :: { Vector3 }
 	const PartPositionArray = PartStore.ReturnPositionArray() :: { Vector3 }
+	const PartInstanceArray = PartStore.ReturnInstanceArray() :: { BasePart }
 
 	local PartLookVectorArray = PartStore.ReturnLookVectorArray() :: { Vector3 }
 	local PartUpVectorArray = PartStore.ReturnUpVectorArray() :: { Vector3 }
@@ -132,7 +150,7 @@ RunService.RenderStepped:Connect(function()
 	local ColorArrayB = PartStore.ReturnColorArrayB() :: {}
 
 	const CamTable = CameraStore.ReturnCameraTable()
-	const ScreenVertices = {} :: { Vector3 }
+	const ScreenVertices = buffer.create(8 * 12) :: buffer
 	const ProjectedVertices = {} :: { Vector3 }
 	const ClipBufferA = {} :: { Vector3 }
 	const ClipBufferB = {} :: { Vector3 }
@@ -168,14 +186,49 @@ RunService.RenderStepped:Connect(function()
 		const PartColorG = ColorArrayG[i] :: number
 		const PartColorB = ColorArrayB[i] :: number
 
-		if not TargetPosition and TargetSize or PartColorR == nil or PartColorG == nil or PartColorB == nil then
+		if not TargetPosition or not TargetSize or PartColorR == nil or PartColorG == nil or PartColorB == nil then
 			continue
 		end
 
 		-- Variables
-		const R = math.floor(PartColorR * 255) :: number
-		const G = math.floor(PartColorG * 255) :: number
-		const B = math.floor(PartColorB * 255) :: number
+		local ShadedRHolder = math.floor(PartColorR * 255)
+		local ShadedGHolder = math.floor(PartColorG * 255)
+		local ShadedBHolder = math.floor(PartColorB * 255)
+
+		local HalfX, HalfY, HalfZ = TargetSize.X * 0.5, TargetSize.Y * 0.5, TargetSize.Z * 0.5
+		for VertexIndex = 1, 8 do
+			local Signs = PART_VERTEX_SIGNS[VertexIndex]
+			WorldVertices[VertexIndex] = TargetPosition
+				+ RightVector * (Signs.X * HalfX)
+				+ UpVector * (Signs.Y * HalfY)
+				- LookVector * (Signs.Z * HalfZ)
+		end
+
+		for FaceIndex = 1, 6 do
+			local TriangleOffset = (FaceIndex - 1) * 6
+			local V0Index = buffer.readu8(PART_TRIANGLES, TriangleOffset)
+			local V1Index = buffer.readu8(PART_TRIANGLES, TriangleOffset + 1)
+			local V2Index = buffer.readu8(PART_TRIANGLES, TriangleOffset + 2)
+			local V0 = WorldVertices[V0Index]
+			local V1 = WorldVertices[V1Index]
+			local V2 = WorldVertices[V2Index]
+			local FaceNormal = (V1 - V0):Cross(V2 - V0).Unit
+			local FaceCenter = (V0 + V1 + V2) * 0.33
+			local Sunlight = math.max(0, FaceNormal:Dot(SUN_DIRECTION))
+			local Illumination = AMBIENT_LIGHT + (1 - AMBIENT_LIGHT) * Sunlight
+
+			if Sunlight > 0 then
+				local RayOrigin = FaceCenter + SUN_DIRECTION * RAY_ORIGIN_BIAS
+				if workspace:Raycast(RayOrigin, SUN_DIRECTION * SUN_RAY_LENGTH) then
+					Illumination = AMBIENT_LIGHT
+				end
+			end
+
+			local FirstTriangleIndex = (FaceIndex - 1) * 2 + 1
+			local SecondTriangleIndex = FirstTriangleIndex + 1
+			FaceIllumination[FirstTriangleIndex] = Illumination
+			FaceIllumination[SecondTriangleIndex] = Illumination
+		end
 
 		-- Updates
 		RenderMath.GetPartCameraVertices(
@@ -194,6 +247,7 @@ RunService.RenderStepped:Connect(function()
 		-- Loop through all triangles
 
 		local MemoryOffset = 0
+
 		for TriangleIndex = 1, 12 do
 			local V0TRI = buffer.readu8(PART_TRIANGLES, MemoryOffset)
 			MemoryOffset += 1
@@ -201,6 +255,11 @@ RunService.RenderStepped:Connect(function()
 			MemoryOffset += 1
 			local V2TRI = buffer.readu8(PART_TRIANGLES, MemoryOffset)
 			MemoryOffset += 1
+
+			local Illumination = FaceIllumination[TriangleIndex]
+			local ShadedR = math.floor(ShadedRHolder * Illumination)
+			local ShadedG = math.floor(ShadedGHolder * Illumination)
+			local ShadedB = math.floor(ShadedBHolder * Illumination)
 
 			local ClippedVertexCount = RenderMath.ClipAndProjectTriangle(
 				ScreenVertices[V0TRI],
@@ -258,8 +317,16 @@ RunService.RenderStepped:Connect(function()
 				const RBOffset = buffer.readu32(OffsetBuffer, (SVIndex - 1) * 4) :: number -- Render buffer memory offset
 				const RenderBuffer = BufferTable[SVIndex] :: buffer
 
-				local RenderResult =
-					BufferHelper.CreateRenderBuffer(RenderBuffer, RBOffset, V0, V1, V2, R, G, B) :: number
+				local RenderResult = BufferHelper.CreateRenderBuffer(
+					RenderBuffer,
+					RBOffset,
+					V0,
+					V1,
+					V2,
+					ShadedR,
+					ShadedG,
+					ShadedB
+				) :: number
 
 				buffer.writeu32(OffsetBuffer, (SVIndex - 1) * 4, RenderResult)
 			end

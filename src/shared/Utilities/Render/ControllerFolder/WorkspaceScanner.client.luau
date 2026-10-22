@@ -20,6 +20,7 @@ local function AddPart(Child: BasePart)
 	local PartRightVectorArray = PartStore.ReturnRightVectorArray() :: { Vector3 }
 
 	local PartPositionArray = PartStore.ReturnPositionArray() :: { Vector3 }
+	local PartInstanceArray = PartStore.ReturnInstanceArray() :: { BasePart }
 
 	local ColorArrayR = PartStore.ReturnColorArrayR() :: {}
 	local ColorArrayG = PartStore.ReturnColorArrayG() :: {}
@@ -32,6 +33,7 @@ local function AddPart(Child: BasePart)
 				FreeSpots[i] = nil
 
 				PartPositionArray[Spot] = Child.Position
+				PartInstanceArray[Spot] = Child
 				PartLookVectorArray[Spot] = Child.CFrame.LookVector
 				PartUpVectorArray[Spot] = Child.CFrame.UpVector
 				PartRightVectorArray[Spot] = Child.CFrame.RightVector
@@ -47,6 +49,7 @@ local function AddPart(Child: BasePart)
 			end
 
 			PartPositionArray[GlobalId] = Child.Position
+			PartInstanceArray[GlobalId] = Child
 
 			PartLookVectorArray[GlobalId] = Child.CFrame.LookVector
 			PartUpVectorArray[GlobalId] = Child.CFrame.UpVector
@@ -76,6 +79,7 @@ Workspace.DescendantAdded:Connect(AddPart)
 Workspace.DescendantRemoving:Connect(function(Child: BasePart)
 	local PartSizeArray = PartStore.ReturnSizeArray() :: { Vector3 }
 	local PartPositionArray = PartStore.ReturnPositionArray() :: { Vector3 }
+	local PartInstanceArray = PartStore.ReturnInstanceArray() :: { BasePart }
 
 	local PartLookVectorArray = PartStore.ReturnLookVectorArray() :: { Vector3 }
 	local PartUpVectorArray = PartStore.ReturnUpVectorArray() :: { Vector3 }
@@ -95,6 +99,7 @@ Workspace.DescendantRemoving:Connect(function(Child: BasePart)
 				PartSizeArray[ChildId] = nil
 
 				PartPositionArray[ChildId] = nil
+				PartInstanceArray[ChildId] = nil
 
 				PartLookVectorArray[ChildId] = nil
 				PartUpVectorArray[ChildId] = nil

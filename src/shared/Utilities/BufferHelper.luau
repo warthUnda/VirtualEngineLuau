@@ -135,4 +135,11 @@ function BufferHelper.ClearBuffers(TOTAL_PIXELS: number, PixelBuffer: buffer, ZB
 	end
 end
 
+function BufferHelper.ConvertVector3ToBuffer(TargetBuffer: buffer, MemoryOffset: number, Vector3: Vector3)
+	buffer.writef32(TargetBuffer, MemoryOffset, Vector3.X)
+	buffer.writef32(TargetBuffer, MemoryOffset + 4, Vector3.Y)
+	buffer.writef32(TargetBuffer, MemoryOffset + 8, Vector3.Z)
+	return MemoryOffset + 12
+end
+
 return BufferHelper

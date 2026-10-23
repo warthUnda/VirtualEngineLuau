@@ -14,57 +14,16 @@ local MathModule = require(game.ReplicatedStorage.Shared.Utilities.Functions.Mat
 -- 1. FUNCTIONS - RENDERING MATH
 -- ============================================================================
 
--- Gets the vertices of a part in 3D space
-function HelperFunction.GetPartWorldVertices(
-	Position: Vector3,
-	LookVector: Vector3,
-	UpVector: Vector3,
-	RightVector: Vector3,
-	Size: Vector3,
+local function divisibleBy4(n: number): boolean
+	return bit32.band(n, 3) == 0
+end
 
-	ScreenVertice: {},
-	CamPosition: Vector3,
-	CamRight: Vector3,
-	CamUp: Vector3,
-	CamLook: Vector3,
-	FovY: number,
-	WIDTH: number,
-	HEIGHT: number
-) -- Is local number only memory offset, wont get updated
-	-- Define matrix data
-	const Hx: number, Hy: number, Hz: number = Size.X * 0.5, Size.Y * 0.5, Size.Z * 0.5
+local function DivisibleBy2(n: number): boolean
+	return bit32.band(n, 1) == 0
+end
 
-	local function TransformPoint(lx: number, ly: number, lz: number): Vector3
-		return Position + (RightVector * lx) + (UpVector * ly) - (LookVector * lz)
-	end
-
-	-- Convert 3D to 2D and store it in our vertices table, Vector3's
-	local v1 = TransformPoint(-Hx, -Hy, -Hz)
-	local v2 = TransformPoint(Hx, -Hy, -Hz)
-	local v3 = TransformPoint(Hx, Hy, -Hz)
-	local v4 = TransformPoint(-Hx, Hy, -Hz)
-	local v5 = TransformPoint(-Hx, -Hy, Hz)
-	local v6 = TransformPoint(Hx, -Hy, Hz)
-	local v7 = TransformPoint(Hx, Hy, Hz)
-	local v8 = TransformPoint(-Hx, Hy, Hz)
-
-	-- Project world vertices to screen space
-	ScreenVertice[1] =
-		HelperFunction.ProjectWorldPointToScreen(v1, CamPosition, CamRight, CamUp, CamLook, FovY, WIDTH, HEIGHT)
-	ScreenVertice[2] =
-		HelperFunction.ProjectWorldPointToScreen(v2, CamPosition, CamRight, CamUp, CamLook, FovY, WIDTH, HEIGHT)
-	ScreenVertice[3] =
-		HelperFunction.ProjectWorldPointToScreen(v3, CamPosition, CamRight, CamUp, CamLook, FovY, WIDTH, HEIGHT)
-	ScreenVertice[4] =
-		HelperFunction.ProjectWorldPointToScreen(v4, CamPosition, CamRight, CamUp, CamLook, FovY, WIDTH, HEIGHT)
-	ScreenVertice[5] =
-		HelperFunction.ProjectWorldPointToScreen(v5, CamPosition, CamRight, CamUp, CamLook, FovY, WIDTH, HEIGHT)
-	ScreenVertice[6] =
-		HelperFunction.ProjectWorldPointToScreen(v6, CamPosition, CamRight, CamUp, CamLook, FovY, WIDTH, HEIGHT)
-	ScreenVertice[7] =
-		HelperFunction.ProjectWorldPointToScreen(v7, CamPosition, CamRight, CamUp, CamLook, FovY, WIDTH, HEIGHT)
-	ScreenVertice[8] =
-		HelperFunction.ProjectWorldPointToScreen(v8, CamPosition, CamRight, CamUp, CamLook, FovY, WIDTH, HEIGHT)
+local function DivisibleBy3(n: number): boolean
+	return bit32.band(n, 2) == 0
 end
 
 -- Projects a point in 3D space to 2D screen space
@@ -111,7 +70,7 @@ function HelperFunction.GetPartCameraVertices(
 	UpVector: Vector3,
 	RightVector: Vector3,
 	Size: Vector3,
-	CameraVertices: { Vector3 },
+	CameraVertices: buffer,
 	CamPosition: Vector3,
 	CamRight: Vector3,
 	CamUp: Vector3,
@@ -119,63 +78,78 @@ function HelperFunction.GetPartCameraVertices(
 )
 	const Hx: number, Hy: number, Hz: number = Size.X * 0.5, Size.Y * 0.5, Size.Z * 0.5
 
-	local function TransformPoint(LX: number, LY: number, LZ: number): Vector3
+	local function TransformPoint(LX: number, LY: number, LZ: number, VertexIndex: number)
 		local WorldPoint = Position + RightVector * LX + UpVector * LY - LookVector * LZ
 		local Relative = WorldPoint - CamPosition
 
-		return Vector3.new(
-			Relative.X * CamRight.X + Relative.Y * CamRight.Y + Relative.Z * CamRight.Z,
-			Relative.X * CamUp.X + Relative.Y * CamUp.Y + Relative.Z * CamUp.Z,
+		local Offset = (VertexIndex - 1) * 12
+		buffer.writef32(
+			CameraVertices,
+			Offset,
+			Relative.X * CamRight.X + Relative.Y * CamRight.Y + Relative.Z * CamRight.Z
+		)
+		buffer.writef32(CameraVertices, Offset + 4, Relative.X * CamUp.X + Relative.Y * CamUp.Y + Relative.Z * CamUp.Z)
+		buffer.writef32(
+			CameraVertices,
+			Offset + 8,
 			Relative.X * CamLook.X + Relative.Y * CamLook.Y + Relative.Z * CamLook.Z
 		)
 	end
 
-	CameraVertices[1] = TransformPoint(-Hx, -Hy, -Hz)
-	CameraVertices[2] = TransformPoint(Hx, -Hy, -Hz)
-	CameraVertices[3] = TransformPoint(Hx, Hy, -Hz)
-	CameraVertices[4] = TransformPoint(-Hx, Hy, -Hz)
-	CameraVertices[5] = TransformPoint(-Hx, -Hy, Hz)
-	CameraVertices[6] = TransformPoint(Hx, -Hy, Hz)
-	CameraVertices[7] = TransformPoint(Hx, Hy, Hz)
-	CameraVertices[8] = TransformPoint(-Hx, Hy, Hz)
+	TransformPoint(-Hx, -Hy, -Hz, 1)
+	TransformPoint(Hx, -Hy, -Hz, 2)
+	TransformPoint(Hx, Hy, -Hz, 3)
+	TransformPoint(-Hx, Hy, -Hz, 4)
+	TransformPoint(-Hx, -Hy, Hz, 5)
+	TransformPoint(Hx, -Hy, Hz, 6)
+	TransformPoint(Hx, Hy, Hz, 7)
+	TransformPoint(-Hx, Hy, Hz, 8)
 end
 
 local function ClipPolygon(
-	Input: { Vector3 },
+	Input: buffer,
 	InputCount: number,
-	Output: { Vector3 },
+	Output: buffer,
 	PlaneX: number,
 	PlaneY: number,
 	PlaneZ: number,
 	PlaneOffset: number
 ): number
-	table.clear(Output)
 	if InputCount == 0 then
 		return 0
 	end
 
 	local OutputCount = 0
-	local Previous = Input[InputCount]
-	local PreviousDistance = Previous.X * PlaneX + Previous.Y * PlaneY + Previous.Z * PlaneZ + PlaneOffset
+	local PreviousOffset = (InputCount - 1) * 12
+	local PreviousX = buffer.readf32(Input, PreviousOffset)
+	local PreviousY = buffer.readf32(Input, PreviousOffset + 4)
+	local PreviousZ = buffer.readf32(Input, PreviousOffset + 8)
+	local PreviousDistance = PreviousX * PlaneX + PreviousY * PlaneY + PreviousZ * PlaneZ + PlaneOffset
 
 	for i = 1, InputCount do
-		local Current = Input[i]
-		local CurrentDistance = Current.X * PlaneX + Current.Y * PlaneY + Current.Z * PlaneZ + PlaneOffset
+		local CurrentOffset = (i - 1) * 12
+		local CurrentX = buffer.readf32(Input, CurrentOffset)
+		local CurrentY = buffer.readf32(Input, CurrentOffset + 4)
+		local CurrentZ = buffer.readf32(Input, CurrentOffset + 8)
+		local CurrentDistance = CurrentX * PlaneX + CurrentY * PlaneY + CurrentZ * PlaneZ + PlaneOffset
 		local PreviousInside = PreviousDistance >= 0
 		local CurrentInside = CurrentDistance >= 0
 
 		if PreviousInside ~= CurrentInside then
 			local T = PreviousDistance / (PreviousDistance - CurrentDistance)
 			OutputCount += 1
-			Output[OutputCount] = Previous + (Current - Previous) * T
+			local OutputOffset = (OutputCount - 1) * 12
+			buffer.writef32(Output, OutputOffset, PreviousX + (CurrentX - PreviousX) * T)
+			buffer.writef32(Output, OutputOffset + 4, PreviousY + (CurrentY - PreviousY) * T)
+			buffer.writef32(Output, OutputOffset + 8, PreviousZ + (CurrentZ - PreviousZ) * T)
 		end
 
 		if CurrentInside then
 			OutputCount += 1
-			Output[OutputCount] = Current
+			buffer.copy(Output, (OutputCount - 1) * 12, Input, CurrentOffset, 12)
 		end
 
-		Previous = Current
+		PreviousX, PreviousY, PreviousZ = CurrentX, CurrentY, CurrentZ
 		PreviousDistance = CurrentDistance
 	end
 
@@ -183,19 +157,20 @@ local function ClipPolygon(
 end
 
 function HelperFunction.ClipAndProjectTriangle(
-	V0: Vector3,
-	V1: Vector3,
-	V2: Vector3,
-	ProjectedVertices: { Vector3 },
-	ClipBufferA: { Vector3 },
-	ClipBufferB: { Vector3 },
+	CameraVertices: buffer,
+	V0Index: number,
+	V1Index: number,
+	V2Index: number,
+	ProjectedVertices: buffer,
+	ClipBufferA: buffer,
+	ClipBufferB: buffer,
 	FovY: number,
 	WIDTH: number,
 	HEIGHT: number
 ): number
-	ClipBufferA[1] = V0
-	ClipBufferA[2] = V1
-	ClipBufferA[3] = V2
+	buffer.copy(ClipBufferA, 0, CameraVertices, (V0Index - 1) * 12, 12)
+	buffer.copy(ClipBufferA, 12, CameraVertices, (V1Index - 1) * 12, 12)
+	buffer.copy(ClipBufferA, 24, CameraVertices, (V2Index - 1) * 12, 12)
 
 	const FocalLength = (HEIGHT * 0.5) / math.tan(math.rad(FovY) * 0.5) :: number
 	const GuardBandX = (WIDTH * 0.5 * GUARD_BAND_SCALE) / FocalLength
@@ -203,13 +178,17 @@ function HelperFunction.ClipAndProjectTriangle(
 
 	local FullyInside = true
 	for i = 1, 3 do
-		local Point = ClipBufferA[i]
-		if Point.Z < NEAR_CLIP
-			or Point.Z > FAR_CLIP
-			or Point.X + GuardBandX * Point.Z < 0
-			or -Point.X + GuardBandX * Point.Z < 0
-			or Point.Y + GuardBandY * Point.Z < 0
-			or -Point.Y + GuardBandY * Point.Z < 0
+		local Offset = (i - 1) * 12
+		local X = buffer.readf32(ClipBufferA, Offset)
+		local Y = buffer.readf32(ClipBufferA, Offset + 4)
+		local Z = buffer.readf32(ClipBufferA, Offset + 8)
+		if
+			Z < NEAR_CLIP
+			or Z > FAR_CLIP
+			or X + GuardBandX * Z < 0
+			or -X + GuardBandX * Z < 0
+			or Y + GuardBandY * Z < 0
+			or -Y + GuardBandY * Z < 0
 		then
 			FullyInside = false
 			break
@@ -218,12 +197,13 @@ function HelperFunction.ClipAndProjectTriangle(
 
 	if FullyInside then
 		for i = 1, 3 do
-			local CameraPoint = ClipBufferA[i]
-			ProjectedVertices[i] = Vector3.new(
-				math.floor((CameraPoint.X / CameraPoint.Z) * FocalLength + WIDTH * 0.5),
-				math.floor((-CameraPoint.Y / CameraPoint.Z) * FocalLength + HEIGHT * 0.5),
-				CameraPoint.Z
-			)
+			local Offset = (i - 1) * 12
+			local X = buffer.readf32(ClipBufferA, Offset)
+			local Y = buffer.readf32(ClipBufferA, Offset + 4)
+			local Z = buffer.readf32(ClipBufferA, Offset + 8)
+			buffer.writef32(ProjectedVertices, Offset, math.floor((X / Z) * FocalLength + WIDTH * 0.5))
+			buffer.writef32(ProjectedVertices, Offset + 4, math.floor((-Y / Z) * FocalLength + HEIGHT * 0.5))
+			buffer.writef32(ProjectedVertices, Offset + 8, Z)
 		end
 		return 3
 	end
@@ -245,12 +225,13 @@ function HelperFunction.ClipAndProjectTriangle(
 	VertexCount = ClipPolygon(Input, VertexCount, Output, 0, -1, GuardBandY, 0)
 
 	for i = 1, VertexCount do
-		local CameraPoint = Output[i]
-		ProjectedVertices[i] = Vector3.new(
-			math.floor((CameraPoint.X / CameraPoint.Z) * FocalLength + WIDTH * 0.5),
-			math.floor((-CameraPoint.Y / CameraPoint.Z) * FocalLength + HEIGHT * 0.5),
-			CameraPoint.Z
-		)
+		local Offset = (i - 1) * 12
+		local X = buffer.readf32(Output, Offset)
+		local Y = buffer.readf32(Output, Offset + 4)
+		local Z = buffer.readf32(Output, Offset + 8)
+		buffer.writef32(ProjectedVertices, Offset, math.floor((X / Z) * FocalLength + WIDTH * 0.5))
+		buffer.writef32(ProjectedVertices, Offset + 4, math.floor((-Y / Z) * FocalLength + HEIGHT * 0.5))
+		buffer.writef32(ProjectedVertices, Offset + 8, Z)
 	end
 
 	return VertexCount
@@ -289,12 +270,21 @@ function HelperFunction.DrawTriangle(
 	const InvArea = 1 / Area :: number
 
 	-- Begin drawing the raw pixels (Fills a box)
-	for Y: number = MinY, MaxY do
-		for X: number = MinX, MaxX do
-			const W0 = MathModule.EdgeFunction(X1, Y1, X2, Y2, X, Y) :: number
-			const W1 = MathModule.EdgeFunction(X2, Y2, X0, Y0, X, Y) :: number
-			const W2 = MathModule.EdgeFunction(X0, Y0, X1, Y1, X, Y) :: number
 
+	for Y: number = MinY, MaxY, 2 do
+		const W00 = MathModule.EdgeFunction(X1, Y1, X2, Y2, MinX, Y) :: number
+		const W10 = MathModule.EdgeFunction(X2, Y2, X0, Y0, MinX, Y) :: number
+		const W20 = MathModule.EdgeFunction(X0, Y0, X1, Y1, MinX, Y) :: number
+
+		const W01 = MathModule.EdgeFunction(X1, Y1, X2, Y2, MinX + 2, Y) :: number
+		const W11 = MathModule.EdgeFunction(X2, Y2, X0, Y0, MinX + 2, Y) :: number
+		const W21 = MathModule.EdgeFunction(X0, Y0, X1, Y1, MinX + 2, Y) :: number
+
+		for X: number = MinX, MaxX, 2 do
+			const XStep = (X - MinX) * 0.5 :: number
+			const W0 = W00 + (W01 - W00) * XStep
+			const W1 = W10 + (W11 - W10) * XStep
+			const W2 = W20 + (W21 - W20) * XStep
 			-- Check if the object (triangle) is visible
 			if W0 >= 0 and W1 >= 0 and W2 >= 0 then
 				const L0 = W0 * InvArea :: number
@@ -304,13 +294,16 @@ function HelperFunction.DrawTriangle(
 				const InterpolatedInvZ = L0 * invZ0 + L1 * invZ1 + L2 * invZ2 :: number
 				const CurrentZ = MathModule.solveCurrentZ(InterpolatedInvZ, FRSBuffer) :: number -- Checks if the object is in front of the camera
 
-				local XYWidth = Y * WIDTH + X :: number
+				for PixelY = Y, math.min(Y + 1, HEIGHT - 1) do
+					for PixelX = X, math.min(X + 1, WIDTH - 1) do
+						const XYWidth = PixelY * WIDTH + PixelX :: number
+						const bufferOffset = XYWidth * 4 :: number
 
-				const bufferOffset = XYWidth * 4 :: number
-
-				if CurrentZ < buffer.readf32(ZBuffer, bufferOffset) then -- Checks if the pixel is closer to the camera
-					buffer.writef32(ZBuffer, bufferOffset, CurrentZ)
-					BufferHelper.BufferPixelWrite(PixelBuffer, (XYWidth * 4), R, G, B, 255)
+						if CurrentZ < buffer.readf32(ZBuffer, bufferOffset) then -- Checks if the pixel is closer to the camera
+							buffer.writef32(ZBuffer, bufferOffset, CurrentZ)
+							BufferHelper.BufferPixelWrite(PixelBuffer, bufferOffset, R, G, B, 255)
+						end
+					end
 				end
 			end
 		end

@@ -49,6 +49,9 @@ const SUN_DIRECTION = Vector3.new(-0.4, 0.85, -0.35).Unit
 const SUN_RAY_LENGTH = 15000
 const AMBIENT_LIGHT = 0.3
 const RAY_ORIGIN_BIAS = 0.05
+const SHADOW_CACHE_REFRESH = 0.5
+const SHADOW_CACHE_MOVE_EPSILON = 0.25
+const MAX_SHADOW_RAYS_PER_FRAME = 8
 const PART_VERTEX_SIGNS = {
 	Vector3.new(-1, -1, -1),
 	Vector3.new(1, -1, -1),
@@ -76,9 +79,43 @@ local SphereVertices = RenderConfigs.GetSphereVertices() :: { Vector3 }
 -- Buffers
 const FinalPixel = buffer.create(TOTAL_PIXELS * 4) :: buffer
 const FinalZ = buffer.create(TOTAL_PIXELS * 4) :: buffer
+local WorldVertices = buffer.create(8 * 12)
+local FaceIllumination = buffer.create(12 * 4)
+local ShadowCacheParts = {} :: { BasePart }
+local ShadowCachePositions = {} :: { Vector3 }
+local ShadowCacheNormals = {} :: { Vector3 }
+local ShadowCacheResults = {} :: { boolean }
+local ShadowCacheUpdatedAt = {} :: { number }
+local PendingShadowSamples = {} :: { number }
+local PendingShadowOrigins = {} :: { Vector3 }
+local PendingShadowNormals = {} :: { Vector3 }
+local PendingShadowParts = {} :: { BasePart }
+local ShadowRayParams = RaycastParams.new()
+ShadowRayParams.FilterType = Enum.RaycastFilterType.Exclude
 local ShadowRayExcludes = table.create(2) :: { Instance }
-local WorldVertices = table.create(8) :: { Vector3 }
-local FaceIllumination = table.create(12) :: { number }
+local ScreenVertices = buffer.create(8 * 12)
+local ProjectedVertices = buffer.create(12 * 12)
+local ClipBufferA = buffer.create(12 * 12)
+local ClipBufferB = buffer.create(12 * 12)
+
+local function ReadProjectedVertex(VertexIndex: number): Vector3
+	local Offset = (VertexIndex - 1) * 12
+	return Vector3.new(
+		buffer.readf32(ProjectedVertices, Offset),
+		buffer.readf32(ProjectedVertices, Offset + 4),
+		buffer.readf32(ProjectedVertices, Offset + 8)
+	)
+end
+
+local function QueueShadowSample(SampleIndex: number, Part: BasePart, Origin: Vector3, Normal: Vector3)
+	if PendingShadowOrigins[SampleIndex] == nil then
+		PendingShadowSamples[#PendingShadowSamples + 1] = SampleIndex
+	end
+
+	PendingShadowOrigins[SampleIndex] = Origin
+	PendingShadowNormals[SampleIndex] = Normal
+	PendingShadowParts[SampleIndex] = Part
+end
 
 -- Create Information Data for workers
 for i = 1, ActorCount do
@@ -150,10 +187,6 @@ RunService.RenderStepped:Connect(function()
 	local ColorArrayB = PartStore.ReturnColorArrayB() :: {}
 
 	const CamTable = CameraStore.ReturnCameraTable()
-	const ScreenVertices = buffer.create(8 * 12) :: buffer
-	const ProjectedVertices = {} :: { Vector3 }
-	const ClipBufferA = {} :: { Vector3 }
-	const ClipBufferB = {} :: { Vector3 }
 
 	local CamPosition = CameraStore.ReturnCameraPosition()
 	local CamRight = CameraStore.ReturnCameraRight()
@@ -174,9 +207,16 @@ RunService.RenderStepped:Connect(function()
 		buffer.writef32(ScoreBuffer, (i - 1) * 4, 0)
 	end
 
+	table.clear(PendingShadowSamples)
+	table.clear(PendingShadowOrigins)
+	table.clear(PendingShadowNormals)
+	table.clear(PendingShadowParts)
+	local ShadowCacheTime = os.clock()
+
 	-- Loop through all parts
 	for i = 1, #PartPositionArray do
 		const TargetPosition = PartPositionArray[i] :: Vector3
+		local TargetPart = PartInstanceArray[i] :: BasePart?
 		local LookVector = PartLookVectorArray[i] :: Vector3
 		local UpVector = PartUpVectorArray[i] :: Vector3
 		local RightVector = PartRightVectorArray[i] :: Vector3
@@ -185,6 +225,8 @@ RunService.RenderStepped:Connect(function()
 		const PartColorR = ColorArrayR[i] :: number
 		const PartColorG = ColorArrayG[i] :: number
 		const PartColorB = ColorArrayB[i] :: number
+
+		-- 2.5 miliseconds part here:
 
 		if not TargetPosition or not TargetSize or PartColorR == nil or PartColorG == nil or PartColorB == nil then
 			continue
@@ -198,10 +240,14 @@ RunService.RenderStepped:Connect(function()
 		local HalfX, HalfY, HalfZ = TargetSize.X * 0.5, TargetSize.Y * 0.5, TargetSize.Z * 0.5
 		for VertexIndex = 1, 8 do
 			local Signs = PART_VERTEX_SIGNS[VertexIndex]
-			WorldVertices[VertexIndex] = TargetPosition
+			local WorldPosition = TargetPosition
 				+ RightVector * (Signs.X * HalfX)
 				+ UpVector * (Signs.Y * HalfY)
 				- LookVector * (Signs.Z * HalfZ)
+			local VertexOffset = (VertexIndex - 1) * 12
+			buffer.writef32(WorldVertices, VertexOffset, WorldPosition.X)
+			buffer.writef32(WorldVertices, VertexOffset + 4, WorldPosition.Y)
+			buffer.writef32(WorldVertices, VertexOffset + 8, WorldPosition.Z)
 		end
 
 		for FaceIndex = 1, 6 do
@@ -209,26 +255,72 @@ RunService.RenderStepped:Connect(function()
 			local V0Index = buffer.readu8(PART_TRIANGLES, TriangleOffset)
 			local V1Index = buffer.readu8(PART_TRIANGLES, TriangleOffset + 1)
 			local V2Index = buffer.readu8(PART_TRIANGLES, TriangleOffset + 2)
-			local V0 = WorldVertices[V0Index]
-			local V1 = WorldVertices[V1Index]
-			local V2 = WorldVertices[V2Index]
+			local V0Offset = (V0Index - 1) * 12
+			local V1Offset = (V1Index - 1) * 12
+			local V2Offset = (V2Index - 1) * 12
+			local V0 = Vector3.new(
+				buffer.readf32(WorldVertices, V0Offset),
+				buffer.readf32(WorldVertices, V0Offset + 4),
+				buffer.readf32(WorldVertices, V0Offset + 8)
+			)
+			local V1 = Vector3.new(
+				buffer.readf32(WorldVertices, V1Offset),
+				buffer.readf32(WorldVertices, V1Offset + 4),
+				buffer.readf32(WorldVertices, V1Offset + 8)
+			)
+			local V2 = Vector3.new(
+				buffer.readf32(WorldVertices, V2Offset),
+				buffer.readf32(WorldVertices, V2Offset + 4),
+				buffer.readf32(WorldVertices, V2Offset + 8)
+			)
 			local FaceNormal = (V1 - V0):Cross(V2 - V0).Unit
 			local FaceCenter = (V0 + V1 + V2) * 0.33
 			local Sunlight = math.max(0, FaceNormal:Dot(SUN_DIRECTION))
 			local Illumination = AMBIENT_LIGHT + (1 - AMBIENT_LIGHT) * Sunlight
 
-			if Sunlight > 0 then
-				local RayOrigin = FaceCenter + SUN_DIRECTION * RAY_ORIGIN_BIAS
-				if workspace:Raycast(RayOrigin, SUN_DIRECTION * SUN_RAY_LENGTH) then
-					Illumination = AMBIENT_LIGHT
-				end
-			end
-
 			local FirstTriangleIndex = (FaceIndex - 1) * 2 + 1
 			local SecondTriangleIndex = FirstTriangleIndex + 1
-			FaceIllumination[FirstTriangleIndex] = Illumination
-			FaceIllumination[SecondTriangleIndex] = Illumination
+			local CacheIndex = (i - 1) * 6 + FaceIndex
+			local CachedShadow = false
+
+			if Sunlight > 0 and TargetPart then
+				if ShadowCacheParts[CacheIndex] ~= TargetPart then
+					ShadowCacheParts[CacheIndex] = TargetPart
+					ShadowCachePositions[CacheIndex] = nil
+					ShadowCacheNormals[CacheIndex] = nil
+					ShadowCacheResults[CacheIndex] = nil
+					ShadowCacheUpdatedAt[CacheIndex] = nil
+				end
+
+				local CachedPosition = ShadowCachePositions[CacheIndex]
+				local CachedNormal = ShadowCacheNormals[CacheIndex]
+				local Moved = not CachedPosition
+					or (FaceCenter - CachedPosition).Magnitude > SHADOW_CACHE_MOVE_EPSILON
+					or not CachedNormal
+					or FaceNormal:Dot(CachedNormal) < 0.99
+				local UpdatedAt = ShadowCacheUpdatedAt[CacheIndex]
+				local Expired = not UpdatedAt or ShadowCacheTime - UpdatedAt >= SHADOW_CACHE_REFRESH
+
+				if Moved or Expired then
+					QueueShadowSample(
+						CacheIndex,
+						TargetPart,
+						FaceCenter + SUN_DIRECTION * RAY_ORIGIN_BIAS,
+						FaceNormal
+					)
+				end
+				CachedShadow = ShadowCacheResults[CacheIndex] == true
+			end
+
+			if CachedShadow then
+				Illumination = AMBIENT_LIGHT
+			end
+
+			buffer.writef32(FaceIllumination, (FirstTriangleIndex - 1) * 4, Illumination)
+			buffer.writef32(FaceIllumination, (SecondTriangleIndex - 1) * 4, Illumination)
 		end
+
+		-- 2.5 miliseconds part here:
 
 		-- Updates
 		RenderMath.GetPartCameraVertices(
@@ -245,6 +337,7 @@ RunService.RenderStepped:Connect(function()
 		)
 
 		-- Loop through all triangles
+		-- 1.49 miliseconds part here:
 
 		local MemoryOffset = 0
 
@@ -256,15 +349,16 @@ RunService.RenderStepped:Connect(function()
 			local V2TRI = buffer.readu8(PART_TRIANGLES, MemoryOffset)
 			MemoryOffset += 1
 
-			local Illumination = FaceIllumination[TriangleIndex]
+			local Illumination = buffer.readf32(FaceIllumination, (TriangleIndex - 1) * 4)
 			local ShadedR = math.floor(ShadedRHolder * Illumination)
 			local ShadedG = math.floor(ShadedGHolder * Illumination)
 			local ShadedB = math.floor(ShadedBHolder * Illumination)
 
 			local ClippedVertexCount = RenderMath.ClipAndProjectTriangle(
-				ScreenVertices[V0TRI],
-				ScreenVertices[V1TRI],
-				ScreenVertices[V2TRI],
+				ScreenVertices,
+				V0TRI,
+				V1TRI,
+				V2TRI,
 				ProjectedVertices,
 				ClipBufferA,
 				ClipBufferB,
@@ -274,9 +368,9 @@ RunService.RenderStepped:Connect(function()
 			)
 
 			for ClippedTriangleIndex = 2, ClippedVertexCount - 1 do
-				const V0 = ProjectedVertices[1] :: Vector3
-				const V1 = ProjectedVertices[ClippedTriangleIndex] :: Vector3
-				const V2 = ProjectedVertices[ClippedTriangleIndex + 1] :: Vector3
+				const V0 = ReadProjectedVertex(1)
+				const V1 = ReadProjectedVertex(ClippedTriangleIndex)
+				const V2 = ReadProjectedVertex(ClippedTriangleIndex + 1)
 
 				-- Variables
 				const X0: number, Y0: number = V0.X, V0.Y
@@ -331,9 +425,24 @@ RunService.RenderStepped:Connect(function()
 				buffer.writeu32(OffsetBuffer, (SVIndex - 1) * 4, RenderResult)
 			end
 		end
-
-		table.clear(ScreenVertices)
 	end
+
+	local ShadowRayCount = math.min(#PendingShadowSamples, MAX_SHADOW_RAYS_PER_FRAME)
+	for PendingIndex = 1, ShadowRayCount do
+		local SampleIndex = PendingShadowSamples[PendingIndex]
+		local TargetPart = PendingShadowParts[SampleIndex]
+		ShadowRayExcludes[1] = TargetPart
+		ShadowRayExcludes[2] = Player.Character
+		ShadowRayParams.FilterDescendantsInstances = ShadowRayExcludes
+		local RayOrigin = PendingShadowOrigins[SampleIndex]
+		ShadowCacheResults[SampleIndex] =
+			workspace:Raycast(RayOrigin, SUN_DIRECTION * SUN_RAY_LENGTH, ShadowRayParams) ~= nil
+		ShadowCachePositions[SampleIndex] = RayOrigin - SUN_DIRECTION * RAY_ORIGIN_BIAS
+		ShadowCacheNormals[SampleIndex] = PendingShadowNormals[SampleIndex]
+		ShadowCacheUpdatedAt[SampleIndex] = ShadowCacheTime
+	end
+
+	-- 1.49 miliseconds part here:
 
 	-- Sends the information to all workers workers
 	for i, TargetActor: Actor in ipairs(PlayerScripts:WaitForChild("WorkerFolder"):GetChildren()) do

@@ -1,8 +1,8 @@
 local HeightmapImporterService = game:GetService("HeightmapImporterService")
 local RenderConfigs = {}
 
-local WIDTH = 65 :: number
-local HEIGHT = 65 :: number
+local WIDTH = 100 :: number
+local HEIGHT = 100 :: number
 
 local ActorNumbers = 3 :: number
 

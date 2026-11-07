@@ -8,12 +8,12 @@ const ControllerActor =
 const SelfActor = script.Parent :: Actor
 
 -- Modules --
-const BufferHelper = require(game.ReplicatedStorage.Shared.Utilities.BufferHelper) :: ModuleScript
-const RenderMath = require(game.ReplicatedStorage.Shared.Utilities.Render.RenderMath) :: ModuleScript
-const RenderConfigs = require(game.StarterPlayer.StarterPlayerScripts.Client.RenderConfigs) :: ModuleScript
+const BufferHelper = require(game.ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper) :: ModuleScript
+const RenderMath = require(game.ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath) :: ModuleScript
+const RenderConfigs = require(game.ReplicatedStorage.Shared.Utilities.Render.RenderConfigs) :: ModuleScript
 
 -- Configs
-local WIDTH: number, HEIGHT: number = RenderConfigs.ReturnDimensions2D()
+local WIDTH: number, HEIGHT: number = RenderConfigs.GetDimensions2D()
 const TOTAL_PIXELS = WIDTH * HEIGHT :: number
 
 local BufferLayoutSize = BufferHelper.RenderBufferLayoutSize :: number
@@ -35,7 +35,7 @@ SelfActor:BindToMessageParallel("Execute Rendering", function(RenderBuffer: buff
 
 	ReadMemoryOffset = 0
 
-	WIDTH, HEIGHT = RenderConfigs.ReturnDimensions2D()
+	WIDTH, HEIGHT = RenderConfigs.GetDimensions2D()
 
 	for i = 1, ByteCount / BufferLayoutSize do
 		const V0X = buffer.readi16(RenderBuffer, ReadMemoryOffset) :: number

@@ -1,4 +1,4 @@
---!native
+NERYTDAM--!native
 --!optimize 2
 
 -- Services --
@@ -18,32 +18,32 @@ const Camera = workspace.CurrentCamera :: Camera
 const SelfActor = script.Parent :: Actor
 
 -- Modules --
-const BufferHelper = require(ReplicatedStorage.Shared.Utilities.BufferHelper) :: ModuleScript
+const BufferIO = require(ReplicatedStorage.Shared.Utilities.Render.Buffer.BufferIO) :: ModuleScript
 
-const RenderConfigs = require(game.StarterPlayer.StarterPlayerScripts.Client.RenderConfigs) :: ModuleScript
-const RenderMath = require(game.ReplicatedStorage.Shared.Utilities.Render.RenderMath) :: ModuleScript
-const MathModule = require(game.ReplicatedStorage.Shared.Utilities.Functions.MathModule)
+const RenderConfig = require(game.ReplicatedStorage.Shared.Utilities.Render.Config.RenderConfig) :: ModuleScript
+const RenderMath = require(game.ReplicatedStorage.Shared.Utilities.Render.Math.RenderMath) :: ModuleScript
+const RasterMath = require(game.ReplicatedStorage.Shared.Utilities.Render.Math.RasterMath)
 
-const CameraStore = require(
+const CameraState = require(
 	ReplicatedStorage:WaitForChild("Shared")
 		:WaitForChild("Utilities")
 		:WaitForChild("Render")
-		:WaitForChild("ControllerFolder")
-		:WaitForChild("CameraStore")
+		:WaitForChild("Camera")
+		:WaitForChild("CameraState")
 ) :: ModuleScript
 
 local CameraService = require(
 	ReplicatedStorage:WaitForChild("Shared")
 		:WaitForChild("Utilities")
 		:WaitForChild("Render")
-		:WaitForChild("ControllerFolder")
+		:WaitForChild("Camera")
 		:WaitForChild("CameraService")
 )
 
-const PartStore = require(script.Parent.PartStores) :: ModuleScript
+const PartStore = require(script.Parent.PartStore) :: ModuleScript
 
 -- Configs --
-const WIDTH: number, HEIGHT: number = RenderConfigs.ReturnDimensions2D()
+const WIDTH: number, HEIGHT: number = RenderConfig.GetDimensions2D()
 const TOTAL_PIXELS = WIDTH * HEIGHT :: number
 const SUN_DIRECTION = Vector3.new(-0.4, 0.85, -0.35).Unit
 const SUN_RAY_LENGTH = 15000
@@ -63,7 +63,7 @@ const PART_VERTEX_SIGNS = {
 	Vector3.new(-1, 1, 1),
 }
 
-const ActorCount = RenderConfigs.GetActorCount() :: number
+const ActorCount = RenderConfig.GetActorCount() :: number
 
 local Received = 0 :: number
 local CurrentFrame = 0 :: number

@@ -13,39 +13,39 @@ local ColorArrayR = {}
 local ColorArrayG = {}
 local ColorArrayB = {}
 
-function PartStore.ReturnColorArrayR()
+function PartStore.GetColorArrayR()
 	return ColorArrayR
 end
 
-function PartStore.ReturnColorArrayG()
+function PartStore.GetColorArrayG()
 	return ColorArrayG
 end
 
-function PartStore.ReturnColorArrayB()
+function PartStore.GetColorArrayB()
 	return ColorArrayB
 end
 
-function PartStore.ReturnSizeArray()
+function PartStore.GetSizeArray()
 	return PartSizeArray
 end
 
-function PartStore.ReturnPositionArray()
+function PartStore.GetPositionArray()
 	return PartPositionArray
 end
 
-function PartStore.ReturnInstanceArray()
+function PartStore.GetInstanceArray()
 	return PartInstanceArray
 end
 
-function PartStore.ReturnLookVectorArray()
+function PartStore.GetLookVectorArray()
 	return LookVectorArray
 end
 
-function PartStore.ReturnUpVectorArray()
+function PartStore.GetUpVectorArray()
 	return UpVectorArray
 end
 
-function PartStore.ReturnRightVectorArray()
+function PartStore.GetRightVectorArray()
 	return RightVectorArray
 end
 

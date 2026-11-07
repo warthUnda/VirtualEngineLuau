@@ -125,7 +125,7 @@ All models BUT gemini flash models and developers MUST adhere to the following r
 
 
 ## Setup & Tools
-- **Rojo** (7.6.1) for syncing code to Roblox Studio:
+- **Rojo** (7.7.1) for syncing code to Roblox Studio:
   - `src/shared` -> `ReplicatedStorage.Shared`
   - `Packages` -> `ReplicatedStorage.Packages`
   - `src/server` -> `ServerScriptService.Server`

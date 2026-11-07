@@ -1,20 +1,20 @@
 --!native
 --!optimize 2
 
-local HelperFunction = {}
+local RenderMath = {}
 local NEAR_CLIP = 0.4
 local FAR_CLIP = 1000
 local GUARD_BAND_SCALE = 2
 
 -- Modules --
-local BufferHelper = require(game.ReplicatedStorage.Shared.Utilities.BufferHelper) :: ModuleScript
-local MathModule = require(game.ReplicatedStorage.Shared.Utilities.Functions.MathModule) :: ModuleScript
+local BufferHelper = require(game.ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper) :: ModuleScript
+local MathModule = require(game.ReplicatedStorage.Shared.Utilities.Render.Core.MathModule) :: ModuleScript
 
 -- ============================================================================
 -- 1. FUNCTIONS - RENDERING MATH
 -- ============================================================================
 
-local function divisibleBy4(n: number): boolean
+local function DivisibleBy4(n: number): boolean
 	return bit32.band(n, 3) == 0
 end
 
@@ -27,7 +27,7 @@ local function DivisibleBy3(n: number): boolean
 end
 
 -- Projects a point in 3D space to 2D screen space
-function HelperFunction.ProjectWorldPointToScreen(
+function RenderMath.ProjectWorldPointToScreen(
 	WorldPoint: Vector3,
 	CamPosition: Vector3,
 	CamRight: Vector3,
@@ -64,7 +64,7 @@ function HelperFunction.ProjectWorldPointToScreen(
 	return Vector3.new(ScreenX, ScreenY, Z)
 end
 
-function HelperFunction.GetPartCameraVertices(
+function RenderMath.GetPartCameraVertices(
 	Position: Vector3,
 	LookVector: Vector3,
 	UpVector: Vector3,
@@ -156,7 +156,7 @@ local function ClipPolygon(
 	return OutputCount
 end
 
-function HelperFunction.ClipAndProjectTriangle(
+function RenderMath.ClipAndProjectTriangle(
 	CameraVertices: buffer,
 	V0Index: number,
 	V1Index: number,
@@ -241,7 +241,7 @@ end
 -- 2. DRAWING OBJECTS - DRAWING TRIANGLES
 -- ============================================================================
 
-function HelperFunction.DrawTriangle(
+function RenderMath.DrawTriangle(
 	V0: Vector3,
 	V1: Vector3,
 	V2: Vector3,
@@ -271,7 +271,7 @@ function HelperFunction.DrawTriangle(
 
 	-- Begin drawing the raw pixels (Fills a box)
 
-	for Y: number = MinY, MaxY, 2 do
+	for Y: number = MinY, MaxY do
 		const W00 = MathModule.EdgeFunction(X1, Y1, X2, Y2, MinX, Y) :: number
 		const W10 = MathModule.EdgeFunction(X2, Y2, X0, Y0, MinX, Y) :: number
 		const W20 = MathModule.EdgeFunction(X0, Y0, X1, Y1, MinX, Y) :: number
@@ -280,7 +280,7 @@ function HelperFunction.DrawTriangle(
 		const W11 = MathModule.EdgeFunction(X2, Y2, X0, Y0, MinX + 2, Y) :: number
 		const W21 = MathModule.EdgeFunction(X0, Y0, X1, Y1, MinX + 2, Y) :: number
 
-		for X: number = MinX, MaxX, 2 do
+		for X: number = MinX, MaxX do
 			const XStep = (X - MinX) * 0.5 :: number
 			const W0 = W00 + (W01 - W00) * XStep
 			const W1 = W10 + (W11 - W10) * XStep
@@ -292,22 +292,18 @@ function HelperFunction.DrawTriangle(
 				const L2 = W2 * InvArea :: number
 
 				const InterpolatedInvZ = L0 * invZ0 + L1 * invZ1 + L2 * invZ2 :: number
-				const CurrentZ = MathModule.solveCurrentZ(InterpolatedInvZ, FRSBuffer) :: number -- Checks if the object is in front of the camera
+				const CurrentZ = MathModule.SolveCurrentZ(InterpolatedInvZ, FRSBuffer) :: number -- Checks if the object is in front of the camera
 
-				for PixelY = Y, math.min(Y + 1, HEIGHT - 1) do
-					for PixelX = X, math.min(X + 1, WIDTH - 1) do
-						const XYWidth = PixelY * WIDTH + PixelX :: number
-						const bufferOffset = XYWidth * 4 :: number
+				const XYWidth = Y * WIDTH + X :: number
+				const bufferOffset = XYWidth * 4 :: number
 
-						if CurrentZ < buffer.readf32(ZBuffer, bufferOffset) then -- Checks if the pixel is closer to the camera
-							buffer.writef32(ZBuffer, bufferOffset, CurrentZ)
-							BufferHelper.BufferPixelWrite(PixelBuffer, bufferOffset, R, G, B, 255)
-						end
-					end
+				if CurrentZ < buffer.readf32(ZBuffer, bufferOffset) then -- Checks if the pixel is closer to the camera
+					buffer.writef32(ZBuffer, bufferOffset, CurrentZ)
+					BufferHelper.BufferPixelWrite(PixelBuffer, bufferOffset, R, G, B, 255)
 				end
 			end
 		end
 	end
 end
 
-return HelperFunction
+return RenderMath

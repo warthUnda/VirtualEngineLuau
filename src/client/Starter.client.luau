@@ -2,6 +2,6 @@ local Player = game:GetService("Players").LocalPlayer
 
 local PlayerScripts = Player:WaitForChild("PlayerScripts") :: PlayerScripts
 
-local ParralelModule = require(script.Parent.ParralelModule)
+local RenderBootstrap = require(script.Parent.RenderBootstrap)
 
-ParralelModule.CreateSetup()
+RenderBootstrap.CreateSetup()

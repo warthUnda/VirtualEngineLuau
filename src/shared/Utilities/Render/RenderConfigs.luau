@@ -1,8 +1,7 @@
-local HeightmapImporterService = game:GetService("HeightmapImporterService")
 local RenderConfigs = {}
 
-local WIDTH = 100 :: number
-local HEIGHT = 100 :: number
+local WIDTH = 65 :: number
+local HEIGHT = 65 :: number
 
 local ActorNumbers = 3 :: number
 
@@ -153,7 +152,7 @@ function RenderConfigs.GetSphereVertices()
 	return SphereVertices
 end
 
-function RenderConfigs.ReturnDimensions2D()
+function RenderConfigs.GetDimensions2D()
 	return WIDTH, HEIGHT
 end
 

@@ -1,4 +1,4 @@
-local CameraStore = {}
+local CameraState = {}
 
 local CameraTable = {
 	CameraCFrame = CFrame.new(5, 5, 5),
@@ -13,16 +13,16 @@ local CameraRight = Vector3.new(1, 0, 0)
 local CameraUp = Vector3.new(0, 1, 0)
 local CameraLook = Vector3.new(0, 0, 1)
 
-local currentCamera = workspace.CurrentCamera
+local CurrentCamera = workspace.CurrentCamera
 
-local function vectorsToRotation(lookVector: Vector3, upVector: Vector3, rightVector: Vector3): CFrame
-	local vZ = -lookVector.Unit
-	local vY = upVector.Unit
-	local vX = rightVector.Unit
+local function VectorsToRotation(LookVector: Vector3, UpVector: Vector3, RightVector: Vector3): CFrame
+	local vZ = -LookVector.Unit
+	local vY = UpVector.Unit
+	local vX = RightVector.Unit
 	return CFrame.fromMatrix(Vector3.zero, vX, vY, vZ)
 end
 
-local fixedPosition = Vector3.new(0, 1000, -5000)
+local FixedPosition = Vector3.new(0, 1000, -5000)
 
 game:GetService("RunService").RenderStepped:Connect(function()
 	local CameraCFrameDecoy = CameraTable.CameraCFrame
@@ -34,29 +34,29 @@ game:GetService("RunService").RenderStepped:Connect(function()
 
 	local CameraCFrame = CameraTable.CameraCFrame
 
-	local targetRotation = vectorsToRotation(CameraCFrame.LookVector, CameraCFrame.UpVector, CameraCFrame.RightVector)
+	local TargetRotation = VectorsToRotation(CameraCFrame.LookVector, CameraCFrame.UpVector, CameraCFrame.RightVector)
 
-	currentCamera.CFrame = CFrame.new(fixedPosition) * targetRotation
+	CurrentCamera.CFrame = CFrame.new(FixedPosition) * TargetRotation
 end)
 
-function CameraStore.ReturnCameraTable()
+function CameraState.GetCameraTable()
 	return CameraTable
 end
 
-function CameraStore.ReturnCameraPosition()
+function CameraState.GetCameraPosition()
 	return CameraPosition
 end
 
-function CameraStore.ReturnCameraRight()
+function CameraState.GetCameraRight()
 	return CameraRight
 end
 
-function CameraStore.ReturnCameraUp()
+function CameraState.GetCameraUp()
 	return CameraUp
 end
 
-function CameraStore.ReturnCameraLook()
+function CameraState.GetCameraLook()
 	return CameraLook
 end
 
-return CameraStore
+return CameraState

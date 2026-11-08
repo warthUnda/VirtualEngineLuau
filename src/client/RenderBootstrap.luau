@@ -8,7 +8,6 @@ local RenderRoot = game.ReplicatedStorage
 
 -- References --
 local ControllerFolder = RenderRoot:WaitForChild("Controller") :: Folder
-local SceneFolder = RenderRoot:WaitForChild("Scene") :: Folder
 local WorkerFolder = RenderRoot:WaitForChild("Worker") :: Folder
 
 -- Modules --
@@ -23,6 +22,7 @@ local ActorCount = RenderConfigs.GetActorCount()
 
 function RenderBootstrap.CreateSetup()
 	local PlayerScripts = game:GetService("Players").LocalPlayer:WaitForChild("PlayerScripts") :: Folder
+	local ClientObjects = PlayerScripts:WaitForChild("Client"):WaitForChild("Objects") :: Folder
 
 	-- Workers
 	local WorkerActorFolder = Instance.new("Folder") :: Folder
@@ -34,15 +34,19 @@ function RenderBootstrap.CreateSetup()
 	ControllerActor.Name = "Controller"
 	ControllerActor.Parent = PlayerScripts
 
+	-- Every Actor runs in its own Luau VM and gets its own copy of each ModuleScript it requires,
+	-- so the ECS storage has to be cloned into the controller Actor. The ReplicationReceiver is
+	-- cloned next to it so it fills the exact buffers this Actor renders from.
+	local ControllerStorage = ClientObjects:WaitForChild("ObjectStorage"):Clone() :: Folder
+	ControllerStorage.Parent = ControllerActor
+
+	local ControllerReceiver =
+		ClientObjects:WaitForChild("Replication"):WaitForChild("ReplicationReceiver"):Clone() :: LocalScript
+	ControllerReceiver.Parent = ControllerActor
+
 	-- Scripts of the controller
 	local ControllerScript = ControllerFolder:WaitForChild("RenderController"):Clone() :: Script -- Controls the actual workers
 	ControllerScript.Parent = ControllerActor
-
-	local ControllerPartStore = SceneFolder:WaitForChild("PartStore"):Clone() :: ModuleScript -- Provides the parts for Controller script
-	ControllerPartStore.Parent = ControllerActor
-
-	local ControllerScanner = SceneFolder:WaitForChild("WorkspaceScanner"):Clone() :: Script -- Scans for parts and puts them inside ControllerPartStore
-	ControllerScanner.Parent = ControllerActor
 
 	-- Creation of workers
 	for i = 1, ActorCount do

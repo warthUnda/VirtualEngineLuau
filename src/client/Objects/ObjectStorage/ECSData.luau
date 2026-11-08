@@ -4,6 +4,8 @@ ECSData.ECSDataTable = {
 	OrientationECSCount = 0,
 	PositionECSCount = 0,
 	VisualECSCount = 0,
+	SizeECSCount = 0,
+	DirectionsECSCount = 0,
 
 	EntityECSCount = 0,
 }
@@ -21,8 +23,23 @@ function ECSData.RegisterEntity(): number
 	Counts.OrientationECSCount += 1
 	Counts.PositionECSCount += 1
 	Counts.VisualECSCount += 1
+	Counts.SizeECSCount += 1
+	Counts.DirectionsECSCount += 1
 
 	return Counts.EntityECSCount
+end
+
+-- Mirrors the local ECS onto a replicated snapshot: every packet describes exactly which
+-- entities the local buffers should hold, so stale entities past the snapshot must be dropped.
+function ECSData.SetEntityCount(EntityCount: number)
+	local Counts = ECSData.ECSDataTable
+
+	Counts.EntityECSCount = EntityCount
+	Counts.OrientationECSCount = EntityCount
+	Counts.PositionECSCount = EntityCount
+	Counts.VisualECSCount = EntityCount
+	Counts.SizeECSCount = EntityCount
+	Counts.DirectionsECSCount = EntityCount
 end
 
 return ECSData

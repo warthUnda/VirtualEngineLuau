@@ -40,18 +40,22 @@ local CameraService = require(
 		:WaitForChild("CameraService")
 )
 
-const PartStore = require(script.Parent.PartStore) :: ModuleScript
+-- The controller renders from the ECS cloned into its own Actor. Each Actor runs in a separate
+-- Luau VM, so reaching into PlayerScripts here would resolve to a different copy of these modules
+-- that nothing ever writes to (which reads back as an entity count of 0).
+const ObjectStorage = SelfActor:WaitForChild("ObjectStorage") :: Folder
+
+local ECSData = require(ObjectStorage:WaitForChild("ECSData"))
+local PositionData = require(ObjectStorage:WaitForChild("PositionData"))
+local SizeData = require(ObjectStorage:WaitForChild("SizeData"))
+local DirectionsData = require(ObjectStorage:WaitForChild("DirectionsData"))
+local VisualData = require(ObjectStorage:WaitForChild("VisualData"))
 
 -- Configs --
 const WIDTH: number, HEIGHT: number = RenderConfigs.GetDimensions2D()
 const TOTAL_PIXELS = WIDTH * HEIGHT :: number
 const SUN_DIRECTION = Vector3.new(-0.4, 0.85, -0.35).Unit
-const SUN_RAY_LENGTH = 15000
 const AMBIENT_LIGHT = 0.3
-const RAY_ORIGIN_BIAS = 0.05
-const SHADOW_CACHE_REFRESH = 0.5
-const SHADOW_CACHE_MOVE_EPSILON = 0.25
-const MAX_SHADOW_RAYS_PER_FRAME = 8
 const PART_VERTEX_SIGNS = {
 	Vector3.new(-1, -1, -1),
 	Vector3.new(1, -1, -1),
@@ -64,6 +68,9 @@ const PART_VERTEX_SIGNS = {
 }
 
 const ActorCount = RenderConfigs.GetActorCount() :: number
+
+const ECS_COMPONENT_STRIDE = 12 :: number
+const ECS_DIRECTION_STRIDE = 36 :: number
 
 local Received = 0 :: number
 local CurrentFrame = 0 :: number
@@ -81,18 +88,10 @@ const FinalPixel = buffer.create(TOTAL_PIXELS * 4) :: buffer
 const FinalZ = buffer.create(TOTAL_PIXELS * 4) :: buffer
 local WorldVertices = buffer.create(8 * 12)
 local FaceIllumination = buffer.create(12 * 4)
-local ShadowCacheParts = {} :: { BasePart }
-local ShadowCachePositions = {} :: { Vector3 }
-local ShadowCacheNormals = {} :: { Vector3 }
-local ShadowCacheResults = {} :: { boolean }
-local ShadowCacheUpdatedAt = {} :: { number }
-local PendingShadowSamples = {} :: { number }
-local PendingShadowOrigins = {} :: { Vector3 }
-local PendingShadowNormals = {} :: { Vector3 }
-local PendingShadowParts = {} :: { BasePart }
-local ShadowRayParams = RaycastParams.new()
-ShadowRayParams.FilterType = Enum.RaycastFilterType.Exclude
-local ShadowRayExcludes = table.create(2) :: { Instance }
+const ECSPositionBuffer = PositionData.GetData() :: buffer
+const ECSSizeBuffer = SizeData.GetData() :: buffer
+const ECSDirectionsBuffer = DirectionsData.GetData() :: buffer
+const ECSVisualBuffer = VisualData.GetData() :: buffer
 local ScreenVertices = buffer.create(8 * 12)
 local ProjectedVertices = buffer.create(12 * 12)
 local ClipBufferA = buffer.create(12 * 12)
@@ -105,16 +104,6 @@ local function ReadProjectedVertex(VertexIndex: number): Vector3
 		buffer.readf32(ProjectedVertices, Offset + 4),
 		buffer.readf32(ProjectedVertices, Offset + 8)
 	)
-end
-
-local function QueueShadowSample(SampleIndex: number, Part: BasePart, Origin: Vector3, Normal: Vector3)
-	if PendingShadowOrigins[SampleIndex] == nil then
-		PendingShadowSamples[#PendingShadowSamples + 1] = SampleIndex
-	end
-
-	PendingShadowOrigins[SampleIndex] = Origin
-	PendingShadowNormals[SampleIndex] = Normal
-	PendingShadowParts[SampleIndex] = Part
 end
 
 -- Create Information Data for workers
@@ -174,17 +163,7 @@ end)
 
 RunService.RenderStepped:Connect(function()
 	-- Tables
-	const PartSizeArray = PartStore.GetSizeArray() :: { Vector3 }
-	const PartPositionArray = PartStore.GetPositionArray() :: { Vector3 }
-	const PartInstanceArray = PartStore.GetInstanceArray() :: { BasePart }
-
-	local PartLookVectorArray = PartStore.GetLookVectorArray() :: { Vector3 }
-	local PartUpVectorArray = PartStore.GetUpVectorArray() :: { Vector3 }
-	local PartRightVectorArray = PartStore.GetRightVectorArray() :: { Vector3 }
-
-	local ColorArrayR = PartStore.GetColorArrayR() :: {}
-	local ColorArrayG = PartStore.GetColorArrayG() :: {}
-	local ColorArrayB = PartStore.GetColorArrayB() :: {}
+	local EntityCount = ECSData.GetCounts().EntityECSCount :: number
 
 	const CamTable = CameraStore.GetCameraTable()
 
@@ -207,35 +186,49 @@ RunService.RenderStepped:Connect(function()
 		buffer.writef32(ScoreBuffer, (i - 1) * 4, 0)
 	end
 
-	table.clear(PendingShadowSamples)
-	table.clear(PendingShadowOrigins)
-	table.clear(PendingShadowNormals)
-	table.clear(PendingShadowParts)
-	local ShadowCacheTime = os.clock()
-
 	-- Loop through all parts
-	for i = 1, #PartPositionArray do
-		const TargetPosition = PartPositionArray[i] :: Vector3
-		local TargetPart = PartInstanceArray[i] :: BasePart?
-		local LookVector = PartLookVectorArray[i] :: Vector3
-		local UpVector = PartUpVectorArray[i] :: Vector3
-		local RightVector = PartRightVectorArray[i] :: Vector3
-		const TargetSize = PartSizeArray[i] :: Vector3
+	for i = 1, EntityCount do
+		local ComponentOffset = (i - 1) * ECS_COMPONENT_STRIDE :: number
+		local DirectionOffset = (i - 1) * ECS_DIRECTION_STRIDE :: number
 
-		const PartColorR = ColorArrayR[i] :: number
-		const PartColorG = ColorArrayG[i] :: number
-		const PartColorB = ColorArrayB[i] :: number
+		const TargetPosition = Vector3.new(
+			buffer.readf32(ECSPositionBuffer, ComponentOffset),
+			buffer.readf32(ECSPositionBuffer, ComponentOffset + 4),
+			buffer.readf32(ECSPositionBuffer, ComponentOffset + 8)
+		) :: Vector3
+
+		local LookVector = Vector3.new(
+			buffer.readf32(ECSDirectionsBuffer, DirectionOffset),
+			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 4),
+			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 8)
+		) :: Vector3
+		local UpVector = Vector3.new(
+			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 12),
+			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 16),
+			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 20)
+		) :: Vector3
+		local RightVector = Vector3.new(
+			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 24),
+			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 28),
+			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 32)
+		) :: Vector3
+
+		const TargetSize = Vector3.new(
+			buffer.readf32(ECSSizeBuffer, ComponentOffset),
+			buffer.readf32(ECSSizeBuffer, ComponentOffset + 4),
+			buffer.readf32(ECSSizeBuffer, ComponentOffset + 8)
+		) :: Vector3
+
+		const PartColorR = buffer.readu8(ECSVisualBuffer, ComponentOffset) :: number
+		const PartColorG = buffer.readu8(ECSVisualBuffer, ComponentOffset + 1) :: number
+		const PartColorB = buffer.readu8(ECSVisualBuffer, ComponentOffset + 2) :: number
 
 		-- 2.5 miliseconds part here:
 
-		if not TargetPosition or not TargetSize or PartColorR == nil or PartColorG == nil or PartColorB == nil then
-			continue
-		end
-
 		-- Variables
-		local ShadedRHolder = math.floor(PartColorR * 255)
-		local ShadedGHolder = math.floor(PartColorG * 255)
-		local ShadedBHolder = math.floor(PartColorB * 255)
+		local ShadedRHolder = PartColorR
+		local ShadedGHolder = PartColorG
+		local ShadedBHolder = PartColorB
 
 		local HalfX, HalfY, HalfZ = TargetSize.X * 0.5, TargetSize.Y * 0.5, TargetSize.Z * 0.5
 		for VertexIndex = 1, 8 do
@@ -273,48 +266,12 @@ RunService.RenderStepped:Connect(function()
 				buffer.readf32(WorldVertices, V2Offset + 4),
 				buffer.readf32(WorldVertices, V2Offset + 8)
 			)
-			local FaceNormal = (V1 - V0):Cross(V2 - V0).Unit
-			local FaceCenter = (V0 + V1 + V2) * 0.33
-			local Sunlight = math.max(0, FaceNormal:Dot(SUN_DIRECTION))
-			local Illumination = AMBIENT_LIGHT + (1 - AMBIENT_LIGHT) * Sunlight
+			const FaceNormal = (V1 - V0):Cross(V2 - V0).Unit
+			const Sunlight = math.max(0, FaceNormal:Dot(SUN_DIRECTION))
+			const Illumination = AMBIENT_LIGHT + (1 - AMBIENT_LIGHT) * Sunlight
 
-			local FirstTriangleIndex = (FaceIndex - 1) * 2 + 1
-			local SecondTriangleIndex = FirstTriangleIndex + 1
-			local CacheIndex = (i - 1) * 6 + FaceIndex
-			local CachedShadow = false
-
-			if Sunlight > 0 and TargetPart then
-				if ShadowCacheParts[CacheIndex] ~= TargetPart then
-					ShadowCacheParts[CacheIndex] = TargetPart
-					ShadowCachePositions[CacheIndex] = nil
-					ShadowCacheNormals[CacheIndex] = nil
-					ShadowCacheResults[CacheIndex] = nil
-					ShadowCacheUpdatedAt[CacheIndex] = nil
-				end
-
-				local CachedPosition = ShadowCachePositions[CacheIndex]
-				local CachedNormal = ShadowCacheNormals[CacheIndex]
-				local Moved = not CachedPosition
-					or (FaceCenter - CachedPosition).Magnitude > SHADOW_CACHE_MOVE_EPSILON
-					or not CachedNormal
-					or FaceNormal:Dot(CachedNormal) < 0.99
-				local UpdatedAt = ShadowCacheUpdatedAt[CacheIndex]
-				local Expired = not UpdatedAt or ShadowCacheTime - UpdatedAt >= SHADOW_CACHE_REFRESH
-
-				if Moved or Expired then
-					QueueShadowSample(
-						CacheIndex,
-						TargetPart,
-						FaceCenter + SUN_DIRECTION * RAY_ORIGIN_BIAS,
-						FaceNormal
-					)
-				end
-				CachedShadow = ShadowCacheResults[CacheIndex] == true
-			end
-
-			if CachedShadow then
-				Illumination = AMBIENT_LIGHT
-			end
+			const FirstTriangleIndex = (FaceIndex - 1) * 2 + 1
+			const SecondTriangleIndex = FirstTriangleIndex + 1
 
 			buffer.writef32(FaceIllumination, (FirstTriangleIndex - 1) * 4, Illumination)
 			buffer.writef32(FaceIllumination, (SecondTriangleIndex - 1) * 4, Illumination)
@@ -425,21 +382,6 @@ RunService.RenderStepped:Connect(function()
 				buffer.writeu32(OffsetBuffer, (SVIndex - 1) * 4, RenderResult)
 			end
 		end
-	end
-
-	local ShadowRayCount = math.min(#PendingShadowSamples, MAX_SHADOW_RAYS_PER_FRAME)
-	for PendingIndex = 1, ShadowRayCount do
-		local SampleIndex = PendingShadowSamples[PendingIndex]
-		local TargetPart = PendingShadowParts[SampleIndex]
-		ShadowRayExcludes[1] = TargetPart
-		ShadowRayExcludes[2] = Player.Character
-		ShadowRayParams.FilterDescendantsInstances = ShadowRayExcludes
-		local RayOrigin = PendingShadowOrigins[SampleIndex]
-		ShadowCacheResults[SampleIndex] =
-			workspace:Raycast(RayOrigin, SUN_DIRECTION * SUN_RAY_LENGTH, ShadowRayParams) ~= nil
-		ShadowCachePositions[SampleIndex] = RayOrigin - SUN_DIRECTION * RAY_ORIGIN_BIAS
-		ShadowCacheNormals[SampleIndex] = PendingShadowNormals[SampleIndex]
-		ShadowCacheUpdatedAt[SampleIndex] = ShadowCacheTime
 	end
 
 	-- 1.49 miliseconds part here:

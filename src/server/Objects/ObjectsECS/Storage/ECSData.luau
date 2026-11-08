@@ -4,6 +4,8 @@ ECSData.ECSDataTable = {
 	OrientationECSCount = 0,
 	PositionECSCount = 0,
 	VisualECSCount = 0,
+	SizeECSCount = 0,
+	DirectionsECSCount = 0,
 
 	EntityECSCount = 0,
 }
@@ -21,6 +23,8 @@ function ECSData.RegisterEntity(): number
 	Counts.OrientationECSCount += 1
 	Counts.PositionECSCount += 1
 	Counts.VisualECSCount += 1
+	Counts.SizeECSCount += 1
+	Counts.DirectionsECSCount += 1
 
 	return Counts.EntityECSCount
 end

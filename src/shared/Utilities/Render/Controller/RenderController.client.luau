@@ -1,4 +1,4 @@
-NERYTDAM--!native
+--!native
 --!optimize 2
 
 -- Services --
@@ -18,18 +18,18 @@ const Camera = workspace.CurrentCamera :: Camera
 const SelfActor = script.Parent :: Actor
 
 -- Modules --
-const BufferIO = require(ReplicatedStorage.Shared.Utilities.Render.Buffer.BufferIO) :: ModuleScript
+const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper) :: ModuleScript
 
-const RenderConfig = require(game.ReplicatedStorage.Shared.Utilities.Render.Config.RenderConfig) :: ModuleScript
-const RenderMath = require(game.ReplicatedStorage.Shared.Utilities.Render.Math.RenderMath) :: ModuleScript
-const RasterMath = require(game.ReplicatedStorage.Shared.Utilities.Render.Math.RasterMath)
+const RenderConfigs = require(game.ReplicatedStorage.Shared.Utilities.Render.RenderConfigs) :: ModuleScript
+const RenderMath = require(game.ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath) :: ModuleScript
+const MathModule = require(game.ReplicatedStorage.Shared.Utilities.Render.Core.MathModule) :: ModuleScript
 
-const CameraState = require(
+const CameraStore = require(
 	ReplicatedStorage:WaitForChild("Shared")
 		:WaitForChild("Utilities")
 		:WaitForChild("Render")
 		:WaitForChild("Camera")
-		:WaitForChild("CameraState")
+		:WaitForChild("CameraStore")
 ) :: ModuleScript
 
 local CameraService = require(
@@ -43,7 +43,7 @@ local CameraService = require(
 const PartStore = require(script.Parent.PartStore) :: ModuleScript
 
 -- Configs --
-const WIDTH: number, HEIGHT: number = RenderConfig.GetDimensions2D()
+const WIDTH: number, HEIGHT: number = RenderConfigs.GetDimensions2D()
 const TOTAL_PIXELS = WIDTH * HEIGHT :: number
 const SUN_DIRECTION = Vector3.new(-0.4, 0.85, -0.35).Unit
 const SUN_RAY_LENGTH = 15000
@@ -63,7 +63,7 @@ const PART_VERTEX_SIGNS = {
 	Vector3.new(-1, 1, 1),
 }
 
-const ActorCount = RenderConfig.GetActorCount() :: number
+const ActorCount = RenderConfigs.GetActorCount() :: number
 
 local Received = 0 :: number
 local CurrentFrame = 0 :: number
@@ -174,24 +174,24 @@ end)
 
 RunService.RenderStepped:Connect(function()
 	-- Tables
-	const PartSizeArray = PartStore.ReturnSizeArray() :: { Vector3 }
-	const PartPositionArray = PartStore.ReturnPositionArray() :: { Vector3 }
-	const PartInstanceArray = PartStore.ReturnInstanceArray() :: { BasePart }
+	const PartSizeArray = PartStore.GetSizeArray() :: { Vector3 }
+	const PartPositionArray = PartStore.GetPositionArray() :: { Vector3 }
+	const PartInstanceArray = PartStore.GetInstanceArray() :: { BasePart }
 
-	local PartLookVectorArray = PartStore.ReturnLookVectorArray() :: { Vector3 }
-	local PartUpVectorArray = PartStore.ReturnUpVectorArray() :: { Vector3 }
-	local PartRightVectorArray = PartStore.ReturnRightVectorArray() :: { Vector3 }
+	local PartLookVectorArray = PartStore.GetLookVectorArray() :: { Vector3 }
+	local PartUpVectorArray = PartStore.GetUpVectorArray() :: { Vector3 }
+	local PartRightVectorArray = PartStore.GetRightVectorArray() :: { Vector3 }
 
-	local ColorArrayR = PartStore.ReturnColorArrayR() :: {}
-	local ColorArrayG = PartStore.ReturnColorArrayG() :: {}
-	local ColorArrayB = PartStore.ReturnColorArrayB() :: {}
+	local ColorArrayR = PartStore.GetColorArrayR() :: {}
+	local ColorArrayG = PartStore.GetColorArrayG() :: {}
+	local ColorArrayB = PartStore.GetColorArrayB() :: {}
 
-	const CamTable = CameraStore.ReturnCameraTable()
+	const CamTable = CameraStore.GetCameraTable()
 
-	local CamPosition = CameraStore.ReturnCameraPosition()
-	local CamRight = CameraStore.ReturnCameraRight()
-	local CamUp = CameraStore.ReturnCameraUp()
-	local CamLook = CameraStore.ReturnCameraLook()
+	local CamPosition = CameraStore.GetCameraPosition()
+	local CamRight = CameraStore.GetCameraRight()
+	local CamUp = CameraStore.GetCameraUp()
+	local CamLook = CameraStore.GetCameraLook()
 
 	-- Configs
 	const CamCFrame = CamTable.CameraCFrame :: CFrame

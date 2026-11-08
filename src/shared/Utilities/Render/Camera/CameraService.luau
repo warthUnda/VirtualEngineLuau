@@ -101,7 +101,7 @@ local neckCache
 
 -- > MUNCHMALS INTERVENTION < --
 local CameraStore = require(script.Parent.CameraStore)
-local CamTable = CameraStore.ReturnCameraTable()
+local CamTable = CameraStore.GetCameraTable()
 
 --> Built-in camera views
 local cameraSettings = {

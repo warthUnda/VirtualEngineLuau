@@ -7,16 +7,15 @@ local RenderRoot = game.ReplicatedStorage
 	:WaitForChild("Render") :: Folder
 
 -- References --
-local ConfigFolder = RenderRoot:WaitForChild("Config") :: Folder
 local ControllerFolder = RenderRoot:WaitForChild("Controller") :: Folder
 local SceneFolder = RenderRoot:WaitForChild("Scene") :: Folder
 local WorkerFolder = RenderRoot:WaitForChild("Worker") :: Folder
 
 -- Modules --
-local RenderConfig = require(ConfigFolder:WaitForChild("RenderConfig")) :: ModuleScript
+local RenderConfigs = require(RenderRoot:WaitForChild("RenderConfigs")) :: ModuleScript
 
 -- Configs --
-local ActorCount = RenderConfig.GetActorCount()
+local ActorCount = RenderConfigs.GetActorCount()
 
 -- ============================================================================
 -- 1. CREATE WORKER - CONTROLLER SETUP

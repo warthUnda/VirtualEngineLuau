@@ -16,6 +16,7 @@ const ImageLabel = PlayerGui:WaitForChild("ScreenGui"):WaitForChild("ImageLabel"
 const Camera = workspace.CurrentCamera :: Camera
 
 const SelfActor = script.Parent :: Actor
+const WorkerActors = PlayerScripts:WaitForChild("WorkerFolder"):GetChildren() :: { Actor }
 
 -- Modules --
 const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper) :: ModuleScript
@@ -140,11 +141,16 @@ SelfActor:BindToMessage("Return Render Calculations", function(PixelBuffer: buff
 		return
 	end
 
-	for i = 1, TOTAL_PIXELS do -- Overwrites the FinalZ and FinalPixel buffers
-		const Offset = (i - 1) * 4 :: number
-		if buffer.readf32(ZBuffer, Offset) < buffer.readf32(FinalZ, Offset) then
-			buffer.writef32(FinalZ, Offset, buffer.readf32(ZBuffer, Offset))
-			buffer.writeu32(FinalPixel, Offset, buffer.readu32(PixelBuffer, Offset))
+	if Received == 0 then
+		buffer.copy(FinalPixel, 0, PixelBuffer, 0, TOTAL_PIXELS * 4)
+		buffer.copy(FinalZ, 0, ZBuffer, 0, TOTAL_PIXELS * 4)
+	else
+		for i = 0, (TOTAL_PIXELS - 1) * 4, 4 do -- Overwrites the FinalZ and FinalPixel buffers
+			const IncomingInvZ = buffer.readf32(ZBuffer, i) :: number
+			if IncomingInvZ > buffer.readf32(FinalZ, i) then
+				buffer.writef32(FinalZ, i, IncomingInvZ)
+				buffer.writeu32(FinalPixel, i, buffer.readu32(PixelBuffer, i))
+			end
 		end
 	end
 
@@ -175,10 +181,9 @@ RunService.RenderStepped:Connect(function()
 	-- Configs
 	const CamCFrame = CamTable.CameraCFrame :: CFrame
 	const CamFOV = CamTable.CameraFOV :: number
+	const FocalLength, GuardBandX, GuardBandY = RenderMath.GetProjectionParameters(CamFOV, WIDTH, HEIGHT)
 
 	-- Pre loop Updates --
-	BufferHelper.ClearBuffers(TOTAL_PIXELS, FinalPixel, FinalZ)
-
 	CurrentFrame += 1
 	Received = 0
 
@@ -225,73 +230,54 @@ RunService.RenderStepped:Connect(function()
 
 		-- 2.5 miliseconds part here:
 
+		-- Updates
+		if
+			not RenderMath.GetPartCameraVertices(
+				TargetPosition,
+				LookVector,
+				UpVector,
+				RightVector,
+				TargetSize,
+				ScreenVertices,
+				CamPosition,
+				CamRight,
+				CamUp,
+				CamLook
+			)
+		then
+			continue
+		end
+
 		-- Variables
 		local ShadedRHolder = PartColorR
 		local ShadedGHolder = PartColorG
 		local ShadedBHolder = PartColorB
 
-		local HalfX, HalfY, HalfZ = TargetSize.X * 0.5, TargetSize.Y * 0.5, TargetSize.Z * 0.5
-		for VertexIndex = 1, 8 do
-			local Signs = PART_VERTEX_SIGNS[VertexIndex]
-			local WorldPosition = TargetPosition
-				+ RightVector * (Signs.X * HalfX)
-				+ UpVector * (Signs.Y * HalfY)
-				- LookVector * (Signs.Z * HalfZ)
-			local VertexOffset = (VertexIndex - 1) * 12
-			buffer.writef32(WorldVertices, VertexOffset, WorldPosition.X)
-			buffer.writef32(WorldVertices, VertexOffset + 4, WorldPosition.Y)
-			buffer.writef32(WorldVertices, VertexOffset + 8, WorldPosition.Z)
-		end
+		const DotL = LookVector:Dot(SUN_DIRECTION) :: number
+		const DotU = UpVector:Dot(SUN_DIRECTION) :: number
+		const DotR = RightVector:Dot(SUN_DIRECTION) :: number
 
-		for FaceIndex = 1, 6 do
-			local TriangleOffset = (FaceIndex - 1) * 6
-			local V0Index = buffer.readu8(PART_TRIANGLES, TriangleOffset)
-			local V1Index = buffer.readu8(PART_TRIANGLES, TriangleOffset + 1)
-			local V2Index = buffer.readu8(PART_TRIANGLES, TriangleOffset + 2)
-			local V0Offset = (V0Index - 1) * 12
-			local V1Offset = (V1Index - 1) * 12
-			local V2Offset = (V2Index - 1) * 12
-			local V0 = Vector3.new(
-				buffer.readf32(WorldVertices, V0Offset),
-				buffer.readf32(WorldVertices, V0Offset + 4),
-				buffer.readf32(WorldVertices, V0Offset + 8)
-			)
-			local V1 = Vector3.new(
-				buffer.readf32(WorldVertices, V1Offset),
-				buffer.readf32(WorldVertices, V1Offset + 4),
-				buffer.readf32(WorldVertices, V1Offset + 8)
-			)
-			local V2 = Vector3.new(
-				buffer.readf32(WorldVertices, V2Offset),
-				buffer.readf32(WorldVertices, V2Offset + 4),
-				buffer.readf32(WorldVertices, V2Offset + 8)
-			)
-			const FaceNormal = (V1 - V0):Cross(V2 - V0).Unit
-			const Sunlight = math.max(0, FaceNormal:Dot(SUN_DIRECTION))
-			const Illumination = AMBIENT_LIGHT + (1 - AMBIENT_LIGHT) * Sunlight
+		const IllumBack = AMBIENT_LIGHT + (1 - AMBIENT_LIGHT) * math.max(0, DotL) :: number
+		const IllumFront = AMBIENT_LIGHT + (1 - AMBIENT_LIGHT) * math.max(0, -DotL) :: number
+		const IllumBottom = AMBIENT_LIGHT + (1 - AMBIENT_LIGHT) * math.max(0, -DotU) :: number
+		const IllumTop = AMBIENT_LIGHT + (1 - AMBIENT_LIGHT) * math.max(0, DotU) :: number
+		const IllumLeft = AMBIENT_LIGHT + (1 - AMBIENT_LIGHT) * math.max(0, -DotR) :: number
+		const IllumRight = AMBIENT_LIGHT + (1 - AMBIENT_LIGHT) * math.max(0, DotR) :: number
 
-			const FirstTriangleIndex = (FaceIndex - 1) * 2 + 1
-			const SecondTriangleIndex = FirstTriangleIndex + 1
-
-			buffer.writef32(FaceIllumination, (FirstTriangleIndex - 1) * 4, Illumination)
-			buffer.writef32(FaceIllumination, (SecondTriangleIndex - 1) * 4, Illumination)
-		end
+		buffer.writef32(FaceIllumination, 0, IllumBack)
+		buffer.writef32(FaceIllumination, 4, IllumBack)
+		buffer.writef32(FaceIllumination, 8, IllumFront)
+		buffer.writef32(FaceIllumination, 12, IllumFront)
+		buffer.writef32(FaceIllumination, 16, IllumBottom)
+		buffer.writef32(FaceIllumination, 20, IllumBottom)
+		buffer.writef32(FaceIllumination, 24, IllumTop)
+		buffer.writef32(FaceIllumination, 28, IllumTop)
+		buffer.writef32(FaceIllumination, 32, IllumLeft)
+		buffer.writef32(FaceIllumination, 36, IllumLeft)
+		buffer.writef32(FaceIllumination, 40, IllumRight)
+		buffer.writef32(FaceIllumination, 44, IllumRight)
 
 		-- 2.5 miliseconds part here:
-
-		-- Updates
-		RenderMath.GetPartCameraVertices(
-			TargetPosition,
-			LookVector,
-			UpVector,
-			RightVector,
-			TargetSize,
-			ScreenVertices,
-			CamPosition,
-			CamRight,
-			CamUp,
-			CamLook
-		)
 
 		-- Loop through all triangles
 		-- 1.49 miliseconds part here:
@@ -319,18 +305,25 @@ RunService.RenderStepped:Connect(function()
 				ProjectedVertices,
 				ClipBufferA,
 				ClipBufferB,
-				CamFOV,
+				FocalLength,
+				GuardBandX,
+				GuardBandY,
 				WIDTH,
 				HEIGHT
 			)
 
+			if ClippedVertexCount < 3 then
+				continue
+			end
+
+			const V0 = ReadProjectedVertex(1)
+			const X0: number, Y0: number = V0.X, V0.Y
+
 			for ClippedTriangleIndex = 2, ClippedVertexCount - 1 do
-				const V0 = ReadProjectedVertex(1)
 				const V1 = ReadProjectedVertex(ClippedTriangleIndex)
 				const V2 = ReadProjectedVertex(ClippedTriangleIndex + 1)
 
 				-- Variables
-				const X0: number, Y0: number = V0.X, V0.Y
 				const X1: number, Y1: number = V1.X, V1.Y
 				const X2: number, Y2: number = V2.X, V2.Y
 
@@ -387,7 +380,7 @@ RunService.RenderStepped:Connect(function()
 	-- 1.49 miliseconds part here:
 
 	-- Sends the information to all workers workers
-	for i, TargetActor: Actor in ipairs(PlayerScripts:WaitForChild("WorkerFolder"):GetChildren()) do
+	for i, TargetActor: Actor in ipairs(WorkerActors) do
 		const RenderBuffer = BufferTable[i] :: buffer
 
 		TargetActor:SendMessage(

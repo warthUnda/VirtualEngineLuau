@@ -21,12 +21,26 @@ end
 
 while true do
 	for _, Player: Player in ipairs(Players:GetPlayers()) do
-		local DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, Counts = PlayerEye.CullObjects(Player)
+		local DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, Counts =
+			PlayerEye.CullObjects(Player)
 		if DeltaPositions and Counts then
-			ReplicateEvent:FireClient(Player, DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, Counts)
+			ReplicateEvent:FireClient(
+				Player,
+				DeltaPositions,
+				DeltaOrientations,
+				DeltaVisuals,
+				DeltaSizes,
+				DeltaDirections,
+				Counts
+			)
 		end
+
+		DeltaPositions = nil
+		DeltaOrientations = nil
+		DeltaVisuals = nil
+		DeltaSizes = nil
+		DeltaDirections = nil
 	end
 
 	task.wait()
 end
-

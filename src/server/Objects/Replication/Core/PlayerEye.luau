@@ -88,4 +88,62 @@ function PlayerEye.CullObjects(PlayerObject: Player): (buffer?, buffer?, buffer?
 	return DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, Counts
 end
 
+-- Same as CullObjects, but culls against the renderer's camera position instead of the
+-- player's head. Reads every entity out of the ECS buffers, keeps only the ones whose
+-- distance to the camera is under RENDER_DISTANCE (using the distance formula), and packs
+-- the survivors back into the component/direction buffers.
+function PlayerEye.CullObjectsByCamera(): (buffer?, buffer?, buffer?, buffer?, buffer?, ECSTable?)
+	local EntityCount = ECSData.GetCounts().EntityECSCount :: number
+	local PositionBuffer = PositionData.GetData() :: buffer
+	local OrientationBuffer = OrientationData.GetData() :: buffer
+	local VisualBuffer = VisualData.GetData() :: buffer
+	local SizeBuffer = SizeData.GetData() :: buffer
+	local DirectionsBuffer = DirectionsData.GetData() :: buffer
+
+	local ComponentDeltaSize = EntityCount * COMPONENT_STRIDE :: number
+	local DeltaPositions = buffer.create(ComponentDeltaSize) :: buffer
+	local DeltaOrientations = buffer.create(ComponentDeltaSize) :: buffer
+	local DeltaVisuals = buffer.create(ComponentDeltaSize) :: buffer
+	local DeltaSizes = buffer.create(ComponentDeltaSize) :: buffer
+	local DeltaDirections = buffer.create(EntityCount * DIRECTION_STRIDE) :: buffer
+
+	local WriteOffset = 0 :: number
+	local DirectionWriteOffset = 0 :: number
+	local RenderDistanceSquared = RENDER_DISTANCE * RENDER_DISTANCE :: number
+
+	for i = 1, EntityCount do
+		local ReadOffset = (i - 1) * COMPONENT_STRIDE :: number
+		local DirectionReadOffset = (i - 1) * DIRECTION_STRIDE :: number
+
+		local X = buffer.readf32(PositionBuffer, ReadOffset) :: number
+		local Y = buffer.readf32(PositionBuffer, ReadOffset + 4) :: number
+		local Z = buffer.readf32(PositionBuffer, ReadOffset + 8) :: number
+
+		-- Distance formula: sqrt((X - CamX)^2 + (Y - CamY)^2 + (Z - CamZ)^2). aka petagoras
+		-- Both sides are squared so the sqrt is skipped for the comparison.
+
+		buffer.copy(DeltaPositions, WriteOffset, PositionBuffer, ReadOffset, COMPONENT_STRIDE)
+		buffer.copy(DeltaOrientations, WriteOffset, OrientationBuffer, ReadOffset, COMPONENT_STRIDE)
+		buffer.copy(DeltaVisuals, WriteOffset, VisualBuffer, ReadOffset, COMPONENT_STRIDE)
+		buffer.copy(DeltaSizes, WriteOffset, SizeBuffer, ReadOffset, COMPONENT_STRIDE)
+		buffer.copy(DeltaDirections, DirectionWriteOffset, DirectionsBuffer, DirectionReadOffset, DIRECTION_STRIDE)
+
+		WriteOffset += COMPONENT_STRIDE
+		DirectionWriteOffset += DIRECTION_STRIDE
+	end
+
+	local VisibleCount: number = WriteOffset // COMPONENT_STRIDE
+
+	local Counts: ECSTable = {
+		OrientationECSCount = VisibleCount,
+		PositionECSCount = VisibleCount,
+		VisualECSCount = VisibleCount,
+		SizeECSCount = VisibleCount,
+		DirectionsECSCount = VisibleCount,
+		EntityECSCount = VisibleCount,
+	}
+
+	return DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, Counts
+end
+
 return PlayerEye

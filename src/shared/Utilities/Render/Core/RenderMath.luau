@@ -75,35 +75,85 @@ function RenderMath.GetPartCameraVertices(
 	CamRight: Vector3,
 	CamUp: Vector3,
 	CamLook: Vector3
-)
+): boolean
 	const Hx: number, Hy: number, Hz: number = Size.X * 0.5, Size.Y * 0.5, Size.Z * 0.5
 
-	local function TransformPoint(LX: number, LY: number, LZ: number, VertexIndex: number)
-		local WorldPoint = Position + RightVector * LX + UpVector * LY - LookVector * LZ
-		local Relative = WorldPoint - CamPosition
+	const RelX = Position.X - CamPosition.X :: number
+	const RelY = Position.Y - CamPosition.Y :: number
+	const RelZ = Position.Z - CamPosition.Z :: number
 
-		local Offset = (VertexIndex - 1) * 12
-		buffer.writef32(
-			CameraVertices,
-			Offset,
-			Relative.X * CamRight.X + Relative.Y * CamRight.Y + Relative.Z * CamRight.Z
-		)
-		buffer.writef32(CameraVertices, Offset + 4, Relative.X * CamUp.X + Relative.Y * CamUp.Y + Relative.Z * CamUp.Z)
-		buffer.writef32(
-			CameraVertices,
-			Offset + 8,
-			Relative.X * CamLook.X + Relative.Y * CamLook.Y + Relative.Z * CamLook.Z
-		)
+	const CamRightX: number, CamRightY: number, CamRightZ: number = CamRight.X, CamRight.Y, CamRight.Z
+	const CamUpX: number, CamUpY: number, CamUpZ: number = CamUp.X, CamUp.Y, CamUp.Z
+	const CamLookX: number, CamLookY: number, CamLookZ: number = CamLook.X, CamLook.Y, CamLook.Z
+
+	const Cx = RelX * CamRightX + RelY * CamRightY + RelZ * CamRightZ :: number
+	const Cy = RelX * CamUpX + RelY * CamUpY + RelZ * CamUpZ :: number
+	const Cz = RelX * CamLookX + RelY * CamLookY + RelZ * CamLookZ :: number
+
+	const RWorldX: number, RWorldY: number, RWorldZ: number = RightVector.X * Hx, RightVector.Y * Hx, RightVector.Z * Hx
+	const Rz = RWorldX * CamLookX + RWorldY * CamLookY + RWorldZ * CamLookZ :: number
+
+	const UWorldX: number, UWorldY: number, UWorldZ: number = UpVector.X * Hy, UpVector.Y * Hy, UpVector.Z * Hy
+	const Uz = UWorldX * CamLookX + UWorldY * CamLookY + UWorldZ * CamLookZ :: number
+
+	const LWorldX: number, LWorldY: number, LWorldZ: number = LookVector.X * Hz, LookVector.Y * Hz, LookVector.Z * Hz
+	const Lz = LWorldX * CamLookX + LWorldY * CamLookY + LWorldZ * CamLookZ :: number
+
+	const ExtentZ = math.abs(Rz) + math.abs(Uz) + math.abs(Lz) :: number
+	if Cz + ExtentZ < NEAR_CLIP or Cz - ExtentZ > FAR_CLIP then
+		return false
 	end
 
-	TransformPoint(-Hx, -Hy, -Hz, 1)
-	TransformPoint(Hx, -Hy, -Hz, 2)
-	TransformPoint(Hx, Hy, -Hz, 3)
-	TransformPoint(-Hx, Hy, -Hz, 4)
-	TransformPoint(-Hx, -Hy, Hz, 5)
-	TransformPoint(Hx, -Hy, Hz, 6)
-	TransformPoint(Hx, Hy, Hz, 7)
-	TransformPoint(-Hx, Hy, Hz, 8)
+	const Rx = RWorldX * CamRightX + RWorldY * CamRightY + RWorldZ * CamRightZ :: number
+	const Ry = RWorldX * CamUpX + RWorldY * CamUpY + RWorldZ * CamUpZ :: number
+
+	const Ux = UWorldX * CamRightX + UWorldY * CamRightY + UWorldZ * CamRightZ :: number
+	const Uy = UWorldX * CamUpX + UWorldY * CamUpY + UWorldZ * CamUpZ :: number
+
+	const Lx = LWorldX * CamRightX + LWorldY * CamRightY + LWorldZ * CamRightZ :: number
+	const Ly = LWorldX * CamUpX + LWorldY * CamUpY + LWorldZ * CamUpZ :: number
+
+	-- Vertex 1: (-Hx, -Hy, -Hz) -> Center - R - U + L
+	buffer.writef32(CameraVertices, 0, Cx - Rx - Ux + Lx)
+	buffer.writef32(CameraVertices, 4, Cy - Ry - Uy + Ly)
+	buffer.writef32(CameraVertices, 8, Cz - Rz - Uz + Lz)
+
+	-- Vertex 2: (Hx, -Hy, -Hz) -> Center + R - U + L
+	buffer.writef32(CameraVertices, 12, Cx + Rx - Ux + Lx)
+	buffer.writef32(CameraVertices, 16, Cy + Ry - Uy + Ly)
+	buffer.writef32(CameraVertices, 20, Cz + Rz - Uz + Lz)
+
+	-- Vertex 3: (Hx, Hy, -Hz) -> Center + R + U + L
+	buffer.writef32(CameraVertices, 24, Cx + Rx + Ux + Lx)
+	buffer.writef32(CameraVertices, 28, Cy + Ry + Uy + Ly)
+	buffer.writef32(CameraVertices, 32, Cz + Rz + Uz + Lz)
+
+	-- Vertex 4: (-Hx, Hy, -Hz) -> Center - R + U + L
+	buffer.writef32(CameraVertices, 36, Cx - Rx + Ux + Lx)
+	buffer.writef32(CameraVertices, 40, Cy - Ry + Uy + Ly)
+	buffer.writef32(CameraVertices, 44, Cz - Rz + Uz + Lz)
+
+	-- Vertex 5: (-Hx, -Hy, Hz) -> Center - R - U - L
+	buffer.writef32(CameraVertices, 48, Cx - Rx - Ux - Lx)
+	buffer.writef32(CameraVertices, 52, Cy - Ry - Uy - Ly)
+	buffer.writef32(CameraVertices, 56, Cz - Rz - Uz - Lz)
+
+	-- Vertex 6: (Hx, -Hy, Hz) -> Center + R - U - L
+	buffer.writef32(CameraVertices, 60, Cx + Rx - Ux - Lx)
+	buffer.writef32(CameraVertices, 64, Cy + Ry - Uy - Ly)
+	buffer.writef32(CameraVertices, 68, Cz + Rz - Uz - Lz)
+
+	-- Vertex 7: (Hx, Hy, Hz) -> Center + R + U - L
+	buffer.writef32(CameraVertices, 72, Cx + Rx + Ux - Lx)
+	buffer.writef32(CameraVertices, 76, Cy + Ry + Uy - Ly)
+	buffer.writef32(CameraVertices, 80, Cz + Rz + Uz - Lz)
+
+	-- Vertex 8: (-Hx, Hy, Hz) -> Center - R + U - L
+	buffer.writef32(CameraVertices, 84, Cx - Rx + Ux - Lx)
+	buffer.writef32(CameraVertices, 88, Cy - Ry + Uy - Ly)
+	buffer.writef32(CameraVertices, 92, Cz - Rz + Uz - Lz)
+
+	return true
 end
 
 local function ClipPolygon(
@@ -156,6 +206,13 @@ local function ClipPolygon(
 	return OutputCount
 end
 
+function RenderMath.GetProjectionParameters(FovY: number, WIDTH: number, HEIGHT: number): (number, number, number)
+	local FocalLength = (HEIGHT * 0.5) / math.tan(math.rad(FovY) * 0.5)
+	local GuardBandX = (WIDTH * 0.5 * GUARD_BAND_SCALE) / FocalLength
+	local GuardBandY = (HEIGHT * 0.5 * GUARD_BAND_SCALE) / FocalLength
+	return FocalLength, GuardBandX, GuardBandY
+end
+
 function RenderMath.ClipAndProjectTriangle(
 	CameraVertices: buffer,
 	V0Index: number,
@@ -164,17 +221,15 @@ function RenderMath.ClipAndProjectTriangle(
 	ProjectedVertices: buffer,
 	ClipBufferA: buffer,
 	ClipBufferB: buffer,
-	FovY: number,
+	FocalLength: number,
+	GuardBandX: number,
+	GuardBandY: number,
 	WIDTH: number,
 	HEIGHT: number
 ): number
 	buffer.copy(ClipBufferA, 0, CameraVertices, (V0Index - 1) * 12, 12)
 	buffer.copy(ClipBufferA, 12, CameraVertices, (V1Index - 1) * 12, 12)
 	buffer.copy(ClipBufferA, 24, CameraVertices, (V2Index - 1) * 12, 12)
-
-	const FocalLength = (HEIGHT * 0.5) / math.tan(math.rad(FovY) * 0.5) :: number
-	const GuardBandX = (WIDTH * 0.5 * GUARD_BAND_SCALE) / FocalLength
-	const GuardBandY = (HEIGHT * 0.5 * GUARD_BAND_SCALE) / FocalLength
 
 	local FullyInside = true
 	for i = 1, 3 do
@@ -259,50 +314,77 @@ function RenderMath.DrawTriangle(
 	const X2: number, Y2: number, Z2: number = V2.X, V2.Y, V2.Z
 
 	const Area = MathModule.EdgeFunction(X0, Y0, X1, Y1, X2, Y2) :: number
-	-- Define how many pixels the object (Triangle) covers
-	const invZ0: number, invZ1: number, invZ2: number = 1 / Z0, 1 / Z1, 1 / Z2
+	if Area == 0 then
+		return
+	end
 
 	const MinX = math.max(0, math.min(X0, X1, X2)) :: number
 	const MaxX = math.min(WIDTH - 1, math.max(X0, X1, X2)) :: number
 	const MinY = math.max(0, math.min(Y0, Y1, Y2)) :: number
 	const MaxY = math.min(HEIGHT - 1, math.max(Y0, Y1, Y2)) :: number
 
-	const InvArea = 1 / Area :: number
+	if MinX > MaxX or MinY > MaxY then
+		return
+	end
 
-	-- Begin drawing the raw pixels (Fills a box)
+	-- Define how many pixels the object (Triangle) covers
+	const InvArea = 1 / Area :: number
+	const ScaledInvZ0 = (1 / Z0) * InvArea :: number
+	const ScaledInvZ1 = (1 / Z1) * InvArea :: number
+	const ScaledInvZ2 = (1 / Z2) * InvArea :: number
+
+	const Edge0X = Y2 - Y1
+	const Edge1X = Y0 - Y2
+	const Edge2X = Y1 - Y0
+	const Edge0Y = X1 - X2
+	const Edge1Y = X2 - X0
+	const Edge2Y = X0 - X1
+
+	const StepInvZX = Edge0X * ScaledInvZ0 + Edge1X * ScaledInvZ1 + Edge2X * ScaledInvZ2 :: number
+	const StepInvZY = Edge0Y * ScaledInvZ0 + Edge1Y * ScaledInvZ1 + Edge2Y * ScaledInvZ2 :: number
+
+	local RowW0 = MathModule.EdgeFunction(X1, Y1, X2, Y2, MinX, MinY)
+	local RowW1 = MathModule.EdgeFunction(X2, Y2, X0, Y0, MinX, MinY)
+	local RowW2 = MathModule.EdgeFunction(X0, Y0, X1, Y1, MinX, MinY)
+	local RowInvZ = RowW0 * ScaledInvZ0 + RowW1 * ScaledInvZ1 + RowW2 * ScaledInvZ2 :: number
+
+	const PackedColor = bit32.bor(R, bit32.lshift(G, 8), bit32.lshift(B, 16), 0xFF000000) :: number
+	const RowStride = WIDTH * 4 :: number
+	local RowOffset = (MinY * WIDTH + MinX) * 4 :: number
 
 	for Y: number = MinY, MaxY do
-		const W00 = MathModule.EdgeFunction(X1, Y1, X2, Y2, MinX, Y) :: number
-		const W10 = MathModule.EdgeFunction(X2, Y2, X0, Y0, MinX, Y) :: number
-		const W20 = MathModule.EdgeFunction(X0, Y0, X1, Y1, MinX, Y) :: number
-
-		const W01 = MathModule.EdgeFunction(X1, Y1, X2, Y2, MinX + 2, Y) :: number
-		const W11 = MathModule.EdgeFunction(X2, Y2, X0, Y0, MinX + 2, Y) :: number
-		const W21 = MathModule.EdgeFunction(X0, Y0, X1, Y1, MinX + 2, Y) :: number
+		local W0 = RowW0
+		local W1 = RowW1
+		local W2 = RowW2
+		local InterpolatedInvZ = RowInvZ
+		local bufferOffset = RowOffset
+		local EnteredSpan = false
 
 		for X: number = MinX, MaxX do
-			const XStep = (X - MinX) * 0.5 :: number
-			const W0 = W00 + (W01 - W00) * XStep
-			const W1 = W10 + (W11 - W10) * XStep
-			const W2 = W20 + (W21 - W20) * XStep
 			-- Check if the object (triangle) is visible
 			if W0 >= 0 and W1 >= 0 and W2 >= 0 then
-				const L0 = W0 * InvArea :: number
-				const L1 = W1 * InvArea :: number
-				const L2 = W2 * InvArea :: number
+				EnteredSpan = true
 
-				const InterpolatedInvZ = L0 * invZ0 + L1 * invZ1 + L2 * invZ2 :: number
-				const CurrentZ = MathModule.SolveCurrentZ(InterpolatedInvZ, FRSBuffer) :: number -- Checks if the object is in front of the camera
-
-				const XYWidth = Y * WIDTH + X :: number
-				const bufferOffset = XYWidth * 4 :: number
-
-				if CurrentZ < buffer.readf32(ZBuffer, bufferOffset) then -- Checks if the pixel is closer to the camera
-					buffer.writef32(ZBuffer, bufferOffset, CurrentZ)
-					BufferHelper.BufferPixelWrite(PixelBuffer, bufferOffset, R, G, B, 255)
+				if InterpolatedInvZ > buffer.readf32(ZBuffer, bufferOffset) then -- Checks if the pixel is closer to the camera
+					buffer.writef32(ZBuffer, bufferOffset, InterpolatedInvZ)
+					buffer.writeu32(PixelBuffer, bufferOffset, PackedColor)
 				end
+			elseif EnteredSpan then
+				break
 			end
+
+			W0 += Edge0X
+			W1 += Edge1X
+			W2 += Edge2X
+			InterpolatedInvZ += StepInvZX
+			bufferOffset += 4
 		end
+
+		RowW0 += Edge0Y
+		RowW1 += Edge1Y
+		RowW2 += Edge2Y
+		RowInvZ += StepInvZY
+		RowOffset += RowStride
 	end
 end
 

@@ -341,24 +341,33 @@ RunService.RenderStepped:Connect(function()
 					continue
 				end
 
-				local Result = (MaxX - MinX + 1) * (MaxY - MinY + 1) :: number
+				const CX0 = math.clamp(X0, MinX, MaxX) :: number
+				const CX1 = math.clamp(X1, MinX, MaxX) :: number
+				const CX2 = math.clamp(X2, MinX, MaxX) :: number
+				const SpanY = MaxY - MinY + 1 :: number
+				const ScannedPixels = ((CX0 + CX1 + CX2 - MinX * 3) * 0.5 + 1) * SpanY :: number
+				const CoveredPixels = math.min(ScannedPixels, Area * 0.5) :: number
+				local Result = ScannedPixels + CoveredPixels + SpanY * 4 + 32 :: number
 
-				local SmallestValue = math.huge :: number
-				local SVIndex = 0 :: number
+				local SmallestValue = buffer.readf32(ScoreBuffer, 0) :: number
+				local SVIndex = 1 :: number
+				local SVOffset = 0 :: number
 
 				-- Find the smallest value then increase it
-				for i = 1, ActorCount do
-					const Score = buffer.readf32(ScoreBuffer, (i - 1) * 4) :: number
+				for i = 2, ActorCount do
+					const ScoreOffset = (i - 1) * 4 :: number
+					const Score = buffer.readf32(ScoreBuffer, ScoreOffset) :: number
 
-					if Score <= SmallestValue then
+					if Score < SmallestValue then
 						SmallestValue = Score
 						SVIndex = i
+						SVOffset = ScoreOffset
 					end
 				end
 
 				-- Apply changes and create a information buffer for workers
-				buffer.writef32(ScoreBuffer, (SVIndex - 1) * 4, SmallestValue + Result)
-				const RBOffset = buffer.readu32(OffsetBuffer, (SVIndex - 1) * 4) :: number -- Render buffer memory offset
+				buffer.writef32(ScoreBuffer, SVOffset, SmallestValue + Result)
+				const RBOffset = buffer.readu32(OffsetBuffer, SVOffset) :: number -- Render buffer memory offset
 				const RenderBuffer = BufferTable[SVIndex] :: buffer
 
 				local RenderResult = BufferHelper.CreateRenderBuffer(
@@ -372,7 +381,7 @@ RunService.RenderStepped:Connect(function()
 					ShadedB
 				) :: number
 
-				buffer.writeu32(OffsetBuffer, (SVIndex - 1) * 4, RenderResult)
+				buffer.writeu32(OffsetBuffer, SVOffset, RenderResult)
 			end
 		end
 	end

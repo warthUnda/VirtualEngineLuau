@@ -9,6 +9,7 @@ local RenderRoot = game.ReplicatedStorage
 -- References --
 local ControllerFolder = RenderRoot:WaitForChild("Controller") :: Folder
 local WorkerFolder = RenderRoot:WaitForChild("Worker") :: Folder
+local SceneFolder = RenderRoot:WaitForChild("Scene") :: Folder
 
 -- Modules --
 local RenderConfigs = require(RenderRoot:WaitForChild("RenderConfigs")) :: ModuleScript
@@ -47,6 +48,9 @@ function RenderBootstrap.CreateSetup()
 	-- Scripts of the controller
 	local ControllerScript = ControllerFolder:WaitForChild("RenderController"):Clone() :: Script -- Controls the actual workers
 	ControllerScript.Parent = ControllerActor
+
+	local CleanerScript = SceneFolder:WaitForChild("RendererCleaner"):Clone() :: LocalScript
+	CleanerScript.Parent = ControllerActor
 
 	-- Creation of workers
 	for i = 1, ActorCount do

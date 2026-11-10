@@ -1,7 +1,7 @@
 local RenderConfigs = {}
 
-local WIDTH = 200 :: number
-local HEIGHT = 200 :: number
+local WIDTH = 240 :: number
+local HEIGHT = 160 :: number
 
 local ActorNumbers = 3 :: number
 

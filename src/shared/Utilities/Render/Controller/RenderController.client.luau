@@ -2,12 +2,13 @@
 --!optimize 2
 
 -- Services --
+const Players = game:GetService("Players") :: Players
 const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 const AssetService = game:GetService("AssetService") :: AssetService
 const RunService = game:GetService("RunService") :: RunService
 
 -- Static References --
-const Player = game:GetService("Players").LocalPlayer :: Player
+const Player = Players.LocalPlayer :: Player
 const PlayerGui = Player:WaitForChild("PlayerGui") :: PlayerGui
 const PlayerScripts = Player:WaitForChild("PlayerScripts") :: PlayerScripts
 
@@ -20,10 +21,9 @@ const WorkerActors = PlayerScripts:WaitForChild("WorkerFolder"):GetChildren() ::
 
 -- Modules --
 const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper) :: ModuleScript
-
-const RenderConfigs = require(game.ReplicatedStorage.Shared.Utilities.Render.RenderConfigs) :: ModuleScript
-const RenderMath = require(game.ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath) :: ModuleScript
-const MathModule = require(game.ReplicatedStorage.Shared.Utilities.Render.Core.MathModule) :: ModuleScript
+const RenderConfigs = require(ReplicatedStorage.Shared.Utilities.Render.RenderConfigs) :: ModuleScript
+const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath) :: ModuleScript
+const MathModule = require(ReplicatedStorage.Shared.Utilities.Render.Core.MathModule) :: ModuleScript
 
 const CameraStore = require(
 	ReplicatedStorage:WaitForChild("Shared")
@@ -33,42 +33,31 @@ const CameraStore = require(
 		:WaitForChild("CameraStore")
 ) :: ModuleScript
 
-local CameraService = require(
+const CameraService = require(
 	ReplicatedStorage:WaitForChild("Shared")
 		:WaitForChild("Utilities")
 		:WaitForChild("Render")
 		:WaitForChild("Camera")
 		:WaitForChild("CameraService")
-)
+) :: ModuleScript
 
 -- The controller renders from the ECS cloned into its own Actor. Each Actor runs in a separate
 -- Luau VM, so reaching into PlayerScripts here would resolve to a different copy of these modules
 -- that nothing ever writes to (which reads back as an entity count of 0).
 const ObjectStorage = SelfActor:WaitForChild("ObjectStorage") :: Folder
 
-local ECSData = require(ObjectStorage:WaitForChild("ECSData"))
-local PositionData = require(ObjectStorage:WaitForChild("PositionData"))
-local SizeData = require(ObjectStorage:WaitForChild("SizeData"))
-local DirectionsData = require(ObjectStorage:WaitForChild("DirectionsData"))
-local VisualData = require(ObjectStorage:WaitForChild("VisualData"))
+const ECSData = require(ObjectStorage:WaitForChild("ECSData")) :: ModuleScript
+const PositionData = require(ObjectStorage:WaitForChild("PositionData")) :: ModuleScript
+const SizeData = require(ObjectStorage:WaitForChild("SizeData")) :: ModuleScript
+const DirectionsData = require(ObjectStorage:WaitForChild("DirectionsData")) :: ModuleScript
+const VisualData = require(ObjectStorage:WaitForChild("VisualData")) :: ModuleScript
 
 -- Configs --
 const WIDTH: number, HEIGHT: number = RenderConfigs.GetDimensions2D()
 const TOTAL_PIXELS = WIDTH * HEIGHT :: number
-const SUN_DIRECTION = Vector3.new(-0.4, 0.85, -0.35).Unit
-const AMBIENT_LIGHT = 0.3
-const PART_VERTEX_SIGNS = {
-	Vector3.new(-1, -1, -1),
-	Vector3.new(1, -1, -1),
-	Vector3.new(1, 1, -1),
-	Vector3.new(-1, 1, -1),
-	Vector3.new(-1, -1, 1),
-	Vector3.new(1, -1, 1),
-	Vector3.new(1, 1, 1),
-	Vector3.new(-1, 1, 1),
-}
-
-const ActorCount = RenderConfigs.GetActorCount() :: number
+const SUN_DIRECTION = Vector3.new(-0.4, 0.85, -0.35).Unit :: Vector3
+const AMBIENT_LIGHT = 0.3 :: number
+const ACTOR_COUNT = RenderConfigs.GetActorCount() :: number
 
 const ECS_COMPONENT_STRIDE = 12 :: number
 const ECS_DIRECTION_STRIDE = 36 :: number
@@ -77,29 +66,27 @@ local Received = 0 :: number
 local CurrentFrame = 0 :: number
 
 -- Tables --
-local OffsetBuffer = buffer.create(ActorCount * 4) :: buffer
+local OffsetBuffer = buffer.create(ACTOR_COUNT * 4) :: buffer
 local BufferTable = {} :: { buffer }
-local ScoreBuffer = buffer.create(ActorCount * 4) :: buffer
+local ScoreBuffer = buffer.create(ACTOR_COUNT * 4) :: buffer
 
-local PART_TRIANGLES = RenderConfigs.GetPartTriangles() :: buffer
-local SphereVertices = RenderConfigs.GetSphereVertices() :: { Vector3 }
+const PART_TRIANGLES = RenderConfigs.GetPartTriangles() :: buffer
 
 -- Buffers
 const FinalPixel = buffer.create(TOTAL_PIXELS * 4) :: buffer
 const FinalZ = buffer.create(TOTAL_PIXELS * 4) :: buffer
-local WorldVertices = buffer.create(8 * 12)
-local FaceIllumination = buffer.create(12 * 4)
+local FaceIllumination = buffer.create(12 * 4) :: buffer
 const ECSPositionBuffer = PositionData.GetData() :: buffer
 const ECSSizeBuffer = SizeData.GetData() :: buffer
 const ECSDirectionsBuffer = DirectionsData.GetData() :: buffer
 const ECSVisualBuffer = VisualData.GetData() :: buffer
-local ScreenVertices = buffer.create(8 * 12)
-local ProjectedVertices = buffer.create(12 * 12)
-local ClipBufferA = buffer.create(12 * 12)
-local ClipBufferB = buffer.create(12 * 12)
+local ScreenVertices = buffer.create(8 * 12) :: buffer
+local ProjectedVertices = buffer.create(12 * 12) :: buffer
+local ClipBufferA = buffer.create(12 * 12) :: buffer
+local ClipBufferB = buffer.create(12 * 12) :: buffer
 
 local function ReadProjectedVertex(VertexIndex: number): Vector3
-	local Offset = (VertexIndex - 1) * 12
+	local Offset = (VertexIndex - 1) * 12 :: number
 	return Vector3.new(
 		buffer.readf32(ProjectedVertices, Offset),
 		buffer.readf32(ProjectedVertices, Offset + 4),
@@ -108,7 +95,7 @@ local function ReadProjectedVertex(VertexIndex: number): Vector3
 end
 
 -- Create Information Data for workers
-for i = 1, ActorCount do
+for i = 1, ACTOR_COUNT do
 	BufferTable[i] = buffer.create(TOTAL_PIXELS * 32)
 	buffer.writef32(ScoreBuffer, (i - 1) * 4, 0)
 	buffer.writeu32(OffsetBuffer, (i - 1) * 4, 0)
@@ -128,8 +115,8 @@ task.spawn(function()
 
 	-- Set position: Y = -50000 (underground) or 50000 (sky)
 	-- Looking straight ahead or down
-	local targetPosition = Vector3.new(0, -50000, 0)
-	Camera.CFrame = CFrame.new(targetPosition)
+	const TargetPosition = Vector3.new(0, -50000, 0) :: Vector3
+	Camera.CFrame = CFrame.new(TargetPosition)
 end)
 
 -- ============================================================================
@@ -157,7 +144,7 @@ SelfActor:BindToMessage("Return Render Calculations", function(PixelBuffer: buff
 	Received += 1
 
 	-- If all workers have returned their data, write it to the image
-	if Received == ActorCount then
+	if Received == ACTOR_COUNT then
 		EditableImage:WritePixelsBuffer(Vector2.zero, Vector2.new(WIDTH, HEIGHT), FinalPixel)
 		Received = 0
 	end
@@ -173,21 +160,21 @@ RunService.RenderStepped:Connect(function()
 
 	const CamTable = CameraStore.GetCameraTable()
 
-	local CamPosition = CameraStore.GetCameraPosition()
-	local CamRight = CameraStore.GetCameraRight()
-	local CamUp = CameraStore.GetCameraUp()
-	local CamLook = CameraStore.GetCameraLook()
+	const CamPosition = CameraStore.GetCameraPosition() :: Vector3
+	const CamRight = CameraStore.GetCameraRight() :: Vector3
+	const CamUp = CameraStore.GetCameraUp() :: Vector3
+	const CamLook = CameraStore.GetCameraLook() :: Vector3
 
 	-- Configs
-	const CamCFrame = CamTable.CameraCFrame :: CFrame
 	const CamFOV = CamTable.CameraFOV :: number
-	const FocalLength, GuardBandX, GuardBandY = RenderMath.GetProjectionParameters(CamFOV, WIDTH, HEIGHT)
+	const FocalLength: number, GuardBandX: number, GuardBandY: number =
+		RenderMath.GetProjectionParameters(CamFOV, WIDTH, HEIGHT)
 
 	-- Pre loop Updates --
 	CurrentFrame += 1
 	Received = 0
 
-	for i = 1, ActorCount do
+	for i = 1, ACTOR_COUNT do
 		buffer.writef32(ScoreBuffer, (i - 1) * 4, 0)
 	end
 
@@ -202,17 +189,17 @@ RunService.RenderStepped:Connect(function()
 			buffer.readf32(ECSPositionBuffer, ComponentOffset + 8)
 		) :: Vector3
 
-		local LookVector = Vector3.new(
+		const LookVector = Vector3.new(
 			buffer.readf32(ECSDirectionsBuffer, DirectionOffset),
 			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 4),
 			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 8)
 		) :: Vector3
-		local UpVector = Vector3.new(
+		const UpVector = Vector3.new(
 			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 12),
 			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 16),
 			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 20)
 		) :: Vector3
-		local RightVector = Vector3.new(
+		const RightVector = Vector3.new(
 			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 24),
 			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 28),
 			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 32)
@@ -248,11 +235,6 @@ RunService.RenderStepped:Connect(function()
 			continue
 		end
 
-		-- Variables
-		local ShadedRHolder = PartColorR
-		local ShadedGHolder = PartColorG
-		local ShadedBHolder = PartColorB
-
 		const DotL = LookVector:Dot(SUN_DIRECTION) :: number
 		const DotU = UpVector:Dot(SUN_DIRECTION) :: number
 		const DotR = RightVector:Dot(SUN_DIRECTION) :: number
@@ -282,20 +264,20 @@ RunService.RenderStepped:Connect(function()
 		-- Loop through all triangles
 		-- 1.49 miliseconds part here:
 
-		local MemoryOffset = 0
+		local MemoryOffset = 0 :: number
 
 		for TriangleIndex = 1, 12 do
-			local V0TRI = buffer.readu8(PART_TRIANGLES, MemoryOffset)
+			local V0TRI = buffer.readu8(PART_TRIANGLES, MemoryOffset) :: number
 			MemoryOffset += 1
-			local V1TRI = buffer.readu8(PART_TRIANGLES, MemoryOffset)
+			local V1TRI = buffer.readu8(PART_TRIANGLES, MemoryOffset) :: number
 			MemoryOffset += 1
-			local V2TRI = buffer.readu8(PART_TRIANGLES, MemoryOffset)
+			local V2TRI = buffer.readu8(PART_TRIANGLES, MemoryOffset) :: number
 			MemoryOffset += 1
 
-			local Illumination = buffer.readf32(FaceIllumination, (TriangleIndex - 1) * 4)
-			local ShadedR = math.floor(ShadedRHolder * Illumination)
-			local ShadedG = math.floor(ShadedGHolder * Illumination)
-			local ShadedB = math.floor(ShadedBHolder * Illumination)
+			local Illumination = buffer.readf32(FaceIllumination, (TriangleIndex - 1) * 4) :: number
+			local ShadedR = math.floor(PartColorR * Illumination) :: number
+			local ShadedG = math.floor(PartColorG * Illumination) :: number
+			local ShadedB = math.floor(PartColorB * Illumination) :: number
 
 			local ClippedVertexCount = RenderMath.ClipAndProjectTriangle(
 				ScreenVertices,
@@ -310,7 +292,7 @@ RunService.RenderStepped:Connect(function()
 				GuardBandY,
 				WIDTH,
 				HEIGHT
-			)
+			) :: number
 
 			if ClippedVertexCount < 3 then
 				continue
@@ -332,7 +314,7 @@ RunService.RenderStepped:Connect(function()
 				const MinY = math.max(0, math.min(Y0, Y1, Y2)) :: number
 				const MaxY = math.min(HEIGHT - 1, math.max(Y0, Y1, Y2)) :: number
 
-				local Area = MathModule.EdgeFunction(X0, Y0, X1, Y1, X2, Y2)
+				local Area = MathModule.EdgeFunction(X0, Y0, X1, Y1, X2, Y2) :: number
 				if Area <= 0.1 then
 					continue
 				end
@@ -354,7 +336,7 @@ RunService.RenderStepped:Connect(function()
 				local SVOffset = 0 :: number
 
 				-- Find the smallest value then increase it
-				for i = 2, ActorCount do
+				for i = 2, ACTOR_COUNT do
 					const ScoreOffset = (i - 1) * 4 :: number
 					const Score = buffer.readf32(ScoreBuffer, ScoreOffset) :: number
 
@@ -400,7 +382,7 @@ RunService.RenderStepped:Connect(function()
 		)
 	end
 
-	for i = 1, ActorCount do
+	for i = 1, ACTOR_COUNT do
 		buffer.writeu32(OffsetBuffer, (i - 1) * 4, 0)
 	end
 end)

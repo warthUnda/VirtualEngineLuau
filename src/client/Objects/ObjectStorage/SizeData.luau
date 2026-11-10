@@ -1,6 +1,13 @@
-local SizeData = {}
+--!native
+--!optimize 2
 
-local SizeBuffer = buffer.create(100000) -- 100 000 bytes or 100 kbs
+-- Configs --
+const COMPONENT_STRIDE = 12 :: number
+
+-- Buffers
+const SizeBuffer = buffer.create(100000) :: buffer -- 100 000 bytes or 100 kbs
+
+local SizeData = {}
 
 -- Same 12-byte (3 x f32) stride as position and orientation.
 function SizeData.CreateLayout(MemoryOffset: number, X: number, Y: number, Z: number): number
@@ -8,7 +15,7 @@ function SizeData.CreateLayout(MemoryOffset: number, X: number, Y: number, Z: nu
 	buffer.writef32(SizeBuffer, MemoryOffset + 4, Y)
 	buffer.writef32(SizeBuffer, MemoryOffset + 8, Z)
 
-	return MemoryOffset + 12
+	return MemoryOffset + COMPONENT_STRIDE
 end
 
 function SizeData.GetData(): buffer

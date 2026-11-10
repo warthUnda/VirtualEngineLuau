@@ -1,15 +1,26 @@
-local DirectionsData = {}
+--!native
+--!optimize 2
 
-local DirectionsBuffer = buffer.create(300000) -- 300 000 bytes or 300 kbs
-
+-- Configs --
 -- 36 bytes per entity: look, up and right vectors stored as 3 x f32 each.
-local DIRECTION_STRIDE = 36 :: number
+const DIRECTION_STRIDE = 36 :: number
+
+-- Buffers
+const DirectionsBuffer = buffer.create(300000) :: buffer -- 300 000 bytes or 300 kbs
+
+local DirectionsData = {}
 
 function DirectionsData.CreateLayout(
 	MemoryOffset: number,
-	LookX: number, LookY: number, LookZ: number,
-	UpX: number, UpY: number, UpZ: number,
-	RightX: number, RightY: number, RightZ: number
+	LookX: number,
+	LookY: number,
+	LookZ: number,
+	UpX: number,
+	UpY: number,
+	UpZ: number,
+	RightX: number,
+	RightY: number,
+	RightZ: number
 ): number
 	buffer.writef32(DirectionsBuffer, MemoryOffset, LookX)
 	buffer.writef32(DirectionsBuffer, MemoryOffset + 4, LookY)

@@ -1,68 +1,22 @@
 --!native
 --!optimize 2
 
-local RenderMath = {}
-local NEAR_CLIP = 0.4
-local FAR_CLIP = 1000
-local GUARD_BAND_SCALE = 2
+-- Services --
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 
 -- Modules --
-local BufferHelper = require(game.ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper) :: ModuleScript
-local MathModule = require(game.ReplicatedStorage.Shared.Utilities.Render.Core.MathModule) :: ModuleScript
+const MathModule = require(ReplicatedStorage.Shared.Utilities.Render.Core.MathModule) :: ModuleScript
+
+-- Configs --
+const NEAR_CLIP = 0.4 :: number
+const FAR_CLIP = 1000 :: number
+const GUARD_BAND_SCALE = 2 :: number
+
+local RenderMath = {}
 
 -- ============================================================================
 -- 1. FUNCTIONS - RENDERING MATH
 -- ============================================================================
-
-local function DivisibleBy4(n: number): boolean
-	return bit32.band(n, 3) == 0
-end
-
-local function DivisibleBy2(n: number): boolean
-	return bit32.band(n, 1) == 0
-end
-
-local function DivisibleBy3(n: number): boolean
-	return bit32.band(n, 2) == 0
-end
-
--- Projects a point in 3D space to 2D screen space
-function RenderMath.ProjectWorldPointToScreen(
-	WorldPoint: Vector3,
-	CamPosition: Vector3,
-	CamRight: Vector3,
-	CamUp: Vector3,
-	CamLook: Vector3,
-	FovY: number,
-	WIDTH: number,
-	HEIGHT: number
-)
-	-- Transform the world point into camera space using custom math.
-	-- Replaces CFrame:PointToObjectSpace so we don't rely on a native transform.
-
-	const RelX = WorldPoint.X - CamPosition.X :: number
-	const RelY = WorldPoint.Y - CamPosition.Y :: number
-	const RelZ = WorldPoint.Z - CamPosition.Z :: number
-
-	-- dot products against the orthonormal camera basis (local X, local Y, local Z)
-	const LocalX = RelX * CamRight.X + RelY * CamRight.Y + RelZ * CamRight.Z :: number
-	const LocalY = RelX * CamUp.X + RelY * CamUp.Y + RelZ * CamUp.Z :: number
-	const LocalZ = -(RelX * CamLook.X + RelY * CamLook.Y + RelZ * CamLook.Z) :: number
-
-	const Z = -LocalZ :: number
-	if Z <= 0.4 then -- Checks if the point is behind the camera
-		return nil
-	end
-
-	-- Convert to 2D coordinates, plus Z values
-	const FovRad = math.rad(FovY) :: number
-	const FocalLength = (HEIGHT * 0.5) / math.tan(FovRad * 0.5) :: number
-
-	const ScreenX = math.floor((LocalX / Z) * FocalLength + (WIDTH * 0.5)) :: number
-	const ScreenY = math.floor((-LocalY / Z) * FocalLength + (HEIGHT * 0.5)) :: number
-
-	return Vector3.new(ScreenX, ScreenY, Z)
-end
 
 function RenderMath.GetPartCameraVertices(
 	Position: Vector3,
@@ -169,26 +123,26 @@ local function ClipPolygon(
 		return 0
 	end
 
-	local OutputCount = 0
-	local PreviousOffset = (InputCount - 1) * 12
-	local PreviousX = buffer.readf32(Input, PreviousOffset)
-	local PreviousY = buffer.readf32(Input, PreviousOffset + 4)
-	local PreviousZ = buffer.readf32(Input, PreviousOffset + 8)
-	local PreviousDistance = PreviousX * PlaneX + PreviousY * PlaneY + PreviousZ * PlaneZ + PlaneOffset
+	local OutputCount = 0 :: number
+	local PreviousOffset = (InputCount - 1) * 12 :: number
+	local PreviousX = buffer.readf32(Input, PreviousOffset) :: number
+	local PreviousY = buffer.readf32(Input, PreviousOffset + 4) :: number
+	local PreviousZ = buffer.readf32(Input, PreviousOffset + 8) :: number
+	local PreviousDistance = PreviousX * PlaneX + PreviousY * PlaneY + PreviousZ * PlaneZ + PlaneOffset :: number
 
 	for i = 1, InputCount do
-		local CurrentOffset = (i - 1) * 12
-		local CurrentX = buffer.readf32(Input, CurrentOffset)
-		local CurrentY = buffer.readf32(Input, CurrentOffset + 4)
-		local CurrentZ = buffer.readf32(Input, CurrentOffset + 8)
-		local CurrentDistance = CurrentX * PlaneX + CurrentY * PlaneY + CurrentZ * PlaneZ + PlaneOffset
-		local PreviousInside = PreviousDistance >= 0
-		local CurrentInside = CurrentDistance >= 0
+		const CurrentOffset = (i - 1) * 12 :: number
+		const CurrentX = buffer.readf32(Input, CurrentOffset) :: number
+		const CurrentY = buffer.readf32(Input, CurrentOffset + 4) :: number
+		const CurrentZ = buffer.readf32(Input, CurrentOffset + 8) :: number
+		const CurrentDistance = CurrentX * PlaneX + CurrentY * PlaneY + CurrentZ * PlaneZ + PlaneOffset :: number
+		const PreviousInside = PreviousDistance >= 0 :: boolean
+		const CurrentInside = CurrentDistance >= 0 :: boolean
 
 		if PreviousInside ~= CurrentInside then
-			local T = PreviousDistance / (PreviousDistance - CurrentDistance)
+			const T = PreviousDistance / (PreviousDistance - CurrentDistance) :: number
 			OutputCount += 1
-			local OutputOffset = (OutputCount - 1) * 12
+			const OutputOffset = (OutputCount - 1) * 12 :: number
 			buffer.writef32(Output, OutputOffset, PreviousX + (CurrentX - PreviousX) * T)
 			buffer.writef32(Output, OutputOffset + 4, PreviousY + (CurrentY - PreviousY) * T)
 			buffer.writef32(Output, OutputOffset + 8, PreviousZ + (CurrentZ - PreviousZ) * T)
@@ -207,9 +161,9 @@ local function ClipPolygon(
 end
 
 function RenderMath.GetProjectionParameters(FovY: number, WIDTH: number, HEIGHT: number): (number, number, number)
-	local FocalLength = (HEIGHT * 0.5) / math.tan(math.rad(FovY) * 0.5)
-	local GuardBandX = (WIDTH * 0.5 * GUARD_BAND_SCALE) / FocalLength
-	local GuardBandY = (HEIGHT * 0.5 * GUARD_BAND_SCALE) / FocalLength
+	const FocalLength = (HEIGHT * 0.5) / math.tan(math.rad(FovY) * 0.5) :: number
+	const GuardBandX = (WIDTH * 0.5 * GUARD_BAND_SCALE) / FocalLength :: number
+	const GuardBandY = (HEIGHT * 0.5 * GUARD_BAND_SCALE) / FocalLength :: number
 	return FocalLength, GuardBandX, GuardBandY
 end
 
@@ -231,12 +185,12 @@ function RenderMath.ClipAndProjectTriangle(
 	buffer.copy(ClipBufferA, 12, CameraVertices, (V1Index - 1) * 12, 12)
 	buffer.copy(ClipBufferA, 24, CameraVertices, (V2Index - 1) * 12, 12)
 
-	local FullyInside = true
+	local FullyInside = true :: boolean
 	for i = 1, 3 do
-		local Offset = (i - 1) * 12
-		local X = buffer.readf32(ClipBufferA, Offset)
-		local Y = buffer.readf32(ClipBufferA, Offset + 4)
-		local Z = buffer.readf32(ClipBufferA, Offset + 8)
+		const Offset = (i - 1) * 12 :: number
+		const X = buffer.readf32(ClipBufferA, Offset) :: number
+		const Y = buffer.readf32(ClipBufferA, Offset + 4) :: number
+		const Z = buffer.readf32(ClipBufferA, Offset + 8) :: number
 		if
 			Z < NEAR_CLIP
 			or Z > FAR_CLIP
@@ -252,10 +206,10 @@ function RenderMath.ClipAndProjectTriangle(
 
 	if FullyInside then
 		for i = 1, 3 do
-			local Offset = (i - 1) * 12
-			local X = buffer.readf32(ClipBufferA, Offset)
-			local Y = buffer.readf32(ClipBufferA, Offset + 4)
-			local Z = buffer.readf32(ClipBufferA, Offset + 8)
+			const Offset = (i - 1) * 12 :: number
+			const X = buffer.readf32(ClipBufferA, Offset) :: number
+			const Y = buffer.readf32(ClipBufferA, Offset + 4) :: number
+			const Z = buffer.readf32(ClipBufferA, Offset + 8) :: number
 			buffer.writef32(ProjectedVertices, Offset, math.floor((X / Z) * FocalLength + WIDTH * 0.5))
 			buffer.writef32(ProjectedVertices, Offset + 4, math.floor((-Y / Z) * FocalLength + HEIGHT * 0.5))
 			buffer.writef32(ProjectedVertices, Offset + 8, Z)
@@ -263,9 +217,9 @@ function RenderMath.ClipAndProjectTriangle(
 		return 3
 	end
 
-	local Input = ClipBufferA
-	local Output = ClipBufferB
-	local VertexCount = 3
+	local Input = ClipBufferA :: buffer
+	local Output = ClipBufferB :: buffer
+	local VertexCount = 3 :: number
 
 	VertexCount = ClipPolygon(Input, VertexCount, Output, 0, 0, 1, -NEAR_CLIP)
 	Input, Output = Output, Input
@@ -280,10 +234,10 @@ function RenderMath.ClipAndProjectTriangle(
 	VertexCount = ClipPolygon(Input, VertexCount, Output, 0, -1, GuardBandY, 0)
 
 	for i = 1, VertexCount do
-		local Offset = (i - 1) * 12
-		local X = buffer.readf32(Output, Offset)
-		local Y = buffer.readf32(Output, Offset + 4)
-		local Z = buffer.readf32(Output, Offset + 8)
+		const Offset = (i - 1) * 12 :: number
+		const X = buffer.readf32(Output, Offset) :: number
+		const Y = buffer.readf32(Output, Offset + 4) :: number
+		const Z = buffer.readf32(Output, Offset + 8) :: number
 		buffer.writef32(ProjectedVertices, Offset, math.floor((X / Z) * FocalLength + WIDTH * 0.5))
 		buffer.writef32(ProjectedVertices, Offset + 4, math.floor((-Y / Z) * FocalLength + HEIGHT * 0.5))
 		buffer.writef32(ProjectedVertices, Offset + 8, Z)
@@ -306,8 +260,7 @@ function RenderMath.DrawTriangle(
 	WIDTH: number,
 	HEIGHT: number,
 	PixelBuffer: buffer,
-	ZBuffer: buffer,
-	FRSBuffer: buffer
+	ZBuffer: buffer
 )
 	const X0: number, Y0: number, Z0: number = V0.X, V0.Y, V0.Z
 	const X1: number, Y1: number, Z1: number = V1.X, V1.Y, V1.Z
@@ -333,19 +286,19 @@ function RenderMath.DrawTriangle(
 	const ScaledInvZ1 = (1 / Z1) * InvArea :: number
 	const ScaledInvZ2 = (1 / Z2) * InvArea :: number
 
-	const Edge0X = Y2 - Y1
-	const Edge1X = Y0 - Y2
-	const Edge2X = Y1 - Y0
-	const Edge0Y = X1 - X2
-	const Edge1Y = X2 - X0
-	const Edge2Y = X0 - X1
+	const Edge0X = Y2 - Y1 :: number
+	const Edge1X = Y0 - Y2 :: number
+	const Edge2X = Y1 - Y0 :: number
+	const Edge0Y = X1 - X2 :: number
+	const Edge1Y = X2 - X0 :: number
+	const Edge2Y = X0 - X1 :: number
 
 	const StepInvZX = Edge0X * ScaledInvZ0 + Edge1X * ScaledInvZ1 + Edge2X * ScaledInvZ2 :: number
 	const StepInvZY = Edge0Y * ScaledInvZ0 + Edge1Y * ScaledInvZ1 + Edge2Y * ScaledInvZ2 :: number
 
-	local RowW0 = MathModule.EdgeFunction(X1, Y1, X2, Y2, MinX, MinY)
-	local RowW1 = MathModule.EdgeFunction(X2, Y2, X0, Y0, MinX, MinY)
-	local RowW2 = MathModule.EdgeFunction(X0, Y0, X1, Y1, MinX, MinY)
+	local RowW0 = MathModule.EdgeFunction(X1, Y1, X2, Y2, MinX, MinY) :: number
+	local RowW1 = MathModule.EdgeFunction(X2, Y2, X0, Y0, MinX, MinY) :: number
+	local RowW2 = MathModule.EdgeFunction(X0, Y0, X1, Y1, MinX, MinY) :: number
 	local RowInvZ = RowW0 * ScaledInvZ0 + RowW1 * ScaledInvZ1 + RowW2 * ScaledInvZ2 :: number
 
 	const PackedColor = bit32.bor(R, bit32.lshift(G, 8), bit32.lshift(B, 16), 0xFF000000) :: number
@@ -357,17 +310,17 @@ function RenderMath.DrawTriangle(
 		local W1 = RowW1
 		local W2 = RowW2
 		local InterpolatedInvZ = RowInvZ
-		local bufferOffset = RowOffset
-		local EnteredSpan = false
+		local BufferOffset = RowOffset
+		local EnteredSpan = false :: boolean
 
 		for X: number = MinX, MaxX do
 			-- Check if the object (triangle) is visible
 			if W0 >= 0 and W1 >= 0 and W2 >= 0 then
 				EnteredSpan = true
 
-				if InterpolatedInvZ > buffer.readf32(ZBuffer, bufferOffset) then -- Checks if the pixel is closer to the camera
-					buffer.writef32(ZBuffer, bufferOffset, InterpolatedInvZ)
-					buffer.writeu32(PixelBuffer, bufferOffset, PackedColor)
+				if InterpolatedInvZ > buffer.readf32(ZBuffer, BufferOffset) then -- Checks if the pixel is closer to the camera
+					buffer.writef32(ZBuffer, BufferOffset, InterpolatedInvZ)
+					buffer.writeu32(PixelBuffer, BufferOffset, PackedColor)
 				end
 			elseif EnteredSpan then
 				break
@@ -377,7 +330,7 @@ function RenderMath.DrawTriangle(
 			W1 += Edge1X
 			W2 += Edge2X
 			InterpolatedInvZ += StepInvZX
-			bufferOffset += 4
+			BufferOffset += 4
 		end
 
 		RowW0 += Edge0Y

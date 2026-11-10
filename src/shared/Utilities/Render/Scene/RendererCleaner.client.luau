@@ -12,7 +12,7 @@ const ECSFolder = (SelfActor and SelfActor:WaitForChild("ObjectStorage"))
 	or LocalPlayer:WaitForChild("PlayerScripts")
 		:WaitForChild("Client")
 		:WaitForChild("Objects")
-		:WaitForChild("ObjectStorage")
+		:WaitForChild("ObjectStorage") :: Folder
 
 -- Modules --
 const ECSData = require(ECSFolder:WaitForChild("ECSData")) :: ModuleScript
@@ -36,8 +36,8 @@ const Counts = ECSData.ECSDataTable
 -- ============================================================================
 
 while true do
-	local Head = ViewCulling.GetObserverHead(LocalPlayer)
-	local EntityCount = Counts.EntityECSCount :: number
+	const Head = ViewCulling.GetObserverHead(LocalPlayer) :: BasePart?
+	const EntityCount = Counts.EntityECSCount :: number
 
 	if Head and EntityCount > 0 then
 		ViewCulling.UpdateDynamicView(Head)

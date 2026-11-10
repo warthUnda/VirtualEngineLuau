@@ -1,47 +1,69 @@
+--!native
+--!optimize 2
+
 -- Services --
-local Workspace = workspace :: Workspace
+const ServerScriptService = game:GetService("ServerScriptService") :: ServerScriptService
+
+-- Static References --
+const Workspace = workspace :: Workspace
+const StorageFolder = ServerScriptService.Server.Objects.ObjectsECS.Storage :: Folder
 
 -- Modules --
-local ECSData = require(game.ServerScriptService.Server.Objects.ObjectsECS.Storage.ECSData)
-local PositionData = require(game.ServerScriptService.Server.Objects.ObjectsECS.Storage.PositionData)
-local OrientationData = require(game.ServerScriptService.Server.Objects.ObjectsECS.Storage.OrientationData)
-local VisualData = require(game.ServerScriptService.Server.Objects.ObjectsECS.Storage.VisualData)
-local SizeData = require(game.ServerScriptService.Server.Objects.ObjectsECS.Storage.SizeData)
-local DirectionsData = require(game.ServerScriptService.Server.Objects.ObjectsECS.Storage.DirectionsData)
+const ECSData = require(StorageFolder.ECSData) :: ModuleScript
+const PositionData = require(StorageFolder.PositionData) :: ModuleScript
+const OrientationData = require(StorageFolder.OrientationData) :: ModuleScript
+const VisualData = require(StorageFolder.VisualData) :: ModuleScript
+const SizeData = require(StorageFolder.SizeData) :: ModuleScript
+const DirectionsData = require(StorageFolder.DirectionsData) :: ModuleScript
 
-local ENTITY_STRIDE = 12 :: number
-local DIRECTION_STRIDE = 36 :: number
+-- Configs --
+const ENTITY_STRIDE = 12 :: number
+const DIRECTION_STRIDE = 36 :: number
 
 -- Registers one BasePart into the ECS component buffers.
 local function PopulatePart(Part: BasePart)
-	local EntityId = ECSData.RegisterEntity() :: number
-	local Offset = (EntityId - 1) * ENTITY_STRIDE
-	local DirectionOffset = (EntityId - 1) * DIRECTION_STRIDE
+	const EntityId = ECSData.RegisterEntity() :: number
+	const Offset = (EntityId - 1) * ENTITY_STRIDE :: number
+	const DirectionOffset = (EntityId - 1) * DIRECTION_STRIDE :: number
 
-	PositionData.CreateLayout(Offset, Part.Position.X, Part.Position.Y, Part.Position.Z)
+	const PartPosition = Part.Position :: Vector3
+	PositionData.CreateLayout(Offset, PartPosition.X, PartPosition.Y, PartPosition.Z)
 
-	local LookVector = Part.CFrame.LookVector
-	local UpVector = Part.CFrame.UpVector
-	local RightVector = Part.CFrame.RightVector
+	const PartCFrame = Part.CFrame :: CFrame
+	const LookVector = PartCFrame.LookVector :: Vector3
+	const UpVector = PartCFrame.UpVector :: Vector3
+	const RightVector = PartCFrame.RightVector :: Vector3
 
 	-- Orientation is stored as the part's facing direction (simplified 3-float layout).
 	OrientationData.CreateLayout(Offset, LookVector.X, LookVector.Y, LookVector.Z)
 	DirectionsData.CreateLayout(
 		DirectionOffset,
-		LookVector.X, LookVector.Y, LookVector.Z,
-		UpVector.X, UpVector.Y, UpVector.Z,
-		RightVector.X, RightVector.Y, RightVector.Z
+		LookVector.X,
+		LookVector.Y,
+		LookVector.Z,
+		UpVector.X,
+		UpVector.Y,
+		UpVector.Z,
+		RightVector.X,
+		RightVector.Y,
+		RightVector.Z
 	)
 
-	SizeData.CreateLayout(Offset, Part.Size.X, Part.Size.Y, Part.Size.Z)
+	const PartSize = Part.Size :: Vector3
+	SizeData.CreateLayout(Offset, PartSize.X, PartSize.Y, PartSize.Z)
 
+	const PartColor = Part.Color :: Color3
 	VisualData.CreateLayout(
 		Offset,
-		math.floor(Part.Color.R * 255),
-		math.floor(Part.Color.G * 255),
-		math.floor(Part.Color.B * 255)
+		math.floor(PartColor.R * 255),
+		math.floor(PartColor.G * 255),
+		math.floor(PartColor.B * 255)
 	)
 end
+
+-- ============================================================================
+-- 1. WORKSPACE SEED & LISTENER
+-- ============================================================================
 
 -- Seed the ECS with everything already present in the workspace.
 for _, Descendant: Instance in ipairs(Workspace:GetDescendants()) do

@@ -1,5 +1,16 @@
-local CameraState = {}
+--!native
+--!optimize 2
 
+-- Services --
+const RunService = game:GetService("RunService") :: RunService
+
+-- Static References --
+const CurrentCamera = workspace.CurrentCamera :: Camera
+
+-- Configs --
+const FIXED_POSITION = Vector3.new(0, 1000, -5000) :: Vector3
+
+-- Tables --
 local CameraTable = {
 	CameraCFrame = CFrame.new(5, 5, 5),
 	CameraFOV = 70,
@@ -7,56 +18,54 @@ local CameraTable = {
 	CameraSubject = nil :: Instance?,
 }
 
-local CameraPosition = Vector3.new(0, 0, 0)
+local CameraPosition = Vector3.new(0, 0, 0) :: Vector3
+local CameraRight = Vector3.new(1, 0, 0) :: Vector3
+local CameraUp = Vector3.new(0, 1, 0) :: Vector3
+local CameraLook = Vector3.new(0, 0, 1) :: Vector3
 
-local CameraRight = Vector3.new(1, 0, 0)
-local CameraUp = Vector3.new(0, 1, 0)
-local CameraLook = Vector3.new(0, 0, 1)
-
-local CurrentCamera = workspace.CurrentCamera
+local CameraStore = {}
 
 local function VectorsToRotation(LookVector: Vector3, UpVector: Vector3, RightVector: Vector3): CFrame
-	local vZ = -LookVector.Unit
-	local vY = UpVector.Unit
-	local vX = RightVector.Unit
-	return CFrame.fromMatrix(Vector3.zero, vX, vY, vZ)
+	const Vz = -LookVector.Unit :: Vector3
+	const Vy = UpVector.Unit :: Vector3
+	const Vx = RightVector.Unit :: Vector3
+	return CFrame.fromMatrix(Vector3.zero, Vx, Vy, Vz)
 end
 
-local FixedPosition = Vector3.new(0, 1000, -5000)
+-- ============================================================================
+-- 1. CAMERA SYNC - UPDATES CAMERA STATE EACH FRAME
+-- ============================================================================
 
-game:GetService("RunService").RenderStepped:Connect(function()
-	local CameraCFrameDecoy = CameraTable.CameraCFrame
+RunService.RenderStepped:Connect(function()
+	const CameraCFrame = CameraTable.CameraCFrame :: CFrame
 
-	CameraPosition = CameraCFrameDecoy.Position
-	CameraRight = CameraCFrameDecoy.RightVector
-	CameraUp = CameraCFrameDecoy.UpVector
-	CameraLook = CameraCFrameDecoy.LookVector
+	CameraPosition = CameraCFrame.Position
+	CameraRight = CameraCFrame.RightVector
+	CameraUp = CameraCFrame.UpVector
+	CameraLook = CameraCFrame.LookVector
 
-	local CameraCFrame = CameraTable.CameraCFrame
-
-	local TargetRotation = VectorsToRotation(CameraCFrame.LookVector, CameraCFrame.UpVector, CameraCFrame.RightVector)
-
-	CurrentCamera.CFrame = CFrame.new(FixedPosition) * TargetRotation
+	const TargetRotation = VectorsToRotation(CameraLook, CameraUp, CameraRight)
+	CurrentCamera.CFrame = CFrame.new(FIXED_POSITION) * TargetRotation
 end)
 
-function CameraState.GetCameraTable()
+function CameraStore.GetCameraTable()
 	return CameraTable
 end
 
-function CameraState.GetCameraPosition()
+function CameraStore.GetCameraPosition(): Vector3
 	return CameraPosition
 end
 
-function CameraState.GetCameraRight()
+function CameraStore.GetCameraRight(): Vector3
 	return CameraRight
 end
 
-function CameraState.GetCameraUp()
+function CameraStore.GetCameraUp(): Vector3
 	return CameraUp
 end
 
-function CameraState.GetCameraLook()
+function CameraStore.GetCameraLook(): Vector3
 	return CameraLook
 end
 
-return CameraState
+return CameraStore

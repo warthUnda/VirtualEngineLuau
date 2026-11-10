@@ -1,11 +1,13 @@
-local RenderConfigs = {}
+--!native
+--!optimize 2
 
-local WIDTH = 240 :: number
-local HEIGHT = 160 :: number
+-- Configs --
+const WIDTH = 240 :: number
+const HEIGHT = 240 :: number
+const ACTOR_COUNT = 3 :: number
 
-local ActorNumbers = 3 :: number
-
-local PART_TRIANGLES = { --12 times 3 = 36 bytes
+-- Tables --
+const PART_TRIANGLES = { -- 12 times 3 = 36 bytes
 	{ 1, 3, 2 },
 	{ 1, 4, 3 }, -- Back
 	{ 5, 6, 7 },
@@ -18,141 +20,34 @@ local PART_TRIANGLES = { --12 times 3 = 36 bytes
 	{ 1, 8, 4 }, -- Left
 	{ 2, 3, 7 },
 	{ 2, 7, 6 }, -- Right
-}
+} :: { { number } }
 
-local PART_TRIANGLES_BUFFER = buffer.create(12 * 3 * 4) :: buffer
-local MemoryOffset = 0
+-- Buffers
+const PartTrianglesBuffer = buffer.create(12 * 3) :: buffer
+
+local MemoryOffset = 0 :: number
 
 for i = 1, 12 do
-	local Tri = PART_TRIANGLES[i]
-	local V0 = Tri[1]
-	local V1 = Tri[2]
-	local V2 = Tri[3]
-
-	buffer.writeu8(PART_TRIANGLES_BUFFER, MemoryOffset, V0)
+	const Tri = PART_TRIANGLES[i] :: { number }
+	buffer.writeu8(PartTrianglesBuffer, MemoryOffset, Tri[1])
 	MemoryOffset += 1
-	buffer.writeu8(PART_TRIANGLES_BUFFER, MemoryOffset, V1)
+	buffer.writeu8(PartTrianglesBuffer, MemoryOffset, Tri[2])
 	MemoryOffset += 1
-	buffer.writeu8(PART_TRIANGLES_BUFFER, MemoryOffset, V2)
+	buffer.writeu8(PartTrianglesBuffer, MemoryOffset, Tri[3])
 	MemoryOffset += 1
 end
 
-local SphereVertices = {
-	Vector3.new(0.0000, 0.0000, 1.0000),
-	Vector3.new(0.0000, 0.0000, -1.0000),
-	Vector3.new(0.7071, 0.0000, 0.7071),
-	Vector3.new(-0.7071, 0.0000, 0.7071),
-	Vector3.new(0.0000, 0.7071, 0.7071),
-	Vector3.new(0.0000, -0.7071, 0.7071),
-	Vector3.new(0.7071, 0.0000, -0.7071),
-	Vector3.new(-0.7071, 0.0000, -0.7071),
-	Vector3.new(0.0000, 0.7071, -0.7071),
-	Vector3.new(0.0000, -0.7071, -0.7071),
-	Vector3.new(0.7071, 0.7071, 0.0000),
-	Vector3.new(-0.7071, 0.7071, 0.0000),
-	Vector3.new(0.7071, -0.7071, 0.0000),
-	Vector3.new(-0.7071, -0.7071, 0.0000),
-	Vector3.new(0.3827, 0.0000, 0.9239),
-	Vector3.new(-0.3827, 0.0000, 0.9239),
-	Vector3.new(0.0000, 0.3827, 0.9239),
-	Vector3.new(0.0000, -0.3827, 0.9239),
-	Vector3.new(0.9239, 0.0000, 0.3827),
-	Vector3.new(-0.9239, 0.0000, 0.3827),
-	Vector3.new(0.0000, 0.9239, 0.3827),
-	Vector3.new(0.0000, -0.9239, 0.3827),
-	Vector3.new(0.3827, 0.0000, -0.9239),
-	Vector3.new(-0.3827, 0.0000, -0.9239),
-	Vector3.new(0.0000, 0.3827, -0.9239),
-	Vector3.new(0.0000, -0.3827, -0.9239),
-	Vector3.new(0.9239, 0.0000, -0.3827),
-	Vector3.new(-0.9239, 0.0000, -0.3827),
-	Vector3.new(0.0000, 0.9239, -0.3827),
-	Vector3.new(0.0000, -0.9239, -0.3827),
-	Vector3.new(0.5000, 0.5000, 0.7071),
-	Vector3.new(-0.5000, 0.5000, 0.7071),
-	Vector3.new(0.5000, -0.5000, 0.7071),
-	Vector3.new(-0.5000, -0.5000, 0.7071),
-	Vector3.new(0.5000, 0.5000, -0.7071),
-	Vector3.new(-0.5000, 0.5000, -0.7071),
-	Vector3.new(0.5000, -0.5000, -0.7071),
-	Vector3.new(-0.5000, -0.5000, -0.7071),
-	Vector3.new(0.7071, 0.5000, 0.5000),
-	Vector3.new(-0.7071, 0.5000, 0.5000),
-	Vector3.new(0.7071, -0.5000, 0.5000),
-	Vector3.new(-0.7071, -0.5000, 0.5000),
-	Vector3.new(0.7071, 0.5000, -0.5000),
-	Vector3.new(-0.7071, 0.5000, -0.5000),
-	Vector3.new(0.7071, -0.5000, -0.5000),
-	Vector3.new(-0.7071, -0.5000, -0.5000),
-	Vector3.new(0.5000, 0.7071, 0.5000),
-	Vector3.new(-0.5000, 0.7071, 0.5000),
-	Vector3.new(0.5000, -0.7071, 0.5000),
-	Vector3.new(-0.5000, -0.7071, 0.5000),
-	Vector3.new(0.5000, 0.7071, -0.5000),
-	Vector3.new(-0.5000, 0.7071, -0.5000),
-	Vector3.new(0.5000, -0.7071, -0.5000),
-	Vector3.new(-0.5000, -0.7071, -0.5000),
-	Vector3.new(0.3090, 0.3090, 0.8944),
-	Vector3.new(-0.3090, 0.3090, 0.8944),
-	Vector3.new(0.3090, -0.3090, 0.8944),
-	Vector3.new(-0.3090, -0.3090, 0.8944),
-	Vector3.new(0.8944, 0.3090, 0.3090),
-	Vector3.new(-0.8944, 0.3090, 0.3090),
-	Vector3.new(0.8944, -0.3090, 0.3090),
-	Vector3.new(-0.8944, -0.3090, 0.3090),
-	Vector3.new(0.3090, 0.8944, 0.3090),
-	Vector3.new(-0.3090, 0.8944, 0.3090),
-	Vector3.new(0.3090, -0.8944, 0.3090),
-	Vector3.new(-0.3090, -0.8944, 0.3090),
-	Vector3.new(0.3090, 0.3090, -0.8944),
-	Vector3.new(-0.3090, 0.3090, -0.8944),
-	Vector3.new(0.3090, -0.3090, -0.8944),
-	Vector3.new(-0.3090, -0.3090, -0.8944),
-	Vector3.new(0.8944, 0.3090, -0.3090),
-	Vector3.new(-0.8944, 0.3090, -0.3090),
-	Vector3.new(0.8944, -0.3090, -0.3090),
-	Vector3.new(-0.8944, -0.3090, -0.3090),
-	Vector3.new(0.3090, 0.8944, -0.3090),
-	Vector3.new(-0.3090, 0.8944, -0.3090),
-	Vector3.new(0.3090, -0.8944, -0.3090),
-	Vector3.new(-0.3090, -0.8944, -0.3090),
-	Vector3.new(0.5878, 0.5878, 0.5590),
-	Vector3.new(-0.5878, 0.5878, 0.5590),
-	Vector3.new(0.5878, -0.5878, 0.5590),
-	Vector3.new(-0.5878, -0.5878, 0.5590),
-	Vector3.new(0.5878, 0.5878, -0.5590),
-	Vector3.new(-0.5878, 0.5878, -0.5590),
-	Vector3.new(0.5878, -0.5878, -0.5590),
-	Vector3.new(-0.5878, -0.5878, -0.5590),
-	Vector3.new(0.8090, 0.5878, 0.0000),
-	Vector3.new(-0.8090, 0.5878, 0.0000),
-	Vector3.new(0.8090, -0.5878, 0.0000),
-	Vector3.new(-0.8090, -0.5878, 0.0000),
-	Vector3.new(0.5878, 0.8090, 0.0000),
-	Vector3.new(-0.5878, 0.8090, 0.0000),
-	Vector3.new(0.5878, -0.8090, 0.0000),
-	Vector3.new(-0.5878, -0.8090, 0.0000),
-	Vector3.new(0.0000, 0.5878, 0.8090),
-	Vector3.new(0.0000, -0.5878, 0.8090),
-	Vector3.new(0.0000, 0.5878, -0.8090),
-	Vector3.new(0.0000, -0.5878, -0.8090),
-	Vector3.new(0.0000, 0.8090, 0.5878),
-	Vector3.new(0.0000, -0.8090, 0.5878),
-}
+local RenderConfigs = {}
 
-function RenderConfigs.GetActorCount()
-	return ActorNumbers
+function RenderConfigs.GetActorCount(): number
+	return ACTOR_COUNT
 end
 
-function RenderConfigs.GetPartTriangles()
-	return PART_TRIANGLES_BUFFER
+function RenderConfigs.GetPartTriangles(): buffer
+	return PartTrianglesBuffer
 end
 
-function RenderConfigs.GetSphereVertices()
-	return SphereVertices
-end
-
-function RenderConfigs.GetDimensions2D()
+function RenderConfigs.GetDimensions2D(): (number, number)
 	return WIDTH, HEIGHT
 end
 

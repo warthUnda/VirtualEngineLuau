@@ -1,15 +1,26 @@
 --!native
 --!optimize 2
 
-local Storage = script.Parent
-local PositionBuffer = require(Storage:WaitForChild("PositionData")).GetData() :: buffer
-local OrientationBuffer = require(Storage:WaitForChild("OrientationData")).GetData() :: buffer
-local VisualBuffer = require(Storage:WaitForChild("VisualData")).GetData() :: buffer
-local SizeBuffer = require(Storage:WaitForChild("SizeData")).GetData() :: buffer
-local DirectionsBuffer = require(Storage:WaitForChild("DirectionsData")).GetData() :: buffer
+-- Static References --
+const Storage = script.Parent :: Folder
 
+-- Modules --
+const PositionData = require(Storage:WaitForChild("PositionData")) :: ModuleScript
+const OrientationData = require(Storage:WaitForChild("OrientationData")) :: ModuleScript
+const VisualData = require(Storage:WaitForChild("VisualData")) :: ModuleScript
+const SizeData = require(Storage:WaitForChild("SizeData")) :: ModuleScript
+const DirectionsData = require(Storage:WaitForChild("DirectionsData")) :: ModuleScript
+
+-- Configs --
 const COMPONENT_STRIDE = 12 :: number
 const DIRECTION_STRIDE = 36 :: number
+
+-- Buffers
+const PositionBuffer = PositionData.GetData() :: buffer
+const OrientationBuffer = OrientationData.GetData() :: buffer
+const VisualBuffer = VisualData.GetData() :: buffer
+const SizeBuffer = SizeData.GetData() :: buffer
+const DirectionsBuffer = DirectionsData.GetData() :: buffer
 
 local ECSData = {}
 
@@ -30,8 +41,8 @@ end
 -- Call once per entity registered into the ECS to keep all component counts in sync.
 -- Returns the 1-based id of the newly registered entity.
 function ECSData.RegisterEntity(): number
-	local Counts = ECSData.ECSDataTable
-	local NextCount = Counts.EntityECSCount + 1
+	const Counts = ECSData.ECSDataTable
+	const NextCount = Counts.EntityECSCount + 1 :: number
 
 	Counts.EntityECSCount = NextCount
 	Counts.OrientationECSCount = NextCount
@@ -44,8 +55,8 @@ function ECSData.RegisterEntity(): number
 end
 
 function ECSData.DeleteEntity(EntityId: number)
-	local Counts = ECSData.ECSDataTable
-	local LastEntityId = Counts.EntityECSCount
+	const Counts = ECSData.ECSDataTable
+	const LastEntityId = Counts.EntityECSCount :: number
 
 	if EntityId < 1 or EntityId > LastEntityId then
 		return
@@ -65,7 +76,7 @@ function ECSData.DeleteEntity(EntityId: number)
 		buffer.copy(DirectionsBuffer, TargetDirOffset, DirectionsBuffer, LastDirOffset, DIRECTION_STRIDE)
 	end
 
-	local NewCount = LastEntityId - 1
+	const NewCount = LastEntityId - 1 :: number
 	Counts.EntityECSCount = NewCount
 	Counts.OrientationECSCount = NewCount
 	Counts.PositionECSCount = NewCount

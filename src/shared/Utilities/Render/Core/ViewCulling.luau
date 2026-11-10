@@ -15,7 +15,7 @@ const CameraStore = if RunService:IsClient()
 			:WaitForChild("Render")
 			:WaitForChild("Camera")
 			:WaitForChild("CameraStore")
-	)
+	) :: ModuleScript
 	else nil
 
 -- Configs --
@@ -32,7 +32,7 @@ const NEAR_CLIP = 0.4 :: number
 const FAR_CLIP = 200 :: number
 const COMPONENT_STRIDE = 12 :: number
 
--- Cached View State --
+-- Tables --
 local ViewOriginX = 0 :: number
 local ViewOriginY = 0 :: number
 local ViewOriginZ = 0 :: number
@@ -52,7 +52,6 @@ local ViewLookZ = -1 :: number
 local ViewTanX = BASE_TAN_X :: number
 local ViewTanY = BASE_TAN_Y :: number
 
--- Cached O(1) Dominant Occluder State --
 local HasOccluder = false :: boolean
 local OccFarZ = 0 :: number
 local OccMinX = 0 :: number
@@ -62,18 +61,22 @@ local OccMaxY = 0 :: number
 
 local ViewCulling = {}
 
+-- ============================================================================
+-- 1. CULLING FUNCTIONS - FRUSTUM & DOMINANT OCCLUDER
+-- ============================================================================
+
 function ViewCulling.GetObserverHead(TargetPlayer: Player?): BasePart?
-	local ResolvedPlayer = TargetPlayer or Players.LocalPlayer
+	const ResolvedPlayer = TargetPlayer or Players.LocalPlayer :: Player?
 	if not ResolvedPlayer then
 		return nil
 	end
 
-	local Character = ResolvedPlayer.Character
+	const Character = ResolvedPlayer.Character :: Model?
 	if not Character then
 		return nil
 	end
 
-	local Head = Character:FindFirstChild("Head")
+	const Head = Character:FindFirstChild("Head") :: Instance?
 	if Head and Head:IsA("BasePart") then
 		return Head
 	end
@@ -84,7 +87,7 @@ end
 -- Pulls the frustum origin backward behind the camera based on Head-to-Camera distance.
 -- This naturally pads both the immediate surroundings and the frustum cone without trig.
 function ViewCulling.UpdateDynamicView(Head: BasePart)
-	local HeadPos = Head.Position :: Vector3
+	const HeadPos = Head.Position :: Vector3
 	local Origin = HeadPos
 	local Right = Head.CFrame.RightVector :: Vector3
 	local Up = Head.CFrame.UpVector :: Vector3

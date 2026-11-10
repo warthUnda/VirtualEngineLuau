@@ -1,26 +1,27 @@
 --!native
 --!optimize 2
 
--- Static References --
-const ControllerActor =
-	game:GetService("Players").LocalPlayer:WaitForChild("PlayerScripts"):WaitForChild("Controller") :: Actor
+-- Services --
+const Players = game:GetService("Players") :: Players
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 
+-- Static References --
+const ControllerActor = Players.LocalPlayer:WaitForChild("PlayerScripts"):WaitForChild("Controller") :: Actor
 const SelfActor = script.Parent :: Actor
 
 -- Modules --
-const BufferHelper = require(game.ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper) :: ModuleScript
-const RenderMath = require(game.ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath) :: ModuleScript
-const RenderConfigs = require(game.ReplicatedStorage.Shared.Utilities.Render.RenderConfigs) :: ModuleScript
+const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper) :: ModuleScript
+const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath) :: ModuleScript
+const RenderConfigs = require(ReplicatedStorage.Shared.Utilities.Render.RenderConfigs) :: ModuleScript
 
--- Configs
+-- Configs --
 local WIDTH: number, HEIGHT: number = RenderConfigs.GetDimensions2D()
 const TOTAL_PIXELS = WIDTH * HEIGHT :: number
+const BUFFER_LAYOUT_SIZE = BufferHelper.RenderBufferLayoutSize :: number
 
-local BufferLayoutSize = BufferHelper.RenderBufferLayoutSize :: number
 local ReadMemoryOffset = 0 :: number
 
 -- Buffers
-const FRSBuffer = buffer.create(4) :: buffer
 const PixelBuffer = buffer.create(TOTAL_PIXELS * 4) :: buffer
 const ZBuffer = buffer.create(TOTAL_PIXELS * 4) :: buffer
 
@@ -37,7 +38,7 @@ SelfActor:BindToMessageParallel("Execute Rendering", function(RenderBuffer: buff
 
 	WIDTH, HEIGHT = RenderConfigs.GetDimensions2D()
 
-	for i = 1, ByteCount / BufferLayoutSize do
+	for i = 1, ByteCount / BUFFER_LAYOUT_SIZE do
 		const V0X = buffer.readi16(RenderBuffer, ReadMemoryOffset) :: number
 		const V0Y = buffer.readi16(RenderBuffer, ReadMemoryOffset + 2) :: number
 		const V0Z = buffer.readf32(RenderBuffer, ReadMemoryOffset + 4) :: number
@@ -58,9 +59,9 @@ SelfActor:BindToMessageParallel("Execute Rendering", function(RenderBuffer: buff
 		const V1Vector = Vector3.new(V1X, V1Y, V1Z) :: Vector3
 		const V2Vector = Vector3.new(V2X, V2Y, V2Z) :: Vector3
 
-		RenderMath.DrawTriangle(V0Vector, V1Vector, V2Vector, R, G, B, WIDTH, HEIGHT, PixelBuffer, ZBuffer, FRSBuffer)
+		RenderMath.DrawTriangle(V0Vector, V1Vector, V2Vector, R, G, B, WIDTH, HEIGHT, PixelBuffer, ZBuffer)
 
-		ReadMemoryOffset += BufferLayoutSize
+		ReadMemoryOffset += BUFFER_LAYOUT_SIZE
 	end
 
 	ControllerActor:SendMessage("Return Render Calculations", PixelBuffer, ZBuffer, FrameId)

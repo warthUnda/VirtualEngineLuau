@@ -1,7 +1,7 @@
-local Player = game:GetService("Players").LocalPlayer
+--!native
+--!optimize 2
 
-local PlayerScripts = Player:WaitForChild("PlayerScripts") :: PlayerScripts
-
-local RenderBootstrap = require(script.Parent.RenderBootstrap)
+-- Modules --
+const RenderBootstrap = require(script.Parent.RenderBootstrap) :: ModuleScript
 
 RenderBootstrap.CreateSetup()

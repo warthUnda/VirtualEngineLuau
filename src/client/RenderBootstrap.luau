@@ -1,64 +1,69 @@
-local RenderBootstrap = {}
+--!native
+--!optimize 2
 
--- Modules --
-local RenderRoot = game.ReplicatedStorage
-	:WaitForChild("Shared")
+-- Services --
+const Players = game:GetService("Players") :: Players
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+
+-- Static References --
+const RenderRoot = ReplicatedStorage:WaitForChild("Shared")
 	:WaitForChild("Utilities")
 	:WaitForChild("Render") :: Folder
 
--- References --
-local ControllerFolder = RenderRoot:WaitForChild("Controller") :: Folder
-local WorkerFolder = RenderRoot:WaitForChild("Worker") :: Folder
-local SceneFolder = RenderRoot:WaitForChild("Scene") :: Folder
+const ControllerFolder = RenderRoot:WaitForChild("Controller") :: Folder
+const WorkerFolder = RenderRoot:WaitForChild("Worker") :: Folder
+const SceneFolder = RenderRoot:WaitForChild("Scene") :: Folder
 
 -- Modules --
-local RenderConfigs = require(RenderRoot:WaitForChild("RenderConfigs")) :: ModuleScript
+const RenderConfigs = require(RenderRoot:WaitForChild("RenderConfigs")) :: ModuleScript
 
 -- Configs --
-local ActorCount = RenderConfigs.GetActorCount()
+const ACTOR_COUNT = RenderConfigs.GetActorCount() :: number
+
+local RenderBootstrap = {}
 
 -- ============================================================================
 -- 1. CREATE WORKER - CONTROLLER SETUP
 -- ============================================================================
 
 function RenderBootstrap.CreateSetup()
-	local PlayerScripts = game:GetService("Players").LocalPlayer:WaitForChild("PlayerScripts") :: Folder
-	local ClientObjects = PlayerScripts:WaitForChild("Client"):WaitForChild("Objects") :: Folder
+	const PlayerScripts = Players.LocalPlayer:WaitForChild("PlayerScripts") :: PlayerScripts
+	const ClientObjects = PlayerScripts:WaitForChild("Client"):WaitForChild("Objects") :: Folder
 
 	-- Workers
-	local WorkerActorFolder = Instance.new("Folder") :: Folder
+	const WorkerActorFolder = Instance.new("Folder") :: Folder
 	WorkerActorFolder.Name = "WorkerFolder"
 	WorkerActorFolder.Parent = PlayerScripts
 
 	-- Controller for the workers
-	local ControllerActor = Instance.new("Actor") :: Actor
+	const ControllerActor = Instance.new("Actor") :: Actor
 	ControllerActor.Name = "Controller"
 	ControllerActor.Parent = PlayerScripts
 
 	-- Every Actor runs in its own Luau VM and gets its own copy of each ModuleScript it requires,
 	-- so the ECS storage has to be cloned into the controller Actor. The ReplicationReceiver is
 	-- cloned next to it so it fills the exact buffers this Actor renders from.
-	local ControllerStorage = ClientObjects:WaitForChild("ObjectStorage"):Clone() :: Folder
+	const ControllerStorage = ClientObjects:WaitForChild("ObjectStorage"):Clone() :: Folder
 	ControllerStorage.Parent = ControllerActor
 
-	local ControllerReceiver =
+	const ControllerReceiver =
 		ClientObjects:WaitForChild("Replication"):WaitForChild("ReplicationReceiver"):Clone() :: LocalScript
 	ControllerReceiver.Parent = ControllerActor
 
 	-- Scripts of the controller
-	local ControllerScript = ControllerFolder:WaitForChild("RenderController"):Clone() :: Script -- Controls the actual workers
+	const ControllerScript = ControllerFolder:WaitForChild("RenderController"):Clone() :: Script -- Controls the actual workers
 	ControllerScript.Parent = ControllerActor
 
-	local CleanerScript = SceneFolder:WaitForChild("RendererCleaner"):Clone() :: LocalScript
+	const CleanerScript = SceneFolder:WaitForChild("RendererCleaner"):Clone() :: LocalScript
 	CleanerScript.Parent = ControllerActor
 
 	-- Creation of workers
-	for i = 1, ActorCount do
-		local NewWorkerActor = Instance.new("Actor") :: Actor
+	for i = 1, ACTOR_COUNT do
+		const NewWorkerActor = Instance.new("Actor") :: Actor
 		NewWorkerActor.Parent = WorkerActorFolder
 		NewWorkerActor.Name = "ParallelSetup" .. i
 
-		local NewRenderTemplate = WorkerFolder:WaitForChild("ParallelWorker"):Clone() :: Script -- Executes the hard math in parallel
+		const NewRenderTemplate = WorkerFolder:WaitForChild("ParallelWorker"):Clone() :: Script -- Executes the hard math in parallel
 		NewRenderTemplate.Name = "ParallelRender" .. i
 		NewRenderTemplate.Parent = NewWorkerActor
 	end

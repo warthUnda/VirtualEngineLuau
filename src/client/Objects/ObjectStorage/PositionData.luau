@@ -1,8 +1,11 @@
 --!native
 --!optimize 2
 
--- Configs --
-const COMPONENT_STRIDE = 12 :: number
+-- Services --
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+
+-- Modules --
+const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain")) :: ModuleScript
 
 -- Buffers
 const PositionBuffer = buffer.create(100000) :: buffer -- 100 000 bytes or 100 kbs
@@ -10,11 +13,7 @@ const PositionBuffer = buffer.create(100000) :: buffer -- 100 000 bytes or 100 k
 local PositionData = {}
 
 function PositionData.CreateLayout(MemoryOffset: number, X: number, Y: number, Z: number): number
-	buffer.writef32(PositionBuffer, MemoryOffset, X)
-	buffer.writef32(PositionBuffer, MemoryOffset + 4, Y)
-	buffer.writef32(PositionBuffer, MemoryOffset + 8, Z)
-
-	return MemoryOffset + COMPONENT_STRIDE
+	return ECSMain.CreateVector3Layout(PositionBuffer, MemoryOffset, X, Y, Z)
 end
 
 function PositionData.GetData(): buffer

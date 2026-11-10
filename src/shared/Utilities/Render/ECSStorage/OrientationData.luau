@@ -1,21 +1,19 @@
 --!native
 --!optimize 2
 
--- Configs --
-const COMPONENT_STRIDE = 12 :: number
+-- Services --
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+
+-- Modules --
+const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain")) :: ModuleScript
 
 -- Buffers
 const OrientationBuffer = buffer.create(100000) :: buffer -- 100 000 bytes or 100 kbs
 
 local OrientationData = {}
 
--- Orientation is a unit direction, so it needs the same 12-byte (3 x f32) stride as position.
 function OrientationData.CreateLayout(MemoryOffset: number, X: number, Y: number, Z: number): number
-	buffer.writef32(OrientationBuffer, MemoryOffset, X)
-	buffer.writef32(OrientationBuffer, MemoryOffset + 4, Y)
-	buffer.writef32(OrientationBuffer, MemoryOffset + 8, Z)
-
-	return MemoryOffset + COMPONENT_STRIDE
+	return ECSMain.CreateVector3Layout(OrientationBuffer, MemoryOffset, X, Y, Z)
 end
 
 function OrientationData.GetData(): buffer

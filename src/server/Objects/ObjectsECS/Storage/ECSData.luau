@@ -1,10 +1,14 @@
 --!native
 --!optimize 2
 
+-- Services --
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+
 -- Static References --
 const Storage = script.Parent :: Folder
 
 -- Modules --
+const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain")) :: ModuleScript
 const PositionData = require(Storage:WaitForChild("PositionData")) :: ModuleScript
 const OrientationData = require(Storage:WaitForChild("OrientationData")) :: ModuleScript
 const VisualData = require(Storage:WaitForChild("VisualData")) :: ModuleScript
@@ -13,7 +17,6 @@ const DirectionsData = require(Storage:WaitForChild("DirectionsData")) :: Module
 
 -- Configs --
 const COMPONENT_STRIDE = 12 :: number
-const DIRECTION_STRIDE = 36 :: number
 
 -- Buffers
 const PositionBuffer = PositionData.GetData() :: buffer
@@ -45,59 +48,25 @@ function ECSData.GetStaticData(): buffer
 	return StaticBuffer
 end
 
--- Call once per entity registered into the ECS to keep all component counts in sync.
--- Returns the 1-based id of the newly registered entity.
 function ECSData.RegisterEntity(IsStatic: boolean?): number
-	const Counts = ECSData.ECSDataTable
-	const NextCount = Counts.EntityECSCount + 1 :: number
+	return ECSMain.RegisterEntity(ECSData.ECSDataTable, StaticBuffer, IsStatic)
+end
 
-	Counts.EntityECSCount = NextCount
-	Counts.OrientationECSCount = NextCount
-	Counts.PositionECSCount = NextCount
-	Counts.VisualECSCount = NextCount
-	Counts.SizeECSCount = NextCount
-	Counts.DirectionsECSCount = NextCount
-
-	if NextCount <= MAX_ENTITIES then
-		buffer.writeu8(StaticBuffer, NextCount - 1, if IsStatic then 1 else 0)
-	end
-
-	return NextCount
+function ECSData.SetEntityCount(EntityCount: number)
+	ECSMain.SetEntityCount(ECSData.ECSDataTable, EntityCount)
 end
 
 function ECSData.DeleteEntity(EntityId: number)
-	const Counts = ECSData.ECSDataTable
-	const LastEntityId = Counts.EntityECSCount :: number
-
-	if EntityId < 1 or EntityId > LastEntityId then
-		return
-	end
-
-	if EntityId ~= LastEntityId then
-		const TargetOffset = (EntityId - 1) * COMPONENT_STRIDE :: number
-		const LastOffset = (LastEntityId - 1) * COMPONENT_STRIDE :: number
-
-		buffer.copy(PositionBuffer, TargetOffset, PositionBuffer, LastOffset, COMPONENT_STRIDE)
-		buffer.copy(OrientationBuffer, TargetOffset, OrientationBuffer, LastOffset, COMPONENT_STRIDE)
-		buffer.copy(VisualBuffer, TargetOffset, VisualBuffer, LastOffset, COMPONENT_STRIDE)
-		buffer.copy(SizeBuffer, TargetOffset, SizeBuffer, LastOffset, COMPONENT_STRIDE)
-
-		const TargetDirOffset = (EntityId - 1) * DIRECTION_STRIDE :: number
-		const LastDirOffset = (LastEntityId - 1) * DIRECTION_STRIDE :: number
-		buffer.copy(DirectionsBuffer, TargetDirOffset, DirectionsBuffer, LastDirOffset, DIRECTION_STRIDE)
-
-		buffer.writeu8(StaticBuffer, EntityId - 1, buffer.readu8(StaticBuffer, LastEntityId - 1))
-	end
-
-	buffer.writeu8(StaticBuffer, LastEntityId - 1, 0)
-
-	const NewCount = LastEntityId - 1 :: number
-	Counts.EntityECSCount = NewCount
-	Counts.OrientationECSCount = NewCount
-	Counts.PositionECSCount = NewCount
-	Counts.VisualECSCount = NewCount
-	Counts.SizeECSCount = NewCount
-	Counts.DirectionsECSCount = NewCount
+	ECSMain.DeleteEntity(
+		EntityId,
+		ECSData.ECSDataTable,
+		PositionBuffer,
+		OrientationBuffer,
+		VisualBuffer,
+		SizeBuffer,
+		DirectionsBuffer,
+		StaticBuffer
+	)
 end
 
 return ECSData

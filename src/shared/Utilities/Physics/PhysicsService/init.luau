@@ -1,6 +1,6 @@
 local PhysicsService = {}
 
-local PhysicsQueue = require(game.ReplicatedStorage.Shared.Utilities.Physics.PhysicsService)
+local PhysicsQueue = require(game.ReplicatedStorage.Shared.Utilities.Physics.PhysicsMovementQueue)
 
 function PhysicsService.New()
 	local self = setmetatable({}, {})
@@ -8,6 +8,8 @@ function PhysicsService.New()
 	return self
 end
 
-function PhysicsService:SimulateInstance() end
+function PhysicsService:SimulateInstance()
+    PhysicsQueue.
+end
 
 return PhysicsService

@@ -296,9 +296,13 @@ function RenderMath.DrawTriangle(
 	const StepInvZX = Edge0X * ScaledInvZ0 + Edge1X * ScaledInvZ1 + Edge2X * ScaledInvZ2 :: number
 	const StepInvZY = Edge0Y * ScaledInvZ0 + Edge1Y * ScaledInvZ1 + Edge2Y * ScaledInvZ2 :: number
 
-	local RowW0 = MathModule.EdgeFunction(X1, Y1, X2, Y2, MinX, MinY) :: number
-	local RowW1 = MathModule.EdgeFunction(X2, Y2, X0, Y0, MinX, MinY) :: number
-	local RowW2 = MathModule.EdgeFunction(X0, Y0, X1, Y1, MinX, MinY) :: number
+	const StepEdgeX = vector.create(Edge0X, Edge1X, Edge2X)
+	const StepEdgeY = vector.create(Edge0Y, Edge1Y, Edge2Y)
+
+	const RowW0 = MathModule.EdgeFunction(X1, Y1, X2, Y2, MinX, MinY) :: number
+	const RowW1 = MathModule.EdgeFunction(X2, Y2, X0, Y0, MinX, MinY) :: number
+	const RowW2 = MathModule.EdgeFunction(X0, Y0, X1, Y1, MinX, MinY) :: number
+	local RowW = vector.create(RowW0, RowW1, RowW2)
 	local RowInvZ = RowW0 * ScaledInvZ0 + RowW1 * ScaledInvZ1 + RowW2 * ScaledInvZ2 :: number
 
 	const PackedColor = bit32.bor(R, bit32.lshift(G, 8), bit32.lshift(B, 16), 0xFF000000) :: number
@@ -306,16 +310,14 @@ function RenderMath.DrawTriangle(
 	local RowOffset = (MinY * WIDTH + MinX) * 4 :: number
 
 	for Y: number = MinY, MaxY do
-		local W0 = RowW0
-		local W1 = RowW1
-		local W2 = RowW2
+		local W = RowW
 		local InterpolatedInvZ = RowInvZ
 		local BufferOffset = RowOffset
 		local EnteredSpan = false :: boolean
 
 		for X: number = MinX, MaxX do
-			-- Check if the object (triangle) is visible
-			if W0 >= 0 and W1 >= 0 and W2 >= 0 then
+			-- Check if the object (triangle) is visibles
+			if W.x >= 0 and W.y >= 0 and W.z >= 0 then
 				EnteredSpan = true
 
 				if InterpolatedInvZ > buffer.readf32(ZBuffer, BufferOffset) then -- Checks if the pixel is closer to the camera
@@ -326,16 +328,12 @@ function RenderMath.DrawTriangle(
 				break
 			end
 
-			W0 += Edge0X
-			W1 += Edge1X
-			W2 += Edge2X
+			W += StepEdgeX
 			InterpolatedInvZ += StepInvZX
 			BufferOffset += 4
 		end
 
-		RowW0 += Edge0Y
-		RowW1 += Edge1Y
-		RowW2 += Edge2Y
+		RowW += StepEdgeY
 		RowInvZ += StepInvZY
 		RowOffset += RowStride
 	end

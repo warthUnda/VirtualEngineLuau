@@ -35,7 +35,7 @@ while true do
 	for _, Player: Player in ipairs(Players:GetPlayers()) do
 		const DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, Counts =
 			PlayerEye.CullObjects(Player)
-		if DeltaPositions and Counts then
+		if DeltaPositions and Counts and Counts.EntityECSCount > 0 then
 			(ReplicateEvent :: RemoteEvent):FireClient(
 				Player,
 				DeltaPositions,

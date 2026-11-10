@@ -41,16 +41,17 @@ const CameraService = require(
 		:WaitForChild("CameraService")
 ) :: ModuleScript
 
--- The controller renders from the ECS cloned into its own Actor. Each Actor runs in a separate
--- Luau VM, so reaching into PlayerScripts here would resolve to a different copy of these modules
--- that nothing ever writes to (which reads back as an entity count of 0).
-const ObjectStorage = SelfActor:WaitForChild("ObjectStorage") :: Folder
+-- The controller renders from the active Render ECSStorage populated by RendererCleaner.
+const ECSStorage = ReplicatedStorage:WaitForChild("Shared")
+	:WaitForChild("Utilities")
+	:WaitForChild("Render")
+	:WaitForChild("ECSStorage") :: Folder
 
-const ECSData = require(ObjectStorage:WaitForChild("ECSData")) :: ModuleScript
-const PositionData = require(ObjectStorage:WaitForChild("PositionData")) :: ModuleScript
-const SizeData = require(ObjectStorage:WaitForChild("SizeData")) :: ModuleScript
-const DirectionsData = require(ObjectStorage:WaitForChild("DirectionsData")) :: ModuleScript
-const VisualData = require(ObjectStorage:WaitForChild("VisualData")) :: ModuleScript
+const ECSData = require(ECSStorage:WaitForChild("ECSData")) :: ModuleScript
+const PositionData = require(ECSStorage:WaitForChild("PositionData")) :: ModuleScript
+const SizeData = require(ECSStorage:WaitForChild("SizeData")) :: ModuleScript
+const DirectionsData = require(ECSStorage:WaitForChild("DirectionsData")) :: ModuleScript
+const VisualData = require(ECSStorage:WaitForChild("VisualData")) :: ModuleScript
 
 -- Configs --
 const WIDTH: number, HEIGHT: number = RenderConfigs.GetDimensions2D()

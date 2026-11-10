@@ -49,6 +49,8 @@ const MAX_COMPONENT_ENTITIES = math.min(
 const MAX_DIRECTION_ENTITIES = buffer.len(LocalDirectionsBuffer) // DIRECTION_STRIDE :: number
 const MAX_ENTITIES = math.min(MAX_COMPONENT_ENTITIES, MAX_DIRECTION_ENTITIES) :: number
 
+const ClientSlotByServerId = buffer.create((MAX_ENTITIES + 1) * 4) :: buffer
+
 export type ECSTable = {
 	OrientationECSCount: number,
 	PositionECSCount: number,
@@ -59,7 +61,7 @@ export type ECSTable = {
 }
 
 -- ============================================================================
--- 1. LISTENER - WRITES THE REPLICATED SNAPSHOT INTO THE LOCAL ECS
+-- 1. LISTENER - MERGES REPLICATED DELTAS INTO THE LOCAL ECS
 -- ============================================================================
 
 ReplicateEvent.OnClientEvent:Connect(
@@ -71,20 +73,43 @@ ReplicateEvent.OnClientEvent:Connect(
 		DirectionsBuffer: buffer,
 		ECSDataTable: ECSTable
 	)
-		const EntityCount = math.min(ECSDataTable.EntityECSCount, MAX_ENTITIES) :: number
+		const DeltaCount = math.min(ECSDataTable.EntityECSCount, MAX_ENTITIES) :: number
+		if DeltaCount <= 0 then
+			return
+		end
 
-		-- The packet is a full snapshot of what this client can see, so the local ECS mirrors it.
-		ECSData.SetEntityCount(EntityCount)
+		local LocalCount = math.min(ECSData.GetCounts().EntityECSCount, MAX_ENTITIES) :: number
 
-		if EntityCount > 0 then
-			const ComponentByteCount = EntityCount * COMPONENT_STRIDE :: number
-			const DirectionByteCount = EntityCount * DIRECTION_STRIDE :: number
+		for i = 1, DeltaCount do
+			const ReadOffset = (i - 1) * COMPONENT_STRIDE :: number
+			const DirectionReadOffset = (i - 1) * DIRECTION_STRIDE :: number
 
-			buffer.copy(LocalPositionBuffer, 0, PositionBuffer, 0, ComponentByteCount)
-			buffer.copy(LocalOrientationBuffer, 0, OrientationBuffer, 0, ComponentByteCount)
-			buffer.copy(LocalVisualBuffer, 0, VisualBuffer, 0, ComponentByteCount)
-			buffer.copy(LocalSizeBuffer, 0, SizeBuffer, 0, ComponentByteCount)
-			buffer.copy(LocalDirectionsBuffer, 0, DirectionsBuffer, 0, DirectionByteCount)
+			const ServerId = buffer.readu32(VisualBuffer, ReadOffset + 4) :: number
+			local TargetSlot = if ServerId > 0 and ServerId <= MAX_ENTITIES
+				then buffer.readu32(ClientSlotByServerId, ServerId * 4)
+				else 0
+
+			if TargetSlot == 0 then
+				if LocalCount >= MAX_ENTITIES then
+					continue
+				end
+
+				LocalCount = ECSData.RegisterEntity()
+				TargetSlot = LocalCount
+
+				if ServerId > 0 and ServerId <= MAX_ENTITIES then
+					buffer.writeu32(ClientSlotByServerId, ServerId * 4, TargetSlot)
+				end
+			end
+
+			const WriteOffset = (TargetSlot - 1) * COMPONENT_STRIDE :: number
+			const DirectionWriteOffset = (TargetSlot - 1) * DIRECTION_STRIDE :: number
+
+			buffer.copy(LocalPositionBuffer, WriteOffset, PositionBuffer, ReadOffset, COMPONENT_STRIDE)
+			buffer.copy(LocalOrientationBuffer, WriteOffset, OrientationBuffer, ReadOffset, COMPONENT_STRIDE)
+			buffer.copy(LocalVisualBuffer, WriteOffset, VisualBuffer, ReadOffset, COMPONENT_STRIDE)
+			buffer.copy(LocalSizeBuffer, WriteOffset, SizeBuffer, ReadOffset, COMPONENT_STRIDE)
+			buffer.copy(LocalDirectionsBuffer, DirectionWriteOffset, DirectionsBuffer, DirectionReadOffset, DIRECTION_STRIDE)
 		end
 	end
 )

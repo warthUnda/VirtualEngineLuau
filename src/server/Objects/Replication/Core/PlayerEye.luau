@@ -2,6 +2,8 @@
 --!optimize 2
 
 -- Services --
+const Players = game:GetService("Players") :: Players
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 const ServerScriptService = game:GetService("ServerScriptService") :: ServerScriptService
 
 -- Static References --
@@ -14,10 +16,15 @@ const VisualData = require(StorageFolder.VisualData) :: ModuleScript
 const SizeData = require(StorageFolder.SizeData) :: ModuleScript
 const DirectionsData = require(StorageFolder.DirectionsData) :: ModuleScript
 const ECSData = require(StorageFolder.ECSData) :: ModuleScript
+const ViewCulling = require(
+	ReplicatedStorage:WaitForChild("Shared")
+		:WaitForChild("Utilities")
+		:WaitForChild("Render")
+		:WaitForChild("Core")
+		:WaitForChild("ViewCulling")
+) :: ModuleScript
 
 -- Configs --
-const RENDER_DISTANCE = 200 :: number
-const RENDER_DISTANCE_SQUARED = RENDER_DISTANCE * RENDER_DISTANCE :: number
 const COMPONENT_STRIDE = 12 :: number -- 3 x f32 per entity (position, orientation, visual, size)
 const DIRECTION_STRIDE = 36 :: number -- look + up + right, 3 x f32 each
 
@@ -27,6 +34,17 @@ const OrientationBuffer = OrientationData.GetData() :: buffer
 const VisualBuffer = VisualData.GetData() :: buffer
 const SizeBuffer = SizeData.GetData() :: buffer
 const DirectionsBuffer = DirectionsData.GetData() :: buffer
+const StaticBuffer = ECSData.GetStaticData() :: buffer
+
+const COMPONENT_BUFFER_SIZE = buffer.len(PositionBuffer) :: number
+const DIRECTION_BUFFER_SIZE = buffer.len(DirectionsBuffer) :: number
+const MAX_ENTITIES = COMPONENT_BUFFER_SIZE // COMPONENT_STRIDE :: number
+
+const ScratchPositions = buffer.create(COMPONENT_BUFFER_SIZE) :: buffer
+const ScratchOrientations = buffer.create(COMPONENT_BUFFER_SIZE) :: buffer
+const ScratchVisuals = buffer.create(COMPONENT_BUFFER_SIZE) :: buffer
+const ScratchSizes = buffer.create(COMPONENT_BUFFER_SIZE) :: buffer
+const ScratchDirections = buffer.create(DIRECTION_BUFFER_SIZE) :: buffer
 
 export type ECSTable = {
 	OrientationECSCount: number,
@@ -37,61 +55,197 @@ export type ECSTable = {
 	EntityECSCount: number,
 }
 
+type PlayerDeltaState = {
+	Character: Model?,
+	LastEntityCount: number,
+	VisibleFlags: buffer,
+	Positions: buffer,
+	Orientations: buffer,
+	Visuals: buffer,
+	Sizes: buffer,
+	Directions: buffer,
+}
+
+-- Tables --
+local PlayerStates = {} :: { [Player]: PlayerDeltaState }
+
 local PlayerEye = {}
 
+local function GetOrCreatePlayerState(PlayerObject: Player, Character: Model?, EntityCount: number): PlayerDeltaState
+	local State = PlayerStates[PlayerObject] :: PlayerDeltaState?
+	if not State then
+		const NewState: PlayerDeltaState = {
+			Character = Character,
+			LastEntityCount = EntityCount,
+			VisibleFlags = buffer.create(MAX_ENTITIES),
+			Positions = buffer.create(COMPONENT_BUFFER_SIZE),
+			Orientations = buffer.create(COMPONENT_BUFFER_SIZE),
+			Visuals = buffer.create(COMPONENT_BUFFER_SIZE),
+			Sizes = buffer.create(COMPONENT_BUFFER_SIZE),
+			Directions = buffer.create(DIRECTION_BUFFER_SIZE),
+		}
+		PlayerStates[PlayerObject] = NewState
+		return NewState
+	end
+
+	if State.Character ~= Character then
+		State.Character = Character
+		buffer.fill(State.VisibleFlags, 0, 0)
+	elseif EntityCount < State.LastEntityCount then
+		buffer.fill(State.VisibleFlags, EntityCount, 0, State.LastEntityCount - EntityCount)
+	end
+
+	State.LastEntityCount = EntityCount
+	return State
+end
+
+local function HasEntityChanged(
+	Offset: number,
+	DirectionOffset: number,
+	CachedPositions: buffer,
+	CachedOrientations: buffer,
+	CachedVisuals: buffer,
+	CachedSizes: buffer,
+	CachedDirections: buffer
+): boolean
+	if
+		buffer.readu32(PositionBuffer, Offset) ~= buffer.readu32(CachedPositions, Offset)
+		or buffer.readu32(PositionBuffer, Offset + 4) ~= buffer.readu32(CachedPositions, Offset + 4)
+		or buffer.readu32(PositionBuffer, Offset + 8) ~= buffer.readu32(CachedPositions, Offset + 8)
+	then
+		return true
+	end
+
+	if
+		buffer.readu32(OrientationBuffer, Offset) ~= buffer.readu32(CachedOrientations, Offset)
+		or buffer.readu32(OrientationBuffer, Offset + 4) ~= buffer.readu32(CachedOrientations, Offset + 4)
+		or buffer.readu32(OrientationBuffer, Offset + 8) ~= buffer.readu32(CachedOrientations, Offset + 8)
+	then
+		return true
+	end
+
+	if buffer.readu32(VisualBuffer, Offset) ~= buffer.readu32(CachedVisuals, Offset) then
+		return true
+	end
+
+	if
+		buffer.readu32(SizeBuffer, Offset) ~= buffer.readu32(CachedSizes, Offset)
+		or buffer.readu32(SizeBuffer, Offset + 4) ~= buffer.readu32(CachedSizes, Offset + 4)
+		or buffer.readu32(SizeBuffer, Offset + 8) ~= buffer.readu32(CachedSizes, Offset + 8)
+	then
+		return true
+	end
+
+	if
+		buffer.readu32(DirectionsBuffer, DirectionOffset) ~= buffer.readu32(CachedDirections, DirectionOffset)
+		or buffer.readu32(DirectionsBuffer, DirectionOffset + 4) ~= buffer.readu32(CachedDirections, DirectionOffset + 4)
+		or buffer.readu32(DirectionsBuffer, DirectionOffset + 8) ~= buffer.readu32(CachedDirections, DirectionOffset + 8)
+		or buffer.readu32(DirectionsBuffer, DirectionOffset + 12) ~= buffer.readu32(CachedDirections, DirectionOffset + 12)
+		or buffer.readu32(DirectionsBuffer, DirectionOffset + 16) ~= buffer.readu32(CachedDirections, DirectionOffset + 16)
+		or buffer.readu32(DirectionsBuffer, DirectionOffset + 20) ~= buffer.readu32(CachedDirections, DirectionOffset + 20)
+		or buffer.readu32(DirectionsBuffer, DirectionOffset + 24) ~= buffer.readu32(CachedDirections, DirectionOffset + 24)
+		or buffer.readu32(DirectionsBuffer, DirectionOffset + 28) ~= buffer.readu32(CachedDirections, DirectionOffset + 28)
+		or buffer.readu32(DirectionsBuffer, DirectionOffset + 32) ~= buffer.readu32(CachedDirections, DirectionOffset + 32)
+	then
+		return true
+	end
+
+	return false
+end
+
+Players.PlayerRemoving:Connect(function(PlayerObject: Player)
+	PlayerStates[PlayerObject] = nil
+end)
+
 -- ============================================================================
--- 1. CULLING FUNCTIONS - DISTANCE CULLING FOR REPLICATION
+-- 1. CULLING FUNCTIONS - CONE & DELTA CULLING FOR REPLICATION
 -- ============================================================================
 
--- Returns the position, orientation, visual, size and directions components of every entity
--- within RENDER_DISTANCE of the player, packed with the ECS strides, along with the counts
--- describing the snapshot. Entities further away are culled.
+-- Returns only the newly visible or changed entities inside the player's view cone,
+-- packed with the ECS strides, along with the delta counts.
 function PlayerEye.CullObjects(PlayerObject: Player): (buffer?, buffer?, buffer?, buffer?, buffer?, ECSTable?)
-	const Character = PlayerObject.Character :: Model?
-	if not Character then
+	const Head = ViewCulling.GetObserverHead(PlayerObject) :: BasePart?
+	if not Head then
 		return nil, nil, nil, nil, nil, nil
 	end
 
-	const Head = Character:FindFirstChild("Head") :: Instance?
-	if not Head or not Head:IsA("BasePart") then
-		return nil, nil, nil, nil, nil, nil
-	end
+	const EntityCount = math.min(ECSData.GetCounts().EntityECSCount, MAX_ENTITIES) :: number
+	const State = GetOrCreatePlayerState(PlayerObject, PlayerObject.Character, EntityCount)
 
-	const HeadPosition = Head.Position :: Vector3
-	const HeadX: number, HeadY: number, HeadZ: number = HeadPosition.X, HeadPosition.Y, HeadPosition.Z
-	const EntityCount = ECSData.GetCounts().EntityECSCount :: number
+	const VisibleFlags = State.VisibleFlags :: buffer
+	const CachedPositions = State.Positions :: buffer
+	const CachedOrientations = State.Orientations :: buffer
+	const CachedVisuals = State.Visuals :: buffer
+	const CachedSizes = State.Sizes :: buffer
+	const CachedDirections = State.Directions :: buffer
 
-	const ComponentDeltaSize = EntityCount * COMPONENT_STRIDE :: number
-	const DeltaPositions = buffer.create(ComponentDeltaSize) :: buffer
-	const DeltaOrientations = buffer.create(ComponentDeltaSize) :: buffer
-	const DeltaVisuals = buffer.create(ComponentDeltaSize) :: buffer
-	const DeltaSizes = buffer.create(ComponentDeltaSize) :: buffer
-	const DeltaDirections = buffer.create(EntityCount * DIRECTION_STRIDE) :: buffer
+	ViewCulling.UpdateDynamicView(Head)
 
 	local WriteOffset = 0 :: number
 	local DirectionWriteOffset = 0 :: number
 
 	for i = 1, EntityCount do
-		const ReadOffset = (i - 1) * COMPONENT_STRIDE :: number
-		const DirectionReadOffset = (i - 1) * DIRECTION_STRIDE :: number
+		const FlagOffset = i - 1 :: number
+		const IsStatic = buffer.readu8(StaticBuffer, FlagOffset) == 1 :: boolean
 
-		const Dx = buffer.readf32(PositionBuffer, ReadOffset) - HeadX :: number
-		const Dy = buffer.readf32(PositionBuffer, ReadOffset + 4) - HeadY :: number
-		const Dz = buffer.readf32(PositionBuffer, ReadOffset + 8) - HeadZ :: number
-
-		if Dx * Dx + Dy * Dy + Dz * Dz >= RENDER_DISTANCE_SQUARED then
+		if not IsStatic and ViewCulling.IsEntityCulled(i, PositionBuffer, SizeBuffer) then
+			buffer.writeu8(VisibleFlags, FlagOffset, 0)
 			continue
 		end
 
-		buffer.copy(DeltaPositions, WriteOffset, PositionBuffer, ReadOffset, COMPONENT_STRIDE)
-		buffer.copy(DeltaOrientations, WriteOffset, OrientationBuffer, ReadOffset, COMPONENT_STRIDE)
-		buffer.copy(DeltaVisuals, WriteOffset, VisualBuffer, ReadOffset, COMPONENT_STRIDE)
-		buffer.copy(DeltaSizes, WriteOffset, SizeBuffer, ReadOffset, COMPONENT_STRIDE)
-		buffer.copy(DeltaDirections, DirectionWriteOffset, DirectionsBuffer, DirectionReadOffset, DIRECTION_STRIDE)
+		const ReadOffset = FlagOffset * COMPONENT_STRIDE :: number
+		const DirectionReadOffset = FlagOffset * DIRECTION_STRIDE :: number
+		const WasVisible = buffer.readu8(VisibleFlags, FlagOffset) :: number
+
+		if
+			WasVisible == 1
+			and not HasEntityChanged(
+				ReadOffset,
+				DirectionReadOffset,
+				CachedPositions,
+				CachedOrientations,
+				CachedVisuals,
+				CachedSizes,
+				CachedDirections
+			)
+		then
+			continue
+		end
+
+		buffer.writeu8(VisibleFlags, FlagOffset, 1)
+
+		buffer.copy(CachedPositions, ReadOffset, PositionBuffer, ReadOffset, COMPONENT_STRIDE)
+		buffer.copy(CachedOrientations, ReadOffset, OrientationBuffer, ReadOffset, COMPONENT_STRIDE)
+		buffer.copy(CachedVisuals, ReadOffset, VisualBuffer, ReadOffset, COMPONENT_STRIDE)
+		buffer.copy(CachedSizes, ReadOffset, SizeBuffer, ReadOffset, COMPONENT_STRIDE)
+		buffer.copy(CachedDirections, DirectionReadOffset, DirectionsBuffer, DirectionReadOffset, DIRECTION_STRIDE)
+
+		buffer.copy(ScratchPositions, WriteOffset, PositionBuffer, ReadOffset, COMPONENT_STRIDE)
+		buffer.copy(ScratchOrientations, WriteOffset, OrientationBuffer, ReadOffset, COMPONENT_STRIDE)
+		buffer.copy(ScratchVisuals, WriteOffset, VisualBuffer, ReadOffset, COMPONENT_STRIDE)
+		buffer.writeu32(ScratchVisuals, WriteOffset + 4, i)
+		buffer.copy(ScratchSizes, WriteOffset, SizeBuffer, ReadOffset, COMPONENT_STRIDE)
+		buffer.copy(ScratchDirections, DirectionWriteOffset, DirectionsBuffer, DirectionReadOffset, DIRECTION_STRIDE)
 
 		WriteOffset += COMPONENT_STRIDE
 		DirectionWriteOffset += DIRECTION_STRIDE
 	end
+
+	if WriteOffset == 0 then
+		return nil, nil, nil, nil, nil, nil
+	end
+
+	const DeltaPositions = buffer.create(WriteOffset) :: buffer
+	const DeltaOrientations = buffer.create(WriteOffset) :: buffer
+	const DeltaVisuals = buffer.create(WriteOffset) :: buffer
+	const DeltaSizes = buffer.create(WriteOffset) :: buffer
+	const DeltaDirections = buffer.create(DirectionWriteOffset) :: buffer
+
+	buffer.copy(DeltaPositions, 0, ScratchPositions, 0, WriteOffset)
+	buffer.copy(DeltaOrientations, 0, ScratchOrientations, 0, WriteOffset)
+	buffer.copy(DeltaVisuals, 0, ScratchVisuals, 0, WriteOffset)
+	buffer.copy(DeltaSizes, 0, ScratchSizes, 0, WriteOffset)
+	buffer.copy(DeltaDirections, 0, ScratchDirections, 0, DirectionWriteOffset)
 
 	const VisibleCount = WriteOffset // COMPONENT_STRIDE :: number
 

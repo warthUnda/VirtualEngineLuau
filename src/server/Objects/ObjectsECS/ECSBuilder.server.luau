@@ -20,9 +20,17 @@ const DirectionsData = require(StorageFolder.DirectionsData) :: ModuleScript
 const ENTITY_STRIDE = 12 :: number
 const DIRECTION_STRIDE = 36 :: number
 
+-- Tables --
+local StaticFolder = Workspace:FindFirstChild("Static") :: Folder?
+
 -- Registers one BasePart into the ECS component buffers.
 local function PopulatePart(Part: BasePart)
-	const EntityId = ECSData.RegisterEntity() :: number
+	if not StaticFolder then
+		StaticFolder = Workspace:FindFirstChild("Static") :: Folder?
+	end
+
+	const IsStatic = if StaticFolder then Part:IsDescendantOf(StaticFolder) else false
+	const EntityId = ECSData.RegisterEntity(IsStatic) :: number
 	const Offset = (EntityId - 1) * ENTITY_STRIDE :: number
 	const DirectionOffset = (EntityId - 1) * DIRECTION_STRIDE :: number
 

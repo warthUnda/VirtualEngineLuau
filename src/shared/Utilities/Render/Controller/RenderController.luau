@@ -5,21 +5,22 @@
 const Players = game:GetService("Players") :: Players
 const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 const AssetService = game:GetService("AssetService") :: AssetService
-const RunService = game:GetService("RunService") :: RunService
 
 -- Static References --
 const Player = Players.LocalPlayer :: Player
 const PlayerGui = Player:WaitForChild("PlayerGui") :: PlayerGui
 const PlayerScripts = Player:WaitForChild("PlayerScripts") :: PlayerScripts
 
-const ImageLabel = PlayerGui:WaitForChild("ScreenGui"):WaitForChild("ImageLabel") :: ImageLabel
-
 const Camera = workspace.CurrentCamera :: Camera
 
-const SelfActor = script.Parent :: Actor
-const WorkerActors = PlayerScripts:WaitForChild("WorkerFolder"):GetChildren() :: { Actor }
+-- The controller renders from the active Render ECSStorage populated by RendererCleaner.
+const ECSStorage = ReplicatedStorage:WaitForChild("Shared")
+	:WaitForChild("Utilities")
+	:WaitForChild("Render")
+	:WaitForChild("ECSStorage") :: Folder
 
 -- Modules --
+const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs")) :: ModuleScript
 const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper) :: ModuleScript
 const RenderConfigs = require(ReplicatedStorage.Shared.Utilities.Render.RenderConfigs) :: ModuleScript
 const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath) :: ModuleScript
@@ -41,12 +42,6 @@ const CameraService = require(
 		:WaitForChild("CameraService")
 ) :: ModuleScript
 
--- The controller renders from the active Render ECSStorage populated by RendererCleaner.
-const ECSStorage = ReplicatedStorage:WaitForChild("Shared")
-	:WaitForChild("Utilities")
-	:WaitForChild("Render")
-	:WaitForChild("ECSStorage") :: Folder
-
 const ECSData = require(ECSStorage:WaitForChild("ECSData")) :: ModuleScript
 const PositionData = require(ECSStorage:WaitForChild("PositionData")) :: ModuleScript
 const SizeData = require(ECSStorage:WaitForChild("SizeData")) :: ModuleScript
@@ -56,17 +51,25 @@ const VisualData = require(ECSStorage:WaitForChild("VisualData")) :: ModuleScrip
 -- Configs --
 const WIDTH: number, HEIGHT: number = RenderConfigs.GetDimensions2D()
 const TOTAL_PIXELS = WIDTH * HEIGHT :: number
-const SUN_DIRECTION = Vector3.new(-0.4, 0.85, -0.35).Unit :: Vector3
-const AMBIENT_LIGHT = 0.3 :: number
+const SUN_DIRECTION = SystemsConfigs.SunDirection :: Vector3
+const AMBIENT_LIGHT = SystemsConfigs.AmbientLight :: number
 const ACTOR_COUNT = RenderConfigs.GetActorCount() :: number
+const WORKER_BUFFER_MULTIPLIER = SystemsConfigs.WorkerBufferMultiplier :: number
+const WORKER_BUFFER_CAPACITY = TOTAL_PIXELS * WORKER_BUFFER_MULTIPLIER :: number
+const RENDER_BUFFER_LAYOUT_SIZE = SystemsConfigs.RenderBufferLayoutSize :: number
+const MIN_TRIANGLE_AREA = SystemsConfigs.MinTriangleArea :: number
+const SCRIPTABLE_CAMERA_PARK_POSITION = SystemsConfigs.ScriptableCameraParkPosition :: Vector3
+const DEFAULT_CAMERA_VIEW = SystemsConfigs.DefaultCameraView :: string
 
-const ECS_COMPONENT_STRIDE = 12 :: number
-const ECS_DIRECTION_STRIDE = 36 :: number
+const ECS_COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
+const ECS_DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
 
+local Initialized = false :: boolean
 local Received = 0 :: number
 local CurrentFrame = 0 :: number
 
 -- Tables --
+local WorkerActors = {} :: { Actor }
 local OffsetBuffer = buffer.create(ACTOR_COUNT * 4) :: buffer
 local BufferTable = {} :: { buffer }
 local ScoreBuffer = buffer.create(ACTOR_COUNT * 4) :: buffer
@@ -86,6 +89,8 @@ local ProjectedVertices = buffer.create(12 * 12) :: buffer
 local ClipBufferA = buffer.create(12 * 12) :: buffer
 local ClipBufferB = buffer.create(12 * 12) :: buffer
 
+local Renderer = {}
+
 local function ReadProjectedVertex(VertexIndex: number): Vector3
 	local Offset = (VertexIndex - 1) * 12 :: number
 	return Vector3.new(
@@ -95,67 +100,86 @@ local function ReadProjectedVertex(VertexIndex: number): Vector3
 	)
 end
 
--- Create Information Data for workers
-for i = 1, ACTOR_COUNT do
-	BufferTable[i] = buffer.create(TOTAL_PIXELS * 32)
-	buffer.writef32(ScoreBuffer, (i - 1) * 4, 0)
-	buffer.writeu32(OffsetBuffer, (i - 1) * 4, 0)
-end
-
--- Connecting Editable image to ImageLabel --
-const EditableImage = AssetService:CreateEditableImage({ Size = Vector2.new(WIDTH, HEIGHT) }) :: EditableImage
-ImageLabel.ImageContent = Content.fromObject(EditableImage) :: Content
-
-CameraService:SetCameraHost()
-CameraService:SetCameraView("FirstPerson")
-
--- Wait for the camera to initialize
-task.spawn(function()
-	-- Switch camera to scriptable so default controls don't override it
-	Camera.CameraType = Enum.CameraType.Scriptable
-
-	-- Set position: Y = -50000 (underground) or 50000 (sky)
-	-- Looking straight ahead or down
-	const TargetPosition = Vector3.new(0, -50000, 0) :: Vector3
-	Camera.CFrame = CFrame.new(TargetPosition)
-end)
-
 -- ============================================================================
--- 1. LISTENER - LISTENS TO RETURNING DATA
+-- 1. INITIALIZATION & WORKER MESSAGE LISTENER
 -- ============================================================================
 
-SelfActor:BindToMessage("Return Render Calculations", function(PixelBuffer: buffer, ZBuffer: buffer, FrameId: number)
-	if FrameId ~= CurrentFrame then -- ignore stale frames
+-- Starter function
+function Renderer.Init()
+	if Initialized then
 		return
 	end
 
-	if Received == 0 then
-		buffer.copy(FinalPixel, 0, PixelBuffer, 0, TOTAL_PIXELS * 4)
-		buffer.copy(FinalZ, 0, ZBuffer, 0, TOTAL_PIXELS * 4)
-	else
-		for i = 0, (TOTAL_PIXELS - 1) * 4, 4 do -- Overwrites the FinalZ and FinalPixel buffers
-			const IncomingInvZ = buffer.readf32(ZBuffer, i) :: number
-			if IncomingInvZ > buffer.readf32(FinalZ, i) then
-				buffer.writef32(FinalZ, i, IncomingInvZ)
-				buffer.writeu32(FinalPixel, i, buffer.readu32(PixelBuffer, i))
+	const ImageLabel = PlayerGui:WaitForChild("ScreenGui"):WaitForChild("ImageLabel") :: ImageLabel
+	const SelfActor = PlayerScripts:WaitForChild("Controller") :: Actor
+	WorkerActors = PlayerScripts:WaitForChild("WorkerFolder"):GetChildren() :: { Actor }
+
+	-- Create Information Data for workers
+	for i = 1, ACTOR_COUNT do
+		BufferTable[i] = buffer.create(WORKER_BUFFER_CAPACITY)
+		buffer.writef32(ScoreBuffer, (i - 1) * 4, 0)
+		buffer.writeu32(OffsetBuffer, (i - 1) * 4, 0)
+	end
+
+	-- Connecting Editable image to ImageLabel --
+	const EditableImage = AssetService:CreateEditableImage({ Size = Vector2.new(WIDTH, HEIGHT) }) :: EditableImage
+	ImageLabel.ImageContent = Content.fromObject(EditableImage) :: Content
+
+	CameraService:SetCameraHost()
+	CameraService:SetCameraView(DEFAULT_CAMERA_VIEW)
+
+	-- Wait for the camera to initialize
+	task.spawn(function()
+		-- Switch camera to scriptable so default controls don't override it
+		Camera.CameraType = Enum.CameraType.Scriptable
+
+		-- Set position: Y = -50000 (underground) or 50000 (sky)
+		-- Looking straight ahead or down
+		Camera.CFrame = CFrame.new(SCRIPTABLE_CAMERA_PARK_POSITION)
+	end)
+
+	SelfActor:BindToMessage(
+		"Return Render Calculations",
+		function(PixelBuffer: buffer, ZBuffer: buffer, FrameId: number)
+			if FrameId ~= CurrentFrame then -- ignore stale frames
+				return
+			end
+
+			if Received == 0 then
+				buffer.copy(FinalPixel, 0, PixelBuffer, 0, TOTAL_PIXELS * 4)
+				buffer.copy(FinalZ, 0, ZBuffer, 0, TOTAL_PIXELS * 4)
+			else
+				for i = 0, (TOTAL_PIXELS - 1) * 4, 4 do -- Overwrites the FinalZ and FinalPixel buffers
+					const IncomingInvZ = buffer.readf32(ZBuffer, i) :: number
+					if IncomingInvZ > buffer.readf32(FinalZ, i) then
+						buffer.writef32(FinalZ, i, IncomingInvZ)
+						buffer.writeu32(FinalPixel, i, buffer.readu32(PixelBuffer, i))
+					end
+				end
+			end
+
+			Received += 1
+
+			-- If all workers have returned their data, write it to the image
+			if Received == ACTOR_COUNT then
+				EditableImage:WritePixelsBuffer(Vector2.zero, Vector2.new(WIDTH, HEIGHT), FinalPixel)
+				Received = 0
 			end
 		end
-	end
+	)
 
-	Received += 1
-
-	-- If all workers have returned their data, write it to the image
-	if Received == ACTOR_COUNT then
-		EditableImage:WritePixelsBuffer(Vector2.zero, Vector2.new(WIDTH, HEIGHT), FinalPixel)
-		Received = 0
-	end
-end)
+	Initialized = true
+end
 
 -- ============================================================================
 -- 2. GATHER DATA - SEND DATA TO WORKERS
 -- ============================================================================
 
-RunService.RenderStepped:Connect(function()
+function Renderer.DrawFrame()
+	if not Initialized then
+		Renderer.Init()
+	end
+
 	-- Tables
 	local EntityCount = ECSData.GetCounts().EntityECSCount :: number
 
@@ -316,7 +340,7 @@ RunService.RenderStepped:Connect(function()
 				const MaxY = math.min(HEIGHT - 1, math.max(Y0, Y1, Y2)) :: number
 
 				local Area = MathModule.EdgeFunction(X0, Y0, X1, Y1, X2, Y2) :: number
-				if Area <= 0.1 then
+				if Area <= MIN_TRIANGLE_AREA then
 					continue
 				end
 
@@ -337,20 +361,24 @@ RunService.RenderStepped:Connect(function()
 				local SVOffset = 0 :: number
 
 				-- Find the smallest value then increase it
-				for i = 2, ACTOR_COUNT do
-					const ScoreOffset = (i - 1) * 4 :: number
+				for WorkerIdx = 2, ACTOR_COUNT do
+					const ScoreOffset = (WorkerIdx - 1) * 4 :: number
 					const Score = buffer.readf32(ScoreBuffer, ScoreOffset) :: number
 
 					if Score < SmallestValue then
 						SmallestValue = Score
-						SVIndex = i
+						SVIndex = WorkerIdx
 						SVOffset = ScoreOffset
 					end
 				end
 
+				const RBOffset = buffer.readu32(OffsetBuffer, SVOffset) :: number -- Render buffer memory offset
+				if RBOffset + RENDER_BUFFER_LAYOUT_SIZE > WORKER_BUFFER_CAPACITY then
+					continue
+				end
+
 				-- Apply changes and create a information buffer for workers
 				buffer.writef32(ScoreBuffer, SVOffset, SmallestValue + Result)
-				const RBOffset = buffer.readu32(OffsetBuffer, SVOffset) :: number -- Render buffer memory offset
 				const RenderBuffer = BufferTable[SVIndex] :: buffer
 
 				local RenderResult = BufferHelper.CreateRenderBuffer(
@@ -386,4 +414,8 @@ RunService.RenderStepped:Connect(function()
 	for i = 1, ACTOR_COUNT do
 		buffer.writeu32(OffsetBuffer, (i - 1) * 4, 0)
 	end
-end)
+end
+
+Renderer.RenderFrame = Renderer.DrawFrame
+
+return Renderer

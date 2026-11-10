@@ -1,0 +1,208 @@
+--!native
+--!optimize 2
+
+local SystemsConfigs = {}
+
+-- Here, are the configs for all systems, say frustum cullers or replication or even rendering, both client and server
+
+-- Each config should have a SystemsConfigs.Whatever = whatever type
+-- Make sure to type them and to in the next line give documentation as to what it does
+
+-- Client --
+
+SystemsConfigs.RenderWidth = 150 :: number
+-- Horizontal pixel resolution of the renderer's EditableImage and frame buffers.
+
+SystemsConfigs.RenderHeight = 150 :: number
+-- Vertical pixel resolution of the renderer's EditableImage and frame buffers.
+
+SystemsConfigs.RenderTotalPixels = SystemsConfigs.RenderWidth * SystemsConfigs.RenderHeight :: number
+-- Total pixel count of the renderer canvas (RenderWidth * RenderHeight).
+
+SystemsConfigs.ActorCount = 3 :: number
+-- Number of parallel worker Actors spawned to rasterize triangles across frames.
+
+SystemsConfigs.WorkerBufferMultiplier = 32 :: number
+-- Per-pixel byte multiplier used to allocate each worker's triangle command buffer.
+
+SystemsConfigs.RenderBufferLayoutSize = 32 :: number
+-- Byte stride of a single serialized triangle in the worker render buffer (three 8-byte vertices, three 2-byte color channels, 2 bytes of padding).
+
+SystemsConfigs.ClearColorR = 15 :: number
+-- Red channel (0-255) of the background clear color filled into the pixel buffer each frame.
+
+SystemsConfigs.ClearColorG = 15 :: number
+-- Green channel (0-255) of the background clear color filled into the pixel buffer each frame.
+
+SystemsConfigs.ClearColorB = 20 :: number
+-- Blue channel (0-255) of the background clear color filled into the pixel buffer each frame.
+
+SystemsConfigs.SunDirection = Vector3.new(-0.4, 0.85, -0.35).Unit :: Vector3
+-- Normalized world-space directional light vector used to compute per-face illumination.
+
+SystemsConfigs.AmbientLight = 0.3 :: number
+-- Minimum ambient illumination factor (0-1) applied to all rendered part faces.
+
+SystemsConfigs.MinTriangleArea = 0.1 :: number
+-- Minimum screen-space signed edge area required for a projected triangle to be queued for rasterization.
+
+SystemsConfigs.RenderNearClip = 0.4 :: number
+-- Near clipping plane distance in studs for camera-space part rejection and polygon clipping.
+
+SystemsConfigs.RenderFarClip = 1000 :: number
+-- Far clipping plane distance in studs for camera-space part rejection and polygon clipping.
+
+SystemsConfigs.GuardBandScale = 2 :: number
+-- Scale multiplier applied to the screen-space frustum guard-band clipping planes.
+
+SystemsConfigs.ScriptableCameraParkPosition = Vector3.new(0, -50000, 0) :: Vector3
+-- World position where the client's Workspace Camera is initially parked when switched to Scriptable.
+
+SystemsConfigs.CameraFixedPosition = Vector3.new(0, 1000, -5000) :: Vector3
+-- Fixed distant world position where CameraStore locks the Workspace Camera every frame to avoid rendering default Roblox geometry.
+
+SystemsConfigs.DefaultCameraCFrame = CFrame.new(5, 5, 5) :: CFrame
+-- Initial virtual camera CFrame in CameraStore before the camera host updates it.
+
+SystemsConfigs.DefaultCameraFOV = 70 :: number
+-- Default vertical field of view in degrees for the virtual camera and projection math.
+
+SystemsConfigs.DefaultCameraView = "FirstPerson" :: string
+-- Initial CameraService view preset activated when the render controller starts.
+
+SystemsConfigs.CameraMaxVerticalAngle = 60 :: number
+-- Default maximum vertical look angle in degrees (up/down pitch clamp) in CameraService.
+
+SystemsConfigs.CleanerTickInterval = 0 :: number
+-- Yield duration in seconds between client RendererCleaner culling passes.
+
+-- Server --
+
+SystemsConfigs.ReplicationTickInterval = 0 :: number
+-- Yield duration in seconds between server replication delta broadcast passes.
+
+SystemsConfigs.StaticObjectsFolderName = "Static" :: string
+-- Name of the Workspace folder whose descendant BaseParts are flagged as static entities in the server ECS.
+
+-- Shared --
+
+SystemsConfigs.CoreEventsFolderName = "CoreEvents" :: string
+-- Name of the ReplicatedStorage folder containing networking RemoteEvents.
+
+SystemsConfigs.ReplicateRemoteEventName = "ReplicateEvent" :: string
+-- Name of the RemoteEvent used to replicate ECS component delta buffers from server to client.
+
+SystemsConfigs.CullingPaddingAmount = 1.0 :: number
+-- Master frustum culling padding multiplier; increase to loosen culling bounds or decrease to tighten them.
+
+SystemsConfigs.CullingBaseTanY = 0.70 :: number
+-- Base vertical frustum half-angle tangent at the reference 70-degree FOV before CullingPaddingAmount is applied.
+
+SystemsConfigs.CullingBaseBackPadding = 10 :: number
+-- Base distance in studs that the frustum origin is shifted backward behind the observer before CullingPaddingAmount is applied.
+
+SystemsConfigs.CullingRadiusPaddingFactor = 0.35 :: number
+-- Bounding-radius approximation factor multiplied by (SizeX + SizeY + SizeZ) and CullingPaddingAmount during frustum checks.
+
+SystemsConfigs.CullingNearClip = 0.4 :: number
+-- Near clipping plane distance in studs for view frustum culling.
+
+SystemsConfigs.CullingFarClip = 200 :: number
+-- Far clipping plane distance in studs for view frustum culling.
+
+SystemsConfigs.OccluderInscribedRadiusFactor = 0.35 :: number
+-- Scale factor applied to an entity's smallest axis to estimate its inscribed screen-space occluder radius.
+
+SystemsConfigs.OccluderMinProjectedRadius = 0.25 :: number
+-- Minimum projected screen-space radius required for a foreground entity to become the active dominant occluder.
+
+SystemsConfigs.ECSComponentStride = 12 :: number
+-- Byte stride per entity for 3-float ECS component buffers (Position, Orientation, Visual, and Size: 3 x f32 = 12 bytes).
+
+SystemsConfigs.ECSDirectionStride = 36 :: number
+-- Byte stride per entity for the Directions ECS buffer (LookVector, UpVector, and RightVector: 9 x f32 = 36 bytes).
+
+SystemsConfigs.ECSComponentBufferSize = 100000 :: number
+-- Allocated byte capacity for each 12-byte-stride ECS component buffer (Position, Orientation, Visual, Size).
+
+SystemsConfigs.ECSDirectionBufferSize = 300000 :: number
+-- Allocated byte capacity for each 36-byte-stride Directions ECS buffer.
+
+SystemsConfigs.ECSMaxEntities = SystemsConfigs.ECSComponentBufferSize // SystemsConfigs.ECSComponentStride :: number
+-- Maximum number of entities that can be stored in the preallocated ECS component buffers.
+
+-- Physics --
+
+SystemsConfigs.PhysicsGravity = 98.0 :: number
+-- Downward gravitational acceleration in studs per second squared.
+
+SystemsConfigs.PhysicsFallGravityMultiplier = 1.2 :: number
+-- Multiplier applied to downward gravity when falling so jump arcs feel grounded rather than floaty.
+
+SystemsConfigs.PhysicsMaxDeltaTime = 0.05 :: number
+-- Maximum clamped frame delta time in seconds to prevent tunneling during frame spikes.
+
+SystemsConfigs.PhysicsSubsteps = 2 :: number
+-- Number of physics integration and collision substeps executed per frame.
+
+SystemsConfigs.PlayerDefaultSpawnPosition = Vector3.new(0, 12, 0) :: Vector3
+-- Fallback world spawn position for the player physics body when no character root part is present.
+
+SystemsConfigs.PlayerVoidResetY = -500.0 :: number
+-- World Y threshold below which the player physics body resets back to its spawn position.
+
+SystemsConfigs.PlayerMass = 80.0 :: number
+-- Mass of the player physics body in kilograms used for force acceleration and collision impulses.
+
+SystemsConfigs.PlayerHalfExtents = Vector3.new(1.0, 2.5, 1.0) :: Vector3
+-- Collision box half-extents (X, Y, Z) in studs for the player physics body.
+
+SystemsConfigs.PlayerMoveForce = 4400.0 :: number
+-- Horizontal driving force in Newtons applied to accelerate the player on grounded surfaces.
+
+SystemsConfigs.PlayerMaxGroundSpeed = 18.0 :: number
+-- Target maximum horizontal ground speed in studs per second.
+
+SystemsConfigs.PlayerGroundFriction = 10.0 :: number
+-- Ground traction damping rate per second applied to lateral drift and coasting velocity.
+
+SystemsConfigs.PlayerBrakeMultiplier = 1.65 :: number
+-- Extra braking multiplier applied when releasing movement input or counter-steering against momentum.
+
+SystemsConfigs.PlayerStopSpeed = 4.0 :: number
+-- Minimum speed reference in studs per second used to bring low-speed coasting cleanly to rest.
+
+SystemsConfigs.PlayerAirControlMultiplier = 0.2 :: number
+-- Fraction of ground driving force available while airborne so jumps preserve takeoff inertia.
+
+SystemsConfigs.PlayerAirDrag = 0.45 :: number
+-- Linear aerodynamic drag per second applied while the player is airborne.
+
+SystemsConfigs.PlayerJumpImpulse = 2600.0 :: number
+-- Upward impulse in Newton-seconds applied when jumping from grounded contact.
+
+SystemsConfigs.PlayerWalkableNormalY = 0.65 :: number
+-- Minimum surface normal Y component required for a contact to count as walkable ground.
+
+SystemsConfigs.ObjectDefaultDensity = 1.2 :: number
+-- Default mass per cubic stud used to derive dynamic ECS entity mass from bounding volume.
+
+SystemsConfigs.ObjectLinearDrag = 0.6 :: number
+-- Linear air damping per second applied to dynamic ECS object velocities.
+
+SystemsConfigs.ObjectSurfaceFriction = 6.5 :: number
+-- Tangential surface friction rate per second applied to dynamic ECS objects in contact.
+
+SystemsConfigs.ObjectRestitution = 0.15 :: number
+-- Normal impact restitution (0-1) for dynamic ECS object collisions.
+
+SystemsConfigs.ObjectSleepSpeedThreshold = 0.08 :: number
+-- Velocity magnitude threshold in studs per second below which grounded dynamic objects settle to sleep.
+
+SystemsConfigs.PlayerQueueMaxCommands = 64 :: number
+-- Maximum queued player movement commands per frame in PhysicsMovementQueue.
+
+SystemsConfigs.ObjectQueueMaxCommands = 1024 :: number
+-- Maximum queued dynamic object force or impulse commands per frame in PhysicsMovementQueue.
+
+return SystemsConfigs

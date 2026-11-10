@@ -219,3 +219,10 @@ mechanics (a `buffer.readf32`, a simple `for`) are left uncommented.
 - Frame loop: `RunService.RenderStepped:Connect(function() ... end)`.
 - Deferred init: `task.spawn(function() ... end)`.
 - Early exit inside loops with `continue` instead of wrapping in an outer `if`.
+
+
+## Maintainability and configs
+
+- Once you think there is something worth to add as a config that would get changed alot, add a config to SystemConfigs and tell the user
+- If the change is somethng that would almost never change like vertex data for a cube, do NOT include it
+- Cache it at the top of the script in whatever script the systemConfigs config is asking for as to not hurt performance

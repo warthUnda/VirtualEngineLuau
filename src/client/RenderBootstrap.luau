@@ -10,7 +10,6 @@ const RenderRoot = ReplicatedStorage:WaitForChild("Shared")
 	:WaitForChild("Utilities")
 	:WaitForChild("Render") :: Folder
 
-const ControllerFolder = RenderRoot:WaitForChild("Controller") :: Folder
 const WorkerFolder = RenderRoot:WaitForChild("Worker") :: Folder
 const SceneFolder = RenderRoot:WaitForChild("Scene") :: Folder
 
@@ -28,12 +27,24 @@ local RenderBootstrap = {}
 
 function RenderBootstrap.CreateSetup()
 	const PlayerScripts = Players.LocalPlayer:WaitForChild("PlayerScripts") :: PlayerScripts
-	const ClientObjects = PlayerScripts:WaitForChild("Client"):WaitForChild("Objects") :: Folder
+	const ClientFolder = PlayerScripts:WaitForChild("Client") :: Folder
+	const ClientObjects = ClientFolder:WaitForChild("Objects") :: Folder
 
 	-- Workers
 	const WorkerActorFolder = Instance.new("Folder") :: Folder
 	WorkerActorFolder.Name = "WorkerFolder"
 	WorkerActorFolder.Parent = PlayerScripts
+
+	-- Creation of workers
+	for i = 1, ACTOR_COUNT do
+		const NewWorkerActor = Instance.new("Actor") :: Actor
+		NewWorkerActor.Parent = WorkerActorFolder
+		NewWorkerActor.Name = "ParallelSetup" .. i
+
+		const NewRenderTemplate = WorkerFolder:WaitForChild("ParallelWorker"):Clone() :: Script -- Executes the hard math in parallel
+		NewRenderTemplate.Name = "ParallelRender" .. i
+		NewRenderTemplate.Parent = NewWorkerActor
+	end
 
 	-- Controller for the workers
 	const ControllerActor = Instance.new("Actor") :: Actor
@@ -50,23 +61,12 @@ function RenderBootstrap.CreateSetup()
 		ClientObjects:WaitForChild("Replication"):WaitForChild("ReplicationReceiver"):Clone() :: LocalScript
 	ControllerReceiver.Parent = ControllerActor
 
-	-- Scripts of the controller
-	const ControllerScript = ControllerFolder:WaitForChild("RenderController"):Clone() :: Script -- Controls the actual workers
-	ControllerScript.Parent = ControllerActor
-
 	const CleanerScript = SceneFolder:WaitForChild("RendererCleaner"):Clone() :: LocalScript
 	CleanerScript.Parent = ControllerActor
 
-	-- Creation of workers
-	for i = 1, ACTOR_COUNT do
-		const NewWorkerActor = Instance.new("Actor") :: Actor
-		NewWorkerActor.Parent = WorkerActorFolder
-		NewWorkerActor.Name = "ParallelSetup" .. i
-
-		const NewRenderTemplate = WorkerFolder:WaitForChild("ParallelWorker"):Clone() :: Script -- Executes the hard math in parallel
-		NewRenderTemplate.Name = "ParallelRender" .. i
-		NewRenderTemplate.Parent = NewWorkerActor
-	end
+	-- Main client loop (physics -> rendering) runs inside the Controller Actor
+	const MainScript = ClientFolder:WaitForChild("main"):Clone() :: LocalScript
+	MainScript.Parent = ControllerActor
 end
 
 return RenderBootstrap

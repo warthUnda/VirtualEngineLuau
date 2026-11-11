@@ -25,7 +25,7 @@ if not ReplicateEvent then
 end
 
 -- Modules --
-const PlayerEye = require(ServerScriptService.Server.Objects.Replication.Core.PlayerEye) :: ModuleScript
+const PlayerEye = require(ServerScriptService.Server.Objects.Replication.Core.PlayerEye)
 
 -- ============================================================================
 -- 1. REPLICATION LOOP - BROADCASTS VISIBLE SNAPSHOTS TO CLIENTS

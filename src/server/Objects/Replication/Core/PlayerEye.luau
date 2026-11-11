@@ -6,23 +6,21 @@ const Players = game:GetService("Players") :: Players
 const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 const ServerScriptService = game:GetService("ServerScriptService") :: ServerScriptService
 
--- Static References --
-const StorageFolder = ServerScriptService.Server.Objects.ObjectsECS.Storage :: Folder
-
 -- Modules --
-const PositionData = require(StorageFolder.PositionData) :: ModuleScript
-const OrientationData = require(StorageFolder.OrientationData) :: ModuleScript
-const VisualData = require(StorageFolder.VisualData) :: ModuleScript
-const SizeData = require(StorageFolder.SizeData) :: ModuleScript
-const DirectionsData = require(StorageFolder.DirectionsData) :: ModuleScript
-const ECSData = require(StorageFolder.ECSData) :: ModuleScript
+const Storage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
+const PositionData = Storage.PositionData
+const OrientationData = Storage.OrientationData
+const VisualData = Storage.VisualData
+const SizeData = Storage.SizeData
+const DirectionsData = Storage.DirectionsData
+const ECSData = Storage.ECSData
 const ViewCulling = require(
 	ReplicatedStorage:WaitForChild("Shared")
 		:WaitForChild("Utilities")
 		:WaitForChild("Render")
 		:WaitForChild("Core")
 		:WaitForChild("ViewCulling")
-) :: ModuleScript
+)
 
 -- Configs --
 const COMPONENT_STRIDE = 12 :: number -- 3 x f32 per entity (position, orientation, visual, size)

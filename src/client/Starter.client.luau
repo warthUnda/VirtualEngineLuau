@@ -2,6 +2,6 @@
 --!optimize 2
 
 -- Modules --
-const RenderBootstrap = require(script.Parent.RenderBootstrap) :: ModuleScript
+const RenderBootstrap = require(script.Parent.RenderBootstrap)
 
 RenderBootstrap.CreateSetup()

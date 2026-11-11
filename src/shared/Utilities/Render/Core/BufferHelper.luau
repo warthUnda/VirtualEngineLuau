@@ -7,37 +7,38 @@ local ClearPixelTemplate: buffer? = nil
 
 local BufferHelper = {}
 
-BufferHelper.RenderBufferLayoutSize = 32 :: number
+BufferHelper.RenderBufferLayoutSize = 28 :: number
 
 function BufferHelper.CreateRenderBuffer(
 	TargetBuffer: buffer,
 	MemoryOffset: number,
-	V0: Vector3,
-	V1: Vector3,
-	V2: Vector3,
-	R: number,
-	G: number,
-	B: number
+	X0: number,
+	Y0: number,
+	Z0: number,
+	X1: number,
+	Y1: number,
+	Z1: number,
+	X2: number,
+	Y2: number,
+	Z2: number,
+	PackedColor: number
 ): number
-	-- Three 8-byte vertices, three 2-byte color channels, and 2 bytes of padding.
-	buffer.writei16(TargetBuffer, MemoryOffset, V0.X)
-	buffer.writei16(TargetBuffer, MemoryOffset + 2, V0.Y)
-	buffer.writef32(TargetBuffer, MemoryOffset + 4, V0.Z)
+	-- Three 8-byte vertices and one 4-byte packed RGBA u32 color (28 bytes total, zero padding).
+	buffer.writei16(TargetBuffer, MemoryOffset, X0)
+	buffer.writei16(TargetBuffer, MemoryOffset + 2, Y0)
+	buffer.writef32(TargetBuffer, MemoryOffset + 4, Z0)
 
-	buffer.writei16(TargetBuffer, MemoryOffset + 8, V1.X)
-	buffer.writei16(TargetBuffer, MemoryOffset + 10, V1.Y)
-	buffer.writef32(TargetBuffer, MemoryOffset + 12, V1.Z)
+	buffer.writei16(TargetBuffer, MemoryOffset + 8, X1)
+	buffer.writei16(TargetBuffer, MemoryOffset + 10, Y1)
+	buffer.writef32(TargetBuffer, MemoryOffset + 12, Z1)
 
-	buffer.writei16(TargetBuffer, MemoryOffset + 16, V2.X)
-	buffer.writei16(TargetBuffer, MemoryOffset + 18, V2.Y)
-	buffer.writef32(TargetBuffer, MemoryOffset + 20, V2.Z)
+	buffer.writei16(TargetBuffer, MemoryOffset + 16, X2)
+	buffer.writei16(TargetBuffer, MemoryOffset + 18, Y2)
+	buffer.writef32(TargetBuffer, MemoryOffset + 20, Z2)
 
-	buffer.writeu16(TargetBuffer, MemoryOffset + 24, R)
-	buffer.writeu16(TargetBuffer, MemoryOffset + 26, G)
-	buffer.writeu16(TargetBuffer, MemoryOffset + 28, B)
-	buffer.writeu16(TargetBuffer, MemoryOffset + 30, 0)
+	buffer.writeu32(TargetBuffer, MemoryOffset + 24, PackedColor)
 
-	return MemoryOffset + 32
+	return MemoryOffset + 28
 end
 
 function BufferHelper.ClearBuffers(TotalPixels: number, PixelBuffer: buffer, ZBuffer: buffer)

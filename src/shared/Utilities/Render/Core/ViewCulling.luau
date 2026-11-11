@@ -7,7 +7,7 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStor
 const RunService = game:GetService("RunService") :: RunService
 
 -- Modules --
-const RenderConfigs = require(ReplicatedStorage.Shared.Utilities.Render.RenderConfigs) :: ModuleScript
+const RenderConfigs = require(ReplicatedStorage.Shared.Utilities.Render.RenderConfigs)
 const CameraStore = if RunService:IsClient()
 	then require(
 		ReplicatedStorage:WaitForChild("Shared")
@@ -15,7 +15,7 @@ const CameraStore = if RunService:IsClient()
 			:WaitForChild("Render")
 			:WaitForChild("Camera")
 			:WaitForChild("CameraStore")
-	) :: ModuleScript
+	)
 	else nil
 
 -- Configs --

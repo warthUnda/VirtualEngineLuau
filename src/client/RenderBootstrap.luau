@@ -14,7 +14,7 @@ const WorkerFolder = RenderRoot:WaitForChild("Worker") :: Folder
 const SceneFolder = RenderRoot:WaitForChild("Scene") :: Folder
 
 -- Modules --
-const RenderConfigs = require(RenderRoot:WaitForChild("RenderConfigs")) :: ModuleScript
+const RenderConfigs = require(RenderRoot:WaitForChild("RenderConfigs"))
 
 -- Configs --
 const ACTOR_COUNT = RenderConfigs.GetActorCount() :: number
@@ -54,7 +54,7 @@ function RenderBootstrap.CreateSetup()
 	-- Every Actor runs in its own Luau VM and gets its own copy of each ModuleScript it requires,
 	-- so the ECS storage has to be cloned into the controller Actor. The ReplicationReceiver is
 	-- cloned next to it so it fills the exact buffers this Actor renders from.
-	const ControllerStorage = ClientObjects:WaitForChild("ObjectStorage"):Clone() :: Folder
+	const ControllerStorage = ClientObjects:WaitForChild("ObjectStorage"):Clone()
 	ControllerStorage.Parent = ControllerActor
 
 	const ControllerReceiver =

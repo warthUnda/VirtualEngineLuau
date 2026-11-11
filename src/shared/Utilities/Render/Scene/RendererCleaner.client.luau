@@ -8,31 +8,33 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStor
 -- Static References --
 const LocalPlayer = Players.LocalPlayer :: Player
 const SelfActor = script:GetActor() :: Actor?
-const ObjectStorage = (SelfActor and SelfActor:WaitForChild("ObjectStorage"))
+const ObjectStorageModule = (SelfActor and SelfActor:WaitForChild("ObjectStorage"))
 	or LocalPlayer:WaitForChild("PlayerScripts")
 		:WaitForChild("Client")
 		:WaitForChild("Objects")
-		:WaitForChild("ObjectStorage") :: Folder
-
-const RenderECSStorage = ReplicatedStorage:WaitForChild("Shared")
-	:WaitForChild("Utilities")
-	:WaitForChild("Render")
-	:WaitForChild("ECSStorage") :: Folder
+		:WaitForChild("ObjectStorage")
 
 -- Modules --
-const ObjectECSData = require(ObjectStorage:WaitForChild("ECSData")) :: ModuleScript
-const ObjectPositionData = require(ObjectStorage:WaitForChild("PositionData")) :: ModuleScript
-const ObjectOrientationData = require(ObjectStorage:WaitForChild("OrientationData")) :: ModuleScript
-const ObjectVisualData = require(ObjectStorage:WaitForChild("VisualData")) :: ModuleScript
-const ObjectSizeData = require(ObjectStorage:WaitForChild("SizeData")) :: ModuleScript
-const ObjectDirectionsData = require(ObjectStorage:WaitForChild("DirectionsData")) :: ModuleScript
+const ObjectStorage = require(ObjectStorageModule)
+const ObjectECSData = ObjectStorage.ECSData
+const ObjectPositionData = ObjectStorage.PositionData
+const ObjectOrientationData = ObjectStorage.OrientationData
+const ObjectVisualData = ObjectStorage.VisualData
+const ObjectSizeData = ObjectStorage.SizeData
+const ObjectDirectionsData = ObjectStorage.DirectionsData
 
-const RenderECSData = require(RenderECSStorage:WaitForChild("ECSData")) :: ModuleScript
-const RenderPositionData = require(RenderECSStorage:WaitForChild("PositionData")) :: ModuleScript
-const RenderOrientationData = require(RenderECSStorage:WaitForChild("OrientationData")) :: ModuleScript
-const RenderVisualData = require(RenderECSStorage:WaitForChild("VisualData")) :: ModuleScript
-const RenderSizeData = require(RenderECSStorage:WaitForChild("SizeData")) :: ModuleScript
-const RenderDirectionsData = require(RenderECSStorage:WaitForChild("DirectionsData")) :: ModuleScript
+const RenderECSStorage = require(
+	ReplicatedStorage:WaitForChild("Shared")
+		:WaitForChild("Utilities")
+		:WaitForChild("Render")
+		:WaitForChild("ECSStorage")
+)
+const RenderECSData = RenderECSStorage.ECSData
+const RenderPositionData = RenderECSStorage.PositionData
+const RenderOrientationData = RenderECSStorage.OrientationData
+const RenderVisualData = RenderECSStorage.VisualData
+const RenderSizeData = RenderECSStorage.SizeData
+const RenderDirectionsData = RenderECSStorage.DirectionsData
 
 const ViewCulling = require(
 	ReplicatedStorage:WaitForChild("Shared")
@@ -40,7 +42,7 @@ const ViewCulling = require(
 		:WaitForChild("Render")
 		:WaitForChild("Core")
 		:WaitForChild("ViewCulling")
-) :: ModuleScript
+)
 
 -- Configs --
 const COMPONENT_STRIDE = 12 :: number

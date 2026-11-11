@@ -2,8 +2,8 @@
 --!optimize 2
 
 -- Configs --
-const WIDTH = 150 :: number
-const HEIGHT = 150 :: number
+const WIDTH = 600 :: number
+const HEIGHT = 600 :: number
 const ACTOR_COUNT = 3 :: number
 
 -- Tables --

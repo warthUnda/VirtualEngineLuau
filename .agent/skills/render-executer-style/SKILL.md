@@ -46,7 +46,7 @@ const CameraState = require(
 		:WaitForChild("Render")
 		:WaitForChild("Camera")
 		:WaitForChild("CameraState")
-) :: ModuleScript
+)
 ```
 
 ### Multi-line calls
@@ -125,17 +125,16 @@ for i, TargetActor: Actor in ipairs(PlayerScripts:WaitForChild("WorkerFolder"):G
 ```
 
 ### Modules
-`require`d modules are typed `:: ModuleScript` (a couple of older lines omit the
-cast — `RasterMath` and `CameraService` — but the convention is to include it):
+Do **not** annotate `require`d modules or `ModuleScript` references with `:: ModuleScript` so Luau preserves the module's exported types and function signatures:
 
 ```lua
-const BufferIO = require(ReplicatedStorage.Shared.Utilities.Render.Buffer.BufferIO) :: ModuleScript
+const BufferIO = require(ReplicatedStorage.Shared.Utilities.Render.Buffer.BufferIO)
 ```
 
 Sibling modules cloned into the same Actor are required via `script.Parent`:
 
 ```lua
-const PartStore = require(script.Parent.PartStore) :: ModuleScript
+const PartStore = require(script.Parent.PartStore)
 ```
 
 ### Table/array types
@@ -226,3 +225,5 @@ mechanics (a `buffer.readf32`, a simple `for`) are left uncommented.
 - Once you think there is something worth to add as a config that would get changed alot, add a config to SystemConfigs and tell the user
 - If the change is somethng that would almost never change like vertex data for a cube, do NOT include it
 - Cache it at the top of the script in whatever script the systemConfigs config is asking for as to not hurt performance
+
+- do not add types to module script references via require()

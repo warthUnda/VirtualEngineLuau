@@ -14,16 +14,16 @@ const UtilitiesFolder = SharedFolder:WaitForChild("Utilities") :: Folder
 const PhysicsFolder = UtilitiesFolder:WaitForChild("Physics") :: Folder
 
 -- Modules --
-const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs")) :: ModuleScript
-const PhysicsMovementQueue = require(PhysicsFolder:WaitForChild("PhysicsMovementQueue")) :: ModuleScript
-const PhysicsLibrary = require(PhysicsFolder:WaitForChild("Core"):WaitForChild("PhysicsLIbrary")) :: ModuleScript
+const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
+const PhysicsMovementQueue = require(PhysicsFolder:WaitForChild("PhysicsMovementQueue"))
+const PhysicsLibrary = require(PhysicsFolder:WaitForChild("Core"):WaitForChild("PhysicsLIbrary"))
 
 const CameraStore = if IS_CLIENT
 	then require(
 		UtilitiesFolder:WaitForChild("Render")
 			:WaitForChild("Camera")
 			:WaitForChild("CameraStore")
-	) :: ModuleScript
+	)
 	else nil
 
 -- Configs --
@@ -88,7 +88,7 @@ local PhysicsController = {}
 -- 1. INTERNAL HELPERS - STORAGE BINDING, INPUT & QUEUE CONSUMPTION
 -- ============================================================================
 
-local function ResolveObjectStorage(): Folder?
+local function ResolveObjectStorage(): Instance?
 	if not IS_CLIENT then
 		return nil
 	end
@@ -101,7 +101,7 @@ local function ResolveObjectStorage(): Folder?
 	const PlayerScripts = LocalPlayer:WaitForChild("PlayerScripts") :: PlayerScripts
 	const ControllerActor = PlayerScripts:FindFirstChild("Controller") :: Actor?
 	if ControllerActor then
-		const ActorStorage = ControllerActor:FindFirstChild("ObjectStorage") :: Folder?
+		const ActorStorage = ControllerActor:FindFirstChild("ObjectStorage")
 		if ActorStorage then
 			return ActorStorage
 		end
@@ -109,7 +109,7 @@ local function ResolveObjectStorage(): Folder?
 
 	return PlayerScripts:WaitForChild("Client")
 		:WaitForChild("Objects")
-		:WaitForChild("ObjectStorage") :: Folder
+		:WaitForChild("ObjectStorage")
 end
 
 local function ConfigureCharacterInstance(Character: Model)
@@ -427,16 +427,13 @@ function PhysicsController.InitializePhysics()
 		return
 	end
 
-	const ObjectStorage = ResolveObjectStorage()
-	if ObjectStorage then
-		const PositionData = require(ObjectStorage:WaitForChild("PositionData")) :: ModuleScript
-		const SizeData = require(ObjectStorage:WaitForChild("SizeData")) :: ModuleScript
-		const DirectionsData = require(ObjectStorage:WaitForChild("DirectionsData")) :: ModuleScript
-
-		ECSDataModule = require(ObjectStorage:WaitForChild("ECSData"))
-		ECSPositionBuffer = PositionData.GetData()
-		ECSSizeBuffer = SizeData.GetData()
-		ECSDirectionsBuffer = DirectionsData.GetData()
+	const ObjectStorageModule = ResolveObjectStorage()
+	if ObjectStorageModule then
+		const ObjectStorage = require(ObjectStorageModule)
+		ECSDataModule = ObjectStorage.ECSData
+		ECSPositionBuffer = ObjectStorage.PositionData.GetData()
+		ECSSizeBuffer = ObjectStorage.SizeData.GetData()
+		ECSDirectionsBuffer = ObjectStorage.DirectionsData.GetData()
 	end
 
 	Initialized = true

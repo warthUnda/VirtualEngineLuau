@@ -18,13 +18,13 @@ const PhysicsController = require(
 	Utilities:WaitForChild("Physics")
 		:WaitForChild("Controller")
 		:WaitForChild("PhysicsController")
-) :: ModuleScript
+)
 
 const Renderer = require(
 	Utilities:WaitForChild("Render")
 		:WaitForChild("Controller")
 		:WaitForChild("RenderController")
-) :: ModuleScript
+)
 
 -- ============================================================================
 -- 1. INITIALIZATION

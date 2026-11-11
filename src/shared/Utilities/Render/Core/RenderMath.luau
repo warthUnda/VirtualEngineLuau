@@ -5,7 +5,7 @@
 const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 
 -- Modules --
-const MathModule = require(ReplicatedStorage.Shared.Utilities.Render.Core.MathModule) :: ModuleScript
+const MathModule = require(ReplicatedStorage.Shared.Utilities.Render.Core.MathModule)
 
 -- Configs --
 const NEAR_CLIP = 0.4 :: number
@@ -19,38 +19,52 @@ local RenderMath = {}
 -- ============================================================================
 
 function RenderMath.GetPartCameraVertices(
-	Position: Vector3,
-	LookVector: Vector3,
-	UpVector: Vector3,
-	RightVector: Vector3,
-	Size: Vector3,
+	PosX: number,
+	PosY: number,
+	PosZ: number,
+	LookX: number,
+	LookY: number,
+	LookZ: number,
+	UpX: number,
+	UpY: number,
+	UpZ: number,
+	RightX: number,
+	RightY: number,
+	RightZ: number,
+	SizeX: number,
+	SizeY: number,
+	SizeZ: number,
 	CameraVertices: buffer,
-	CamPosition: Vector3,
-	CamRight: Vector3,
-	CamUp: Vector3,
-	CamLook: Vector3
+	CamPosX: number,
+	CamPosY: number,
+	CamPosZ: number,
+	CamRightX: number,
+	CamRightY: number,
+	CamRightZ: number,
+	CamUpX: number,
+	CamUpY: number,
+	CamUpZ: number,
+	CamLookX: number,
+	CamLookY: number,
+	CamLookZ: number
 ): boolean
-	const Hx: number, Hy: number, Hz: number = Size.X * 0.5, Size.Y * 0.5, Size.Z * 0.5
+	const Hx: number, Hy: number, Hz: number = SizeX * 0.5, SizeY * 0.5, SizeZ * 0.5
 
-	const RelX = Position.X - CamPosition.X :: number
-	const RelY = Position.Y - CamPosition.Y :: number
-	const RelZ = Position.Z - CamPosition.Z :: number
-
-	const CamRightX: number, CamRightY: number, CamRightZ: number = CamRight.X, CamRight.Y, CamRight.Z
-	const CamUpX: number, CamUpY: number, CamUpZ: number = CamUp.X, CamUp.Y, CamUp.Z
-	const CamLookX: number, CamLookY: number, CamLookZ: number = CamLook.X, CamLook.Y, CamLook.Z
+	const RelX = PosX - CamPosX :: number
+	const RelY = PosY - CamPosY :: number
+	const RelZ = PosZ - CamPosZ :: number
 
 	const Cx = RelX * CamRightX + RelY * CamRightY + RelZ * CamRightZ :: number
 	const Cy = RelX * CamUpX + RelY * CamUpY + RelZ * CamUpZ :: number
 	const Cz = RelX * CamLookX + RelY * CamLookY + RelZ * CamLookZ :: number
 
-	const RWorldX: number, RWorldY: number, RWorldZ: number = RightVector.X * Hx, RightVector.Y * Hx, RightVector.Z * Hx
+	const RWorldX: number, RWorldY: number, RWorldZ: number = RightX * Hx, RightY * Hx, RightZ * Hx
 	const Rz = RWorldX * CamLookX + RWorldY * CamLookY + RWorldZ * CamLookZ :: number
 
-	const UWorldX: number, UWorldY: number, UWorldZ: number = UpVector.X * Hy, UpVector.Y * Hy, UpVector.Z * Hy
+	const UWorldX: number, UWorldY: number, UWorldZ: number = UpX * Hy, UpY * Hy, UpZ * Hy
 	const Uz = UWorldX * CamLookX + UWorldY * CamLookY + UWorldZ * CamLookZ :: number
 
-	const LWorldX: number, LWorldY: number, LWorldZ: number = LookVector.X * Hz, LookVector.Y * Hz, LookVector.Z * Hz
+	const LWorldX: number, LWorldY: number, LWorldZ: number = LookX * Hz, LookY * Hz, LookZ * Hz
 	const Lz = LWorldX * CamLookX + LWorldY * CamLookY + LWorldZ * CamLookZ :: number
 
 	const ExtentZ = math.abs(Rz) + math.abs(Uz) + math.abs(Lz) :: number
@@ -209,10 +223,10 @@ function RenderMath.ClipAndProjectTriangle(
 			const Offset = (i - 1) * 12 :: number
 			const X = buffer.readf32(ClipBufferA, Offset) :: number
 			const Y = buffer.readf32(ClipBufferA, Offset + 4) :: number
-			const Z = buffer.readf32(ClipBufferA, Offset + 8) :: number
-			buffer.writef32(ProjectedVertices, Offset, math.floor((X / Z) * FocalLength + WIDTH * 0.5))
-			buffer.writef32(ProjectedVertices, Offset + 4, math.floor((-Y / Z) * FocalLength + HEIGHT * 0.5))
-			buffer.writef32(ProjectedVertices, Offset + 8, Z)
+			const InvZ = 1 / buffer.readf32(ClipBufferA, Offset + 8) :: number
+			buffer.writef32(ProjectedVertices, Offset, math.floor(X * InvZ * FocalLength + WIDTH * 0.5))
+			buffer.writef32(ProjectedVertices, Offset + 4, math.floor(-Y * InvZ * FocalLength + HEIGHT * 0.5))
+			buffer.writef32(ProjectedVertices, Offset + 8, InvZ)
 		end
 		return 3
 	end
@@ -237,10 +251,10 @@ function RenderMath.ClipAndProjectTriangle(
 		const Offset = (i - 1) * 12 :: number
 		const X = buffer.readf32(Output, Offset) :: number
 		const Y = buffer.readf32(Output, Offset + 4) :: number
-		const Z = buffer.readf32(Output, Offset + 8) :: number
-		buffer.writef32(ProjectedVertices, Offset, math.floor((X / Z) * FocalLength + WIDTH * 0.5))
-		buffer.writef32(ProjectedVertices, Offset + 4, math.floor((-Y / Z) * FocalLength + HEIGHT * 0.5))
-		buffer.writef32(ProjectedVertices, Offset + 8, Z)
+		const InvZ = 1 / buffer.readf32(Output, Offset + 8) :: number
+		buffer.writef32(ProjectedVertices, Offset, math.floor(X * InvZ * FocalLength + WIDTH * 0.5))
+		buffer.writef32(ProjectedVertices, Offset + 4, math.floor(-Y * InvZ * FocalLength + HEIGHT * 0.5))
+		buffer.writef32(ProjectedVertices, Offset + 8, InvZ)
 	end
 
 	return VertexCount
@@ -251,41 +265,27 @@ end
 -- ============================================================================
 
 function RenderMath.DrawTriangle(
-	V0: Vector3,
-	V1: Vector3,
-	V2: Vector3,
-	R: number,
-	G: number,
-	B: number,
+	X0: number,
+	Y0: number,
+	ScaledInvZ0: number,
+	X1: number,
+	Y1: number,
+	ScaledInvZ1: number,
+	X2: number,
+	Y2: number,
+	ScaledInvZ2: number,
+	PackedColor: number,
 	WIDTH: number,
 	HEIGHT: number,
 	PixelBuffer: buffer,
 	ZBuffer: buffer
 )
-	const X0: number, Y0: number, Z0: number = V0.X, V0.Y, V0.Z
-	const X1: number, Y1: number, Z1: number = V1.X, V1.Y, V1.Z
-	const X2: number, Y2: number, Z2: number = V2.X, V2.Y, V2.Z
-
-	const Area = MathModule.EdgeFunction(X0, Y0, X1, Y1, X2, Y2) :: number
-	if Area == 0 then
-		return
-	end
-
 	const MinX = math.max(0, math.min(X0, X1, X2)) :: number
 	const MaxX = math.min(WIDTH - 1, math.max(X0, X1, X2)) :: number
 	const MinY = math.max(0, math.min(Y0, Y1, Y2)) :: number
 	const MaxY = math.min(HEIGHT - 1, math.max(Y0, Y1, Y2)) :: number
 
-	if MinX > MaxX or MinY > MaxY then
-		return
-	end
-
 	-- Define how many pixels the object (Triangle) covers
-	const InvArea = 1 / Area :: number
-	const ScaledInvZ0 = (1 / Z0) * InvArea :: number
-	const ScaledInvZ1 = (1 / Z1) * InvArea :: number
-	const ScaledInvZ2 = (1 / Z2) * InvArea :: number
-
 	const Edge0X = Y2 - Y1 :: number
 	const Edge1X = Y0 - Y2 :: number
 	const Edge2X = Y1 - Y0 :: number
@@ -299,13 +299,12 @@ function RenderMath.DrawTriangle(
 	const StepEdgeX = vector.create(Edge0X, Edge1X, Edge2X)
 	const StepEdgeY = vector.create(Edge0Y, Edge1Y, Edge2Y)
 
-	const RowW0 = MathModule.EdgeFunction(X1, Y1, X2, Y2, MinX, MinY) :: number
-	const RowW1 = MathModule.EdgeFunction(X2, Y2, X0, Y0, MinX, MinY) :: number
-	const RowW2 = MathModule.EdgeFunction(X0, Y0, X1, Y1, MinX, MinY) :: number
+	const RowW0 = (MinX - X1) * Edge0X + (MinY - Y1) * Edge0Y :: number
+	const RowW1 = (MinX - X2) * Edge1X + (MinY - Y2) * Edge1Y :: number
+	const RowW2 = (MinX - X0) * Edge2X + (MinY - Y0) * Edge2Y :: number
 	local RowW = vector.create(RowW0, RowW1, RowW2)
 	local RowInvZ = RowW0 * ScaledInvZ0 + RowW1 * ScaledInvZ1 + RowW2 * ScaledInvZ2 :: number
 
-	const PackedColor = bit32.bor(R, bit32.lshift(G, 8), bit32.lshift(B, 16), 0xFF000000) :: number
 	const RowStride = WIDTH * 4 :: number
 	local RowOffset = (MinY * WIDTH + MinX) * 4 :: number
 

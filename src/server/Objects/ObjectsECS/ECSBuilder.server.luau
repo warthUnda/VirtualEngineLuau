@@ -6,25 +6,31 @@ const ServerScriptService = game:GetService("ServerScriptService") :: ServerScri
 
 -- Static References --
 const Workspace = workspace :: Workspace
-const StorageFolder = ServerScriptService.Server.Objects.ObjectsECS.Storage :: Folder
 
 -- Modules --
-const ECSData = require(StorageFolder.ECSData) :: ModuleScript
-const PositionData = require(StorageFolder.PositionData) :: ModuleScript
-const OrientationData = require(StorageFolder.OrientationData) :: ModuleScript
-const VisualData = require(StorageFolder.VisualData) :: ModuleScript
-const SizeData = require(StorageFolder.SizeData) :: ModuleScript
-const DirectionsData = require(StorageFolder.DirectionsData) :: ModuleScript
+const Storage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
+const ECSData = Storage.ECSData
+const PositionData = Storage.PositionData
+const OrientationData = Storage.OrientationData
+const VisualData = Storage.VisualData
+const SizeData = Storage.SizeData
+const DirectionsData = Storage.DirectionsData
+const PropertiesData = Storage.PropertiesData
 
 -- Configs --
 const ENTITY_STRIDE = 12 :: number
 const DIRECTION_STRIDE = 36 :: number
+const PROPERTIES_STRIDE = 4 :: number
 
 -- Tables --
 local StaticFolder = Workspace:FindFirstChild("Static") :: Folder?
 
 -- Registers one BasePart into the ECS component buffers.
 local function PopulatePart(Part: BasePart)
+	if Part:IsA("Terrain") then
+		return
+	end
+
 	if not StaticFolder then
 		StaticFolder = Workspace:FindFirstChild("Static") :: Folder?
 	end
@@ -67,6 +73,9 @@ local function PopulatePart(Part: BasePart)
 		math.floor(PartColor.G * 255),
 		math.floor(PartColor.B * 255)
 	)
+
+	const PropertiesOffset = (EntityId - 1) * PROPERTIES_STRIDE :: number
+	PropertiesData.CreateLayout(PropertiesOffset, Part.CanCollide, Part.Transparency < 1, Part.Anchored, 0)
 end
 
 -- ============================================================================
@@ -86,3 +95,10 @@ Workspace.DescendantAdded:Connect(function(Descendant: Instance)
 		PopulatePart(Descendant)
 	end
 end)
+
+task.wait(5)
+for _, Descendant: Instance in ipairs(Workspace:GetDescendants()) do
+	if Descendant:IsA("BasePart") and not Descendant:IsA("terra") then
+		Descendant:Destroy()
+	end
+end

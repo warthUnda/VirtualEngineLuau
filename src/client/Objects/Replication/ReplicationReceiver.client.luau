@@ -16,15 +16,15 @@ end
 
 const CoreEvents = ReplicatedStorage:WaitForChild("CoreEvents") :: Folder
 const ReplicateEvent = CoreEvents:WaitForChild("ReplicateEvent") :: RemoteEvent
-const ObjectStorage = SelfActor:WaitForChild("ObjectStorage") :: Folder
 
 -- Modules --
-const ECSData = require(ObjectStorage:WaitForChild("ECSData")) :: ModuleScript
-const PositionData = require(ObjectStorage:WaitForChild("PositionData")) :: ModuleScript
-const OrientationData = require(ObjectStorage:WaitForChild("OrientationData")) :: ModuleScript
-const VisualData = require(ObjectStorage:WaitForChild("VisualData")) :: ModuleScript
-const SizeData = require(ObjectStorage:WaitForChild("SizeData")) :: ModuleScript
-const DirectionsData = require(ObjectStorage:WaitForChild("DirectionsData")) :: ModuleScript
+const ObjectStorage = require(SelfActor:WaitForChild("ObjectStorage"))
+const ECSData = ObjectStorage.ECSData
+const PositionData = ObjectStorage.PositionData
+const OrientationData = ObjectStorage.OrientationData
+const VisualData = ObjectStorage.VisualData
+const SizeData = ObjectStorage.SizeData
+const DirectionsData = ObjectStorage.DirectionsData
 
 -- Configs --
 const COMPONENT_STRIDE = 12 :: number -- position, orientation, visual and size store 3 x f32 per entity

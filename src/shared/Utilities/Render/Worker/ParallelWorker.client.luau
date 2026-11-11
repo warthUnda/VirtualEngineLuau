@@ -10,12 +10,12 @@ const ControllerActor = Players.LocalPlayer:WaitForChild("PlayerScripts"):WaitFo
 const SelfActor = script.Parent :: Actor
 
 -- Modules --
-const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper) :: ModuleScript
-const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath) :: ModuleScript
-const RenderConfigs = require(ReplicatedStorage.Shared.Utilities.Render.RenderConfigs) :: ModuleScript
+const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper)
+const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath)
+const RenderConfigs = require(ReplicatedStorage.Shared.Utilities.Render.RenderConfigs)
 
 -- Configs --
-local WIDTH: number, HEIGHT: number = RenderConfigs.GetDimensions2D()
+const WIDTH: number, HEIGHT: number = RenderConfigs.GetDimensions2D()
 const TOTAL_PIXELS = WIDTH * HEIGHT :: number
 const BUFFER_LAYOUT_SIZE = BufferHelper.RenderBufferLayoutSize :: number
 
@@ -36,9 +36,7 @@ SelfActor:BindToMessageParallel("Execute Rendering", function(RenderBuffer: buff
 
 	ReadMemoryOffset = 0
 
-	WIDTH, HEIGHT = RenderConfigs.GetDimensions2D()
-
-	for i = 1, ByteCount / BUFFER_LAYOUT_SIZE do
+	for i = 1, ByteCount // BUFFER_LAYOUT_SIZE do
 		const V0X = buffer.readi16(RenderBuffer, ReadMemoryOffset) :: number
 		const V0Y = buffer.readi16(RenderBuffer, ReadMemoryOffset + 2) :: number
 		const V0Z = buffer.readf32(RenderBuffer, ReadMemoryOffset + 4) :: number
@@ -51,15 +49,24 @@ SelfActor:BindToMessageParallel("Execute Rendering", function(RenderBuffer: buff
 		const V2Y = buffer.readi16(RenderBuffer, ReadMemoryOffset + 18) :: number
 		const V2Z = buffer.readf32(RenderBuffer, ReadMemoryOffset + 20) :: number
 
-		const R = buffer.readu16(RenderBuffer, ReadMemoryOffset + 24) :: number
-		const G = buffer.readu16(RenderBuffer, ReadMemoryOffset + 26) :: number
-		const B = buffer.readu16(RenderBuffer, ReadMemoryOffset + 28) :: number
+		const PackedColor = buffer.readu32(RenderBuffer, ReadMemoryOffset + 24) :: number
 
-		const V0Vector = Vector3.new(V0X, V0Y, V0Z) :: Vector3
-		const V1Vector = Vector3.new(V1X, V1Y, V1Z) :: Vector3
-		const V2Vector = Vector3.new(V2X, V2Y, V2Z) :: Vector3
-
-		RenderMath.DrawTriangle(V0Vector, V1Vector, V2Vector, R, G, B, WIDTH, HEIGHT, PixelBuffer, ZBuffer)
+		RenderMath.DrawTriangle(
+			V0X,
+			V0Y,
+			V0Z,
+			V1X,
+			V1Y,
+			V1Z,
+			V2X,
+			V2Y,
+			V2Z,
+			PackedColor,
+			WIDTH,
+			HEIGHT,
+			PixelBuffer,
+			ZBuffer
+		)
 
 		ReadMemoryOffset += BUFFER_LAYOUT_SIZE
 	end

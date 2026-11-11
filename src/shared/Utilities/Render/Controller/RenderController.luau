@@ -13,18 +13,12 @@ const PlayerScripts = Player:WaitForChild("PlayerScripts") :: PlayerScripts
 
 const Camera = workspace.CurrentCamera :: Camera
 
--- The controller renders from the active Render ECSStorage populated by RendererCleaner.
-const ECSStorage = ReplicatedStorage:WaitForChild("Shared")
-	:WaitForChild("Utilities")
-	:WaitForChild("Render")
-	:WaitForChild("ECSStorage") :: Folder
-
 -- Modules --
-const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs")) :: ModuleScript
-const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper) :: ModuleScript
-const RenderConfigs = require(ReplicatedStorage.Shared.Utilities.Render.RenderConfigs) :: ModuleScript
-const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath) :: ModuleScript
-const MathModule = require(ReplicatedStorage.Shared.Utilities.Render.Core.MathModule) :: ModuleScript
+const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper)
+const RenderConfigs = require(ReplicatedStorage.Shared.Utilities.Render.RenderConfigs)
+const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath)
+const MathModule = require(ReplicatedStorage.Shared.Utilities.Render.Core.MathModule)
 
 const CameraStore = require(
 	ReplicatedStorage:WaitForChild("Shared")
@@ -32,7 +26,7 @@ const CameraStore = require(
 		:WaitForChild("Render")
 		:WaitForChild("Camera")
 		:WaitForChild("CameraStore")
-) :: ModuleScript
+)
 
 const CameraService = require(
 	ReplicatedStorage:WaitForChild("Shared")
@@ -40,23 +34,32 @@ const CameraService = require(
 		:WaitForChild("Render")
 		:WaitForChild("Camera")
 		:WaitForChild("CameraService")
-) :: ModuleScript
+)
 
-const ECSData = require(ECSStorage:WaitForChild("ECSData")) :: ModuleScript
-const PositionData = require(ECSStorage:WaitForChild("PositionData")) :: ModuleScript
-const SizeData = require(ECSStorage:WaitForChild("SizeData")) :: ModuleScript
-const DirectionsData = require(ECSStorage:WaitForChild("DirectionsData")) :: ModuleScript
-const VisualData = require(ECSStorage:WaitForChild("VisualData")) :: ModuleScript
+-- The controller renders from the active Render ECSStorage populated by RendererCleaner.
+const ECSStorage = require(
+	ReplicatedStorage:WaitForChild("Shared")
+		:WaitForChild("Utilities")
+		:WaitForChild("Render")
+		:WaitForChild("ECSStorage")
+)
+const ECSData = ECSStorage.ECSData
+const PositionData = ECSStorage.PositionData
+const SizeData = ECSStorage.SizeData
+const DirectionsData = ECSStorage.DirectionsData
+const VisualData = ECSStorage.VisualData
 
 -- Configs --
 const WIDTH: number, HEIGHT: number = RenderConfigs.GetDimensions2D()
 const TOTAL_PIXELS = WIDTH * HEIGHT :: number
 const SUN_DIRECTION = SystemsConfigs.SunDirection :: Vector3
+const SUN_X: number, SUN_Y: number, SUN_Z: number = SUN_DIRECTION.X, SUN_DIRECTION.Y, SUN_DIRECTION.Z
 const AMBIENT_LIGHT = SystemsConfigs.AmbientLight :: number
+const DIFFUSE_LIGHT = 1 - AMBIENT_LIGHT :: number
 const ACTOR_COUNT = RenderConfigs.GetActorCount() :: number
 const WORKER_BUFFER_MULTIPLIER = SystemsConfigs.WorkerBufferMultiplier :: number
 const WORKER_BUFFER_CAPACITY = TOTAL_PIXELS * WORKER_BUFFER_MULTIPLIER :: number
-const RENDER_BUFFER_LAYOUT_SIZE = SystemsConfigs.RenderBufferLayoutSize :: number
+const RENDER_BUFFER_LAYOUT_SIZE = BufferHelper.RenderBufferLayoutSize :: number
 const MIN_TRIANGLE_AREA = SystemsConfigs.MinTriangleArea :: number
 const SCRIPTABLE_CAMERA_PARK_POSITION = SystemsConfigs.ScriptableCameraParkPosition :: Vector3
 const DEFAULT_CAMERA_VIEW = SystemsConfigs.DefaultCameraView :: string
@@ -91,12 +94,12 @@ local ClipBufferB = buffer.create(12 * 12) :: buffer
 
 local Renderer = {}
 
-local function ReadProjectedVertex(VertexIndex: number): Vector3
-	local Offset = (VertexIndex - 1) * 12 :: number
-	return Vector3.new(
-		buffer.readf32(ProjectedVertices, Offset),
-		buffer.readf32(ProjectedVertices, Offset + 4),
-		buffer.readf32(ProjectedVertices, Offset + 8)
+local function PackShadedColor(R: number, G: number, B: number, Illumination: number): number
+	return bit32.bor(
+		math.floor(R * Illumination),
+		bit32.lshift(math.floor(G * Illumination), 8),
+		bit32.lshift(math.floor(B * Illumination), 16),
+		0xFF000000
 	)
 end
 
@@ -190,6 +193,11 @@ function Renderer.DrawFrame()
 	const CamUp = CameraStore.GetCameraUp() :: Vector3
 	const CamLook = CameraStore.GetCameraLook() :: Vector3
 
+	const CamPosX: number, CamPosY: number, CamPosZ: number = CamPosition.X, CamPosition.Y, CamPosition.Z
+	const CamRightX: number, CamRightY: number, CamRightZ: number = CamRight.X, CamRight.Y, CamRight.Z
+	const CamUpX: number, CamUpY: number, CamUpZ: number = CamUp.X, CamUp.Y, CamUp.Z
+	const CamLookX: number, CamLookY: number, CamLookZ: number = CamLook.X, CamLook.Y, CamLook.Z
+
 	-- Configs
 	const CamFOV = CamTable.CameraFOV :: number
 	const FocalLength: number, GuardBandX: number, GuardBandY: number =
@@ -208,81 +216,97 @@ function Renderer.DrawFrame()
 		local ComponentOffset = (i - 1) * ECS_COMPONENT_STRIDE :: number
 		local DirectionOffset = (i - 1) * ECS_DIRECTION_STRIDE :: number
 
-		const TargetPosition = Vector3.new(
-			buffer.readf32(ECSPositionBuffer, ComponentOffset),
-			buffer.readf32(ECSPositionBuffer, ComponentOffset + 4),
-			buffer.readf32(ECSPositionBuffer, ComponentOffset + 8)
-		) :: Vector3
+		const PosX = buffer.readf32(ECSPositionBuffer, ComponentOffset) :: number
+		const PosY = buffer.readf32(ECSPositionBuffer, ComponentOffset + 4) :: number
+		const PosZ = buffer.readf32(ECSPositionBuffer, ComponentOffset + 8) :: number
 
-		const LookVector = Vector3.new(
-			buffer.readf32(ECSDirectionsBuffer, DirectionOffset),
-			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 4),
-			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 8)
-		) :: Vector3
-		const UpVector = Vector3.new(
-			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 12),
-			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 16),
-			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 20)
-		) :: Vector3
-		const RightVector = Vector3.new(
-			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 24),
-			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 28),
-			buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 32)
-		) :: Vector3
+		const LookX = buffer.readf32(ECSDirectionsBuffer, DirectionOffset) :: number
+		const LookY = buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 4) :: number
+		const LookZ = buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 8) :: number
 
-		const TargetSize = Vector3.new(
-			buffer.readf32(ECSSizeBuffer, ComponentOffset),
-			buffer.readf32(ECSSizeBuffer, ComponentOffset + 4),
-			buffer.readf32(ECSSizeBuffer, ComponentOffset + 8)
-		) :: Vector3
+		const UpX = buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 12) :: number
+		const UpY = buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 16) :: number
+		const UpZ = buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 20) :: number
 
-		const PartColorR = buffer.readu8(ECSVisualBuffer, ComponentOffset) :: number
-		const PartColorG = buffer.readu8(ECSVisualBuffer, ComponentOffset + 1) :: number
-		const PartColorB = buffer.readu8(ECSVisualBuffer, ComponentOffset + 2) :: number
+		const RightX = buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 24) :: number
+		const RightY = buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 28) :: number
+		const RightZ = buffer.readf32(ECSDirectionsBuffer, DirectionOffset + 32) :: number
+
+		const SizeX = buffer.readf32(ECSSizeBuffer, ComponentOffset) :: number
+		const SizeY = buffer.readf32(ECSSizeBuffer, ComponentOffset + 4) :: number
+		const SizeZ = buffer.readf32(ECSSizeBuffer, ComponentOffset + 8) :: number
 
 		-- 2.5 miliseconds part here:
 
 		-- Updates
 		if
 			not RenderMath.GetPartCameraVertices(
-				TargetPosition,
-				LookVector,
-				UpVector,
-				RightVector,
-				TargetSize,
+				PosX,
+				PosY,
+				PosZ,
+				LookX,
+				LookY,
+				LookZ,
+				UpX,
+				UpY,
+				UpZ,
+				RightX,
+				RightY,
+				RightZ,
+				SizeX,
+				SizeY,
+				SizeZ,
 				ScreenVertices,
-				CamPosition,
-				CamRight,
-				CamUp,
-				CamLook
+				CamPosX,
+				CamPosY,
+				CamPosZ,
+				CamRightX,
+				CamRightY,
+				CamRightZ,
+				CamUpX,
+				CamUpY,
+				CamUpZ,
+				CamLookX,
+				CamLookY,
+				CamLookZ
 			)
 		then
 			continue
 		end
 
-		const DotL = LookVector:Dot(SUN_DIRECTION) :: number
-		const DotU = UpVector:Dot(SUN_DIRECTION) :: number
-		const DotR = RightVector:Dot(SUN_DIRECTION) :: number
+		const PartColorR = buffer.readu8(ECSVisualBuffer, ComponentOffset) :: number
+		const PartColorG = buffer.readu8(ECSVisualBuffer, ComponentOffset + 1) :: number
+		const PartColorB = buffer.readu8(ECSVisualBuffer, ComponentOffset + 2) :: number
 
-		const IllumBack = AMBIENT_LIGHT + (1 - AMBIENT_LIGHT) * math.max(0, DotL) :: number
-		const IllumFront = AMBIENT_LIGHT + (1 - AMBIENT_LIGHT) * math.max(0, -DotL) :: number
-		const IllumBottom = AMBIENT_LIGHT + (1 - AMBIENT_LIGHT) * math.max(0, -DotU) :: number
-		const IllumTop = AMBIENT_LIGHT + (1 - AMBIENT_LIGHT) * math.max(0, DotU) :: number
-		const IllumLeft = AMBIENT_LIGHT + (1 - AMBIENT_LIGHT) * math.max(0, -DotR) :: number
-		const IllumRight = AMBIENT_LIGHT + (1 - AMBIENT_LIGHT) * math.max(0, DotR) :: number
+		const DotL = LookX * SUN_X + LookY * SUN_Y + LookZ * SUN_Z :: number
+		const DotU = UpX * SUN_X + UpY * SUN_Y + UpZ * SUN_Z :: number
+		const DotR = RightX * SUN_X + RightY * SUN_Y + RightZ * SUN_Z :: number
 
-		buffer.writef32(FaceIllumination, 0, IllumBack)
-		buffer.writef32(FaceIllumination, 4, IllumBack)
-		buffer.writef32(FaceIllumination, 8, IllumFront)
-		buffer.writef32(FaceIllumination, 12, IllumFront)
-		buffer.writef32(FaceIllumination, 16, IllumBottom)
-		buffer.writef32(FaceIllumination, 20, IllumBottom)
-		buffer.writef32(FaceIllumination, 24, IllumTop)
-		buffer.writef32(FaceIllumination, 28, IllumTop)
-		buffer.writef32(FaceIllumination, 32, IllumLeft)
-		buffer.writef32(FaceIllumination, 36, IllumLeft)
-		buffer.writef32(FaceIllumination, 40, IllumRight)
-		buffer.writef32(FaceIllumination, 44, IllumRight)
+		const PackedBack =
+			PackShadedColor(PartColorR, PartColorG, PartColorB, AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, DotL))
+		const PackedFront =
+			PackShadedColor(PartColorR, PartColorG, PartColorB, AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, -DotL))
+		const PackedBottom =
+			PackShadedColor(PartColorR, PartColorG, PartColorB, AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, -DotU))
+		const PackedTop =
+			PackShadedColor(PartColorR, PartColorG, PartColorB, AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, DotU))
+		const PackedLeft =
+			PackShadedColor(PartColorR, PartColorG, PartColorB, AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, -DotR))
+		const PackedRight =
+			PackShadedColor(PartColorR, PartColorG, PartColorB, AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, DotR))
+
+		buffer.writeu32(FaceIllumination, 0, PackedBack)
+		buffer.writeu32(FaceIllumination, 4, PackedBack)
+		buffer.writeu32(FaceIllumination, 8, PackedFront)
+		buffer.writeu32(FaceIllumination, 12, PackedFront)
+		buffer.writeu32(FaceIllumination, 16, PackedBottom)
+		buffer.writeu32(FaceIllumination, 20, PackedBottom)
+		buffer.writeu32(FaceIllumination, 24, PackedTop)
+		buffer.writeu32(FaceIllumination, 28, PackedTop)
+		buffer.writeu32(FaceIllumination, 32, PackedLeft)
+		buffer.writeu32(FaceIllumination, 36, PackedLeft)
+		buffer.writeu32(FaceIllumination, 40, PackedRight)
+		buffer.writeu32(FaceIllumination, 44, PackedRight)
 
 		-- 2.5 miliseconds part here:
 
@@ -298,11 +322,6 @@ function Renderer.DrawFrame()
 			MemoryOffset += 1
 			local V2TRI = buffer.readu8(PART_TRIANGLES, MemoryOffset) :: number
 			MemoryOffset += 1
-
-			local Illumination = buffer.readf32(FaceIllumination, (TriangleIndex - 1) * 4) :: number
-			local ShadedR = math.floor(PartColorR * Illumination) :: number
-			local ShadedG = math.floor(PartColorG * Illumination) :: number
-			local ShadedB = math.floor(PartColorB * Illumination) :: number
 
 			local ClippedVertexCount = RenderMath.ClipAndProjectTriangle(
 				ScreenVertices,
@@ -323,16 +342,23 @@ function Renderer.DrawFrame()
 				continue
 			end
 
-			const V0 = ReadProjectedVertex(1)
-			const X0: number, Y0: number = V0.X, V0.Y
+			const PackedColor = buffer.readu32(FaceIllumination, (TriangleIndex - 1) * 4) :: number
+			const X0 = buffer.readf32(ProjectedVertices, 0) :: number
+			const Y0 = buffer.readf32(ProjectedVertices, 4) :: number
+			const InvZ0 = buffer.readf32(ProjectedVertices, 8) :: number
 
 			for ClippedTriangleIndex = 2, ClippedVertexCount - 1 do
-				const V1 = ReadProjectedVertex(ClippedTriangleIndex)
-				const V2 = ReadProjectedVertex(ClippedTriangleIndex + 1)
+				const V1Offset = (ClippedTriangleIndex - 1) * 12 :: number
+				const V2Offset = V1Offset + 12 :: number
 
 				-- Variables
-				const X1: number, Y1: number = V1.X, V1.Y
-				const X2: number, Y2: number = V2.X, V2.Y
+				const X1 = buffer.readf32(ProjectedVertices, V1Offset) :: number
+				const Y1 = buffer.readf32(ProjectedVertices, V1Offset + 4) :: number
+				const InvZ1 = buffer.readf32(ProjectedVertices, V1Offset + 8) :: number
+
+				const X2 = buffer.readf32(ProjectedVertices, V2Offset) :: number
+				const Y2 = buffer.readf32(ProjectedVertices, V2Offset + 4) :: number
+				const InvZ2 = buffer.readf32(ProjectedVertices, V2Offset + 8) :: number
 
 				const MinX = math.max(0, math.min(X0, X1, X2)) :: number
 				const MaxX = math.min(WIDTH - 1, math.max(X0, X1, X2)) :: number
@@ -380,16 +406,21 @@ function Renderer.DrawFrame()
 				-- Apply changes and create a information buffer for workers
 				buffer.writef32(ScoreBuffer, SVOffset, SmallestValue + Result)
 				const RenderBuffer = BufferTable[SVIndex] :: buffer
+				const InvArea = 1 / Area :: number
 
 				local RenderResult = BufferHelper.CreateRenderBuffer(
 					RenderBuffer,
 					RBOffset,
-					V0,
-					V1,
-					V2,
-					ShadedR,
-					ShadedG,
-					ShadedB
+					X0,
+					Y0,
+					InvZ0 * InvArea,
+					X1,
+					Y1,
+					InvZ1 * InvArea,
+					X2,
+					Y2,
+					InvZ2 * InvArea,
+					PackedColor
 				) :: number
 
 				buffer.writeu32(OffsetBuffer, SVOffset, RenderResult)
@@ -402,11 +433,16 @@ function Renderer.DrawFrame()
 	-- Sends the information to all workers workers
 	for i, TargetActor: Actor in ipairs(WorkerActors) do
 		const RenderBuffer = BufferTable[i] :: buffer
+		const ByteCount = buffer.readu32(OffsetBuffer, (i - 1) * 4) :: number
+		const PayloadBuffer = buffer.create(ByteCount) :: buffer
+		if ByteCount > 0 then
+			buffer.copy(PayloadBuffer, 0, RenderBuffer, 0, ByteCount)
+		end
 
 		TargetActor:SendMessage(
 			"Execute Rendering",
-			RenderBuffer,
-			buffer.readu32(OffsetBuffer, (i - 1) * 4),
+			PayloadBuffer,
+			ByteCount,
 			CurrentFrame
 		)
 	end

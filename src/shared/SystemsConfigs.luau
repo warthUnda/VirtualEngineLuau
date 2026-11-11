@@ -25,8 +25,8 @@ SystemsConfigs.ActorCount = 3 :: number
 SystemsConfigs.WorkerBufferMultiplier = 32 :: number
 -- Per-pixel byte multiplier used to allocate each worker's triangle command buffer.
 
-SystemsConfigs.RenderBufferLayoutSize = 32 :: number
--- Byte stride of a single serialized triangle in the worker render buffer (three 8-byte vertices, three 2-byte color channels, 2 bytes of padding).
+SystemsConfigs.RenderBufferLayoutSize = 28 :: number
+-- Byte stride of a single serialized triangle in the worker render buffer (three 8-byte vertices and one 4-byte packed RGBA color).
 
 SystemsConfigs.ClearColorR = 15 :: number
 -- Red channel (0-255) of the background clear color filled into the pixel buffer each frame.
@@ -130,6 +130,15 @@ SystemsConfigs.ECSDirectionBufferSize = 300000 :: number
 
 SystemsConfigs.ECSMaxEntities = SystemsConfigs.ECSComponentBufferSize // SystemsConfigs.ECSComponentStride :: number
 -- Maximum number of entities that can be stored in the preallocated ECS component buffers.
+
+SystemsConfigs.ECSPropertiesStride = 4 :: number
+-- Byte stride per entity for the bitpacked u32 Properties ECS buffer (CanCollide, IsVisible, Anchored, HasDynamicId, DynamicId).
+
+SystemsConfigs.ECSPropertiesBufferSize = 40000 :: number
+-- Allocated byte capacity for each 4-byte-stride Properties ECS buffer.
+
+SystemsConfigs.DynamicObjectsMaxCount = 4095 :: number
+-- Maximum 12-bit ID capacity (bits 20-31 of the Properties u32 register) for the Dynamic OOP / Objects List.
 
 -- Physics --
 

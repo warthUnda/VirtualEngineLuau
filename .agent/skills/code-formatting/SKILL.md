@@ -198,14 +198,6 @@ if FrameId ~= CurrentFrame then -- ignore stale frames
 for i = 1, TOTAL_PIXELS do -- Overwrites the FinalZ and FinalPixel buffers
 ```
 
-### Performance notes
-Expensive regions are flagged with their measured cost:
-
-```lua
--- 2.5 miliseconds part here:
--- 1.49 miliseconds part here:
-```
-
 ### What NOT to comment
 Comments are short, technical, and only explain intent or performance. Obvious
 mechanics (a `buffer.readf32`, a simple `for`) are left uncommented.
@@ -233,3 +225,19 @@ mechanics (a `buffer.readf32`, a simple `for`) are left uncommented.
 - for every feature you code or system, create tests only if:
 - it looks like it would be needed
 - do not bloat tests for useless things like 1 + 1 = 2
+
+## local functions
+
+- inside a system, if there is a local function put it into a new file thats right next to the main file, it should be a .luau file
+
+- put the local functions in there, name the file Whatever then helper, math, functions or whatever helps it there
+
+## Math
+
+- for mathematical variables like W01 (for triangles in rendering as a example) use a clearer name
+- it can be bigger, and should have a descriptive name
+
+## for systems
+
+- use Core as a library, controller as executer, scene for objects etc
+- for getting a better idea, look into some systems to see how its done and copy the way we do it

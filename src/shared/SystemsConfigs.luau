@@ -208,12 +208,6 @@ SystemsConfigs.ObjectRestitution = 0.15 :: number
 SystemsConfigs.ObjectSleepSpeedThreshold = 0.08 :: number
 -- Velocity magnitude threshold in studs per second below which grounded dynamic objects settle to sleep.
 
-SystemsConfigs.PlayerQueueMaxCommands = 64 :: number
--- Maximum queued player movement commands per frame in PhysicsMovementQueue.
-
-SystemsConfigs.ObjectQueueMaxCommands = 1024 :: number
--- Maximum queued dynamic object force or impulse commands per frame in PhysicsMovementQueue.
-
 -- BVH --
 
 SystemsConfigs.BVHStackCapacity = 64 :: number

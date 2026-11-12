@@ -2,7 +2,6 @@
 --!optimize 2
 
 -- Services --
-const Players = game:GetService("Players") :: Players
 const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 const ServerScriptService = game:GetService("ServerScriptService") :: ServerScriptService
 
@@ -15,6 +14,7 @@ const VisualData = Storage.VisualData
 const SizeData = Storage.SizeData
 const DirectionsData = Storage.DirectionsData
 const ECSData = Storage.ECSData
+const PlayerFunctions = require(script.Parent.PlayerFunctions)
 const ViewCulling = require(
 	ReplicatedStorage:WaitForChild("Shared")
 		:WaitForChild("Utilities")
@@ -54,109 +54,9 @@ export type ECSTable = {
 	EntityECSCount: number,
 }
 
-type PlayerDeltaState = {
-	Character: Model?,
-	LastEntityCount: number,
-	VisibleFlags: buffer,
-	Positions: buffer,
-	Orientations: buffer,
-	Visuals: buffer,
-	Sizes: buffer,
-	Directions: buffer,
-}
-
--- Tables --
-local PlayerStates = {} :: { [Player]: PlayerDeltaState }
-
 local PlayerCuller = {}
 
-function PlayerCuller.RemovePlayerState(PlayerObject: Player)
-	PlayerStates[PlayerObject] = nil
-end
-
-Players.PlayerRemoving:Connect(PlayerCuller.RemovePlayerState)
-
-local function GetOrCreatePlayerState(PlayerObject: Player, Character: Model?, EntityCount: number): PlayerDeltaState
-	local State = PlayerStates[PlayerObject] :: PlayerDeltaState?
-	if not State then
-		const NewState: PlayerDeltaState = {
-			Character = Character,
-			LastEntityCount = EntityCount,
-			VisibleFlags = buffer.create(MAX_ENTITIES),
-			Positions = buffer.create(COMPONENT_BUFFER_SIZE),
-			Orientations = buffer.create(COMPONENT_BUFFER_SIZE),
-			Visuals = buffer.create(COMPONENT_BUFFER_SIZE),
-			Sizes = buffer.create(COMPONENT_BUFFER_SIZE),
-			Directions = buffer.create(DIRECTION_BUFFER_SIZE),
-		}
-		PlayerStates[PlayerObject] = NewState
-		return NewState
-	end
-
-	if State.Character ~= Character then
-		State.Character = Character
-		buffer.fill(State.VisibleFlags, 0, 0)
-	elseif EntityCount < State.LastEntityCount then
-		buffer.fill(State.VisibleFlags, EntityCount, 0, State.LastEntityCount - EntityCount)
-	end
-
-	State.LastEntityCount = EntityCount
-	return State
-end
-
-local function HasEntityChanged(
-	Offset: number,
-	DirectionOffset: number,
-	CachedPositions: buffer,
-	CachedOrientations: buffer,
-	CachedVisuals: buffer,
-	CachedSizes: buffer,
-	CachedDirections: buffer
-): boolean
-	if
-		buffer.readu32(PositionBuffer, Offset) ~= buffer.readu32(CachedPositions, Offset)
-		or buffer.readu32(PositionBuffer, Offset + 4) ~= buffer.readu32(CachedPositions, Offset + 4)
-		or buffer.readu32(PositionBuffer, Offset + 8) ~= buffer.readu32(CachedPositions, Offset + 8)
-	then
-		return true
-	end
-
-	if
-		buffer.readu32(OrientationBuffer, Offset) ~= buffer.readu32(CachedOrientations, Offset)
-		or buffer.readu32(OrientationBuffer, Offset + 4) ~= buffer.readu32(CachedOrientations, Offset + 4)
-		or buffer.readu32(OrientationBuffer, Offset + 8) ~= buffer.readu32(CachedOrientations, Offset + 8)
-	then
-		return true
-	end
-
-	if buffer.readu32(VisualBuffer, Offset) ~= buffer.readu32(CachedVisuals, Offset) then
-		return true
-	end
-
-	if
-		buffer.readu32(SizeBuffer, Offset) ~= buffer.readu32(CachedSizes, Offset)
-		or buffer.readu32(SizeBuffer, Offset + 4) ~= buffer.readu32(CachedSizes, Offset + 4)
-		or buffer.readu32(SizeBuffer, Offset + 8) ~= buffer.readu32(CachedSizes, Offset + 8)
-	then
-		return true
-	end
-
-	if
-		buffer.readu32(DirectionsBuffer, DirectionOffset) ~= buffer.readu32(CachedDirections, DirectionOffset)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 4) ~= buffer.readu32(CachedDirections, DirectionOffset + 4)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 8) ~= buffer.readu32(CachedDirections, DirectionOffset + 8)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 12) ~= buffer.readu32(CachedDirections, DirectionOffset + 12)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 16) ~= buffer.readu32(CachedDirections, DirectionOffset + 16)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 20) ~= buffer.readu32(CachedDirections, DirectionOffset + 20)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 24) ~= buffer.readu32(CachedDirections, DirectionOffset + 24)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 28) ~= buffer.readu32(CachedDirections, DirectionOffset + 28)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 32) ~= buffer.readu32(CachedDirections, DirectionOffset + 32)
-	then
-		return true
-	end
-
-	return false
-end
+PlayerCuller.RemovePlayerState = PlayerFunctions.RemovePlayerState
 
 -- ============================================================================
 -- 1. CULLING FUNCTIONS - CONE & DELTA CULLING FOR REPLICATION
@@ -171,7 +71,7 @@ function PlayerCuller.CullObjects(PlayerObject: Player): (buffer?, buffer?, buff
 	end
 
 	const EntityCount = math.min(ECSData.GetCounts().EntityECSCount, MAX_ENTITIES) :: number
-	const State = GetOrCreatePlayerState(PlayerObject, PlayerObject.Character, EntityCount)
+	const State = PlayerFunctions.GetOrCreatePlayerState(PlayerObject, PlayerObject.Character, EntityCount)
 
 	const VisibleFlags = State.VisibleFlags :: buffer
 	const CachedPositions = State.Positions :: buffer
@@ -200,7 +100,7 @@ function PlayerCuller.CullObjects(PlayerObject: Player): (buffer?, buffer?, buff
 
 		if
 			WasVisible == 1
-			and not HasEntityChanged(
+			and not PlayerFunctions.HasEntityChanged(
 				ReadOffset,
 				DirectionReadOffset,
 				CachedPositions,

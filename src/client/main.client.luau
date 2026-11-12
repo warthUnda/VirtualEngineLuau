@@ -14,21 +14,18 @@ end
 const Utilities = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities") :: Folder
 
 -- Modules --
-const PhysicsController = require(
-	Utilities:WaitForChild("Physics")
-		:WaitForChild("Controller")
-		:WaitForChild("PhysicsController")
-)
+const PhysicsController =
+	require(Utilities:WaitForChild("Physics"):WaitForChild("Controller"):WaitForChild("PhysicsController"))
 
-const Renderer = require(
-	Utilities:WaitForChild("Render")
-		:WaitForChild("Controller")
-		:WaitForChild("RenderController")
-)
+const Renderer = require(Utilities:WaitForChild("Render"):WaitForChild("Controller"):WaitForChild("RenderController"))
 
 -- ============================================================================
 -- 1. INITIALIZATION
 -- ============================================================================
+
+const RenderBootstrap = require(script.Parent.RenderBootstrap)
+
+RenderBootstrap.CreateSetup()
 
 PhysicsController.InitializePhysics()
 Renderer.Init()

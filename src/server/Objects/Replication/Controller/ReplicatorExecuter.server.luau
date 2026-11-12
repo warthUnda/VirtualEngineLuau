@@ -25,7 +25,7 @@ if not ReplicateEvent then
 end
 
 -- Modules --
-const PlayerCuller = require(ServerScriptService.Server.Objects.Replication.PlayerCuller)
+const PlayerCuller = require(ServerScriptService.Server.Objects.Replication.Core.PlayerCuller)
 
 -- ============================================================================
 -- 1. REPLICATION LOOP - BROADCASTS VISIBLE SNAPSHOTS TO CLIENTS

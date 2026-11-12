@@ -10,7 +10,6 @@ const PhysicsFolder = ReplicatedStorage:WaitForChild("Shared")
 	:WaitForChild("Physics") :: Folder
 
 -- Modules --
-const PhysicsMovementQueue = require(PhysicsFolder:WaitForChild("PhysicsMovementQueue"))
 const PhysicsController = require(PhysicsFolder:WaitForChild("Controller"):WaitForChild("PhysicsController"))
 
 local PhysicsLibrary = {}
@@ -39,7 +38,7 @@ function PhysicsLibrary.AddObjectMovement(
 	Magnitude: number,
 	IsImpulse: boolean?
 )
-	PhysicsMovementQueue.AddObjectMovement(EntityId, DirX, DirY, DirZ, Magnitude, IsImpulse)
+	PhysicsController.AddObjectMovement(EntityId, DirX, DirY, DirZ, Magnitude, IsImpulse)
 end
 
 function PhysicsLibrary.ApplyObjectForce(EntityId: number, Direction: Vector3, Magnitude: number)
@@ -49,8 +48,7 @@ function PhysicsLibrary.ApplyObjectForce(EntityId: number, Direction: Vector3, M
 	end
 
 	const InvLen = 1 / DirLen :: number
-	PhysicsController.SetEntityDynamic(EntityId, true)
-	PhysicsMovementQueue.AddObjectMovement(
+	PhysicsController.AddObjectMovement(
 		EntityId,
 		Direction.X * InvLen,
 		Direction.Y * InvLen,
@@ -67,8 +65,7 @@ function PhysicsLibrary.ApplyObjectImpulse(EntityId: number, Direction: Vector3,
 	end
 
 	const InvLen = 1 / DirLen :: number
-	PhysicsController.SetEntityDynamic(EntityId, true)
-	PhysicsMovementQueue.AddObjectMovement(
+	PhysicsController.AddObjectMovement(
 		EntityId,
 		Direction.X * InvLen,
 		Direction.Y * InvLen,
@@ -90,20 +87,20 @@ function PhysicsLibrary.AddPlayerMovement(
 	Jump: boolean?,
 	IsImpulse: boolean?
 )
-	PhysicsMovementQueue.AddMovement(DirX, DirY, DirZ, Scale, Jump, IsImpulse)
+	PhysicsController.AddPlayerMovement(DirX, DirY, DirZ, Scale, Jump, IsImpulse)
 end
 
 function PhysicsLibrary.MovePlayer(Direction: Vector3, Scale: number?, Jump: boolean?)
 	const DirLen = Direction.Magnitude :: number
 	if DirLen <= 1e-6 then
 		if Jump then
-			PhysicsMovementQueue.AddMovement(0, 0, 0, 0, true, false)
+			PhysicsController.AddPlayerMovement(0, 0, 0, 0, true, false)
 		end
 		return
 	end
 
 	const InvLen = 1 / DirLen :: number
-	PhysicsMovementQueue.AddMovement(
+	PhysicsController.AddPlayerMovement(
 		Direction.X * InvLen,
 		Direction.Y * InvLen,
 		Direction.Z * InvLen,
@@ -120,7 +117,7 @@ function PhysicsLibrary.ApplyPlayerImpulse(Direction: Vector3, Magnitude: number
 	end
 
 	const InvLen = 1 / DirLen :: number
-	PhysicsMovementQueue.AddMovement(
+	PhysicsController.AddPlayerMovement(
 		Direction.X * InvLen,
 		Direction.Y * InvLen,
 		Direction.Z * InvLen,
@@ -131,7 +128,7 @@ function PhysicsLibrary.ApplyPlayerImpulse(Direction: Vector3, Magnitude: number
 end
 
 function PhysicsLibrary.JumpPlayer()
-	PhysicsMovementQueue.AddMovement(0, 0, 0, 0, true, false)
+	PhysicsController.AddPlayerMovement(0, 0, 0, 0, true, false)
 end
 
 function PhysicsLibrary.GetPlayerPosition(): Vector3

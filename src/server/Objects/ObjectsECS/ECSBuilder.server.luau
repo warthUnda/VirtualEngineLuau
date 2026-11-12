@@ -97,8 +97,9 @@ Workspace.DescendantAdded:Connect(function(Descendant: Instance)
 end)
 
 task.wait(5)
+-- deletes everything after we used the
 for _, Descendant: Instance in ipairs(Workspace:GetDescendants()) do
-	if Descendant:IsA("BasePart") and not Descendant:IsA("terra") then
+	if Descendant:IsA("BasePart") and not Descendant:IsA("Terrain") then
 		Descendant:Destroy()
 	end
 end

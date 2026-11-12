@@ -6,6 +6,7 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStor
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const BVH = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities"):WaitForChild("BVH"))
 
 -- Configs --
 const GRAVITY = SystemsConfigs.PhysicsGravity :: number
@@ -29,8 +30,13 @@ const OBJECT_RESTITUTION = SystemsConfigs.ObjectRestitution :: number
 
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+const MAX_ENTITIES = SystemsConfigs.ECSMaxEntities :: number
+const BROADPHASE_PADDING = 2.0 :: number
 
-local PhysicsLibrary = {}
+-- Tables --
+const BroadphaseCandidates = table.create(MAX_ENTITIES, 0) :: { number }
+
+local PhysicsMath = {}
 
 -- ============================================================================
 -- 1. VELOCITY & INERTIA INTEGRATION
@@ -104,7 +110,7 @@ local function IntegrateAirborneDrive(
 	return NextVx + WishX * AirAdd, NextVz + WishZ * AirAdd
 end
 
-function PhysicsLibrary.StepPlayerVelocity(
+function PhysicsMath.StepPlayerVelocity(
 	Vx: number,
 	Vy: number,
 	Vz: number,
@@ -136,7 +142,7 @@ function PhysicsLibrary.StepPlayerVelocity(
 	return NextVx, NextVy, NextVz, NextGrounded
 end
 
-function PhysicsLibrary.StepObjectVelocity(
+function PhysicsMath.StepObjectVelocity(
 	Vx: number,
 	Vy: number,
 	Vz: number,
@@ -170,7 +176,7 @@ end
 -- 2. COLLISION DETECTION & IMPULSE RESOLUTION (BOX VS ECS OBB)
 -- ============================================================================
 
-function PhysicsLibrary.TestBoxVsOBB(
+function PhysicsMath.TestBoxVsOBB(
 	BodyX: number,
 	BodyY: number,
 	BodyZ: number,
@@ -375,7 +381,7 @@ local function ResolveDynamicPairContact(
 	return NextBodyX, NextBodyY, NextBodyZ, Vx + Nx * BodyImpulse, Vy + Ny * BodyImpulse, Vz + Nz * BodyImpulse
 end
 
-function PhysicsLibrary.ResolveBodyWorldCollisions(
+function PhysicsMath.ResolveBodyWorldCollisions(
 	BodyX: number,
 	BodyY: number,
 	BodyZ: number,
@@ -404,15 +410,25 @@ function PhysicsLibrary.ResolveBodyWorldCollisions(
 	local NextVz = Vz :: number
 	local Grounded = false :: boolean
 
-	for i = 1, EntityCount do
-		if i == IgnoreEntityId then
+	const QueryPadX = BodyHx + BROADPHASE_PADDING :: number
+	const QueryPadY = BodyHy + BROADPHASE_PADDING :: number
+	const QueryPadZ = BodyHz + BROADPHASE_PADDING :: number
+	const CandidateCount = BVH.QueryAABB(
+		Vector3.new(NextX - QueryPadX, NextY - QueryPadY, NextZ - QueryPadZ),
+		Vector3.new(NextX + QueryPadX, NextY + QueryPadY, NextZ + QueryPadZ),
+		BroadphaseCandidates
+	) :: number
+
+	for CandidateIdx = 1, CandidateCount do
+		const i = BroadphaseCandidates[CandidateIdx] :: number
+		if i == IgnoreEntityId or i < 1 or i > EntityCount then
 			continue
 		end
 
 		const CompOffset = (i - 1) * COMPONENT_STRIDE :: number
 		const DirOffset = (i - 1) * DIRECTION_STRIDE :: number
 
-		const Hit: boolean, Nx: number, Ny: number, Nz: number, Penetration: number = PhysicsLibrary.TestBoxVsOBB(
+		const Hit: boolean, Nx: number, Ny: number, Nz: number, Penetration: number = PhysicsMath.TestBoxVsOBB(
 			NextX,
 			NextY,
 			NextZ,
@@ -473,4 +489,4 @@ function PhysicsLibrary.ResolveBodyWorldCollisions(
 	return NextX, NextY, NextZ, NextVx, NextVy, NextVz, Grounded
 end
 
-return PhysicsLibrary
+return PhysicsMath

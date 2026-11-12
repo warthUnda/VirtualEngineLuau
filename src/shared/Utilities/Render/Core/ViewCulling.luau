@@ -7,7 +7,7 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStor
 const RunService = game:GetService("RunService") :: RunService
 
 -- Modules --
-const RenderConfigs = require(ReplicatedStorage.Shared.Utilities.Render.RenderConfigs)
+const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const CameraStore = if RunService:IsClient()
 	then require(
 		ReplicatedStorage:WaitForChild("Shared")
@@ -19,18 +19,21 @@ const CameraStore = if RunService:IsClient()
 	else nil
 
 -- Configs --
-const PADDING_AMOUNT = 1.0 :: number -- Increase to make culling looser (more padding), decrease to make it tighter
+const PADDING_AMOUNT = SystemsConfigs.CullingPaddingAmount :: number
 
-const WIDTH: number, HEIGHT: number = RenderConfigs.GetDimensions2D()
+const WIDTH = SystemsConfigs.RenderWidth :: number
+const HEIGHT = SystemsConfigs.RenderHeight :: number
 const ASPECT_RATIO = WIDTH / HEIGHT :: number
-const BASE_TAN_Y = 0.70 * PADDING_AMOUNT :: number
+const BASE_TAN_Y = SystemsConfigs.CullingBaseTanY * PADDING_AMOUNT :: number
 const BASE_TAN_X = BASE_TAN_Y * ASPECT_RATIO :: number
 
-const BASE_BACK_PADDING = 10 * PADDING_AMOUNT :: number
-const RADIUS_PADDING_FACTOR = 0.35 * PADDING_AMOUNT :: number
-const NEAR_CLIP = 0.4 :: number
-const FAR_CLIP = 200 :: number
-const COMPONENT_STRIDE = 12 :: number
+const BASE_BACK_PADDING = SystemsConfigs.CullingBaseBackPadding * PADDING_AMOUNT :: number
+const RADIUS_PADDING_FACTOR = SystemsConfigs.CullingRadiusPaddingFactor * PADDING_AMOUNT :: number
+const NEAR_CLIP = SystemsConfigs.CullingNearClip :: number
+const FAR_CLIP = SystemsConfigs.CullingFarClip :: number
+const OCCLUDER_INSCRIBED_FACTOR = SystemsConfigs.OccluderInscribedRadiusFactor :: number
+const OCCLUDER_MIN_PROJ_RADIUS = SystemsConfigs.OccluderMinProjectedRadius :: number
+const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 
 -- Tables --
 local ViewOriginX = 0 :: number
@@ -171,8 +174,8 @@ function ViewCulling.IsEntityCulled(EntityIndex: number, Positions: buffer, Size
 	end
 
 	-- Register large close entities as the foreground occluder for subsequent checks
-	const InscribedRadius = math.min(SizeX, SizeY, SizeZ) * 0.35 * InvZ :: number
-	if InscribedRadius > 0.25 and (not HasOccluder or ForwardZ < OccFarZ) then
+	const InscribedRadius = math.min(SizeX, SizeY, SizeZ) * OCCLUDER_INSCRIBED_FACTOR * InvZ :: number
+	if InscribedRadius > OCCLUDER_MIN_PROJ_RADIUS and (not HasOccluder or ForwardZ < OccFarZ) then
 		HasOccluder = true
 		OccFarZ = ForwardZ + Radius
 		OccMinX = ProjX - InscribedRadius

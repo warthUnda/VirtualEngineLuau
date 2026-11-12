@@ -14,10 +14,10 @@ const WorkerFolder = RenderRoot:WaitForChild("Worker") :: Folder
 const SceneFolder = RenderRoot:WaitForChild("Scene") :: Folder
 
 -- Modules --
-const RenderConfigs = require(RenderRoot:WaitForChild("RenderConfigs"))
+const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 
 -- Configs --
-const ACTOR_COUNT = RenderConfigs.GetActorCount() :: number
+const ACTOR_COUNT = SystemsConfigs.ActorCount :: number
 
 local RenderBootstrap = {}
 

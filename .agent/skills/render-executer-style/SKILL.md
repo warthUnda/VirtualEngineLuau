@@ -227,3 +227,9 @@ mechanics (a `buffer.readf32`, a simple `for`) are left uncommented.
 - Cache it at the top of the script in whatever script the systemConfigs config is asking for as to not hurt performance
 
 - do not add types to module script references via require()
+
+## Tests
+
+- for every feature you code or system, create tests only if:
+- it looks like it would be needed
+- do not bloat tests for useless things like 1 + 1 = 2

@@ -16,14 +16,10 @@ const PhysicsFolder = UtilitiesFolder:WaitForChild("Physics") :: Folder
 -- Modules --
 const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 const PhysicsMovementQueue = require(PhysicsFolder:WaitForChild("PhysicsMovementQueue"))
-const PhysicsLibrary = require(PhysicsFolder:WaitForChild("Core"):WaitForChild("PhysicsLIbrary"))
+const PhysicsMath = require(PhysicsFolder:WaitForChild("Core"):WaitForChild("PhysicsMath"))
 
 const CameraStore = if IS_CLIENT
-	then require(
-		UtilitiesFolder:WaitForChild("Render")
-			:WaitForChild("Camera")
-			:WaitForChild("CameraStore")
-	)
+	then require(UtilitiesFolder:WaitForChild("Render"):WaitForChild("Camera"):WaitForChild("CameraStore"))
 	else nil
 
 -- Configs --
@@ -74,6 +70,11 @@ local ECSDataModule: any = nil
 local ECSPositionBuffer: buffer? = nil
 local ECSSizeBuffer: buffer? = nil
 local ECSDirectionsBuffer: buffer? = nil
+local ECSPropertiesBuffer: buffer? = nil
+
+const FLAG_CAN_COLLIDE = bit32.lshift(1, 1) :: number
+const FLAG_IS_VISIBLE = bit32.lshift(1, 2) :: number
+const FLAG_ANCHORED = bit32.lshift(1, 3) :: number
 
 const DynamicFlags = buffer.create(MAX_ENTITIES) :: buffer -- 0 = static, 1 = awake dynamic, 2 = sleeping dynamic
 const ObjectGroundedFlags = buffer.create(MAX_ENTITIES) :: buffer
@@ -107,9 +108,7 @@ local function ResolveObjectStorage(): Instance?
 		end
 	end
 
-	return PlayerScripts:WaitForChild("Client")
-		:WaitForChild("Objects")
-		:WaitForChild("ObjectStorage")
+	return PlayerScripts:WaitForChild("Client"):WaitForChild("Objects"):WaitForChild("ObjectStorage")
 end
 
 local function ConfigureCharacterInstance(Character: Model)
@@ -124,7 +123,9 @@ local function ConfigureCharacterInstance(Character: Model)
 		end
 	end
 
-	const RootPart = (Character:FindFirstChild("HumanoidRootPart") or Character:WaitForChild("HumanoidRootPart", 5)) :: BasePart?
+	const RootPart = (
+		Character:FindFirstChild("HumanoidRootPart") or Character:WaitForChild("HumanoidRootPart", 5)
+	) :: BasePart?
 	if not RootPart then
 		return
 	end
@@ -215,6 +216,14 @@ local function EnsureDynamicEntityMass(EntityId: number, SizeBuffer: buffer, Cus
 
 	const InvMass = 1 / (ResolvedMass :: number) :: number
 	buffer.writef32(ObjectInvMassBuffer, MassOffset, InvMass)
+
+	if ECSPropertiesBuffer then
+		const PropReg = buffer.readu32(ECSPropertiesBuffer, MassOffset) :: number
+		const UpdatedReg =
+			bit32.bor(bit32.band(PropReg, bit32.bnot(FLAG_ANCHORED)), FLAG_CAN_COLLIDE, FLAG_IS_VISIBLE) :: number
+		buffer.writeu32(ECSPropertiesBuffer, MassOffset, UpdatedReg)
+	end
+
 	return InvMass
 end
 
@@ -302,9 +311,21 @@ local function ConsumeObjectQueue(EntityCount: number, SizeBuffer: buffer)
 
 		if IsImpulse then
 			const DeltaV = Magnitude * InvMass :: number
-			buffer.writef32(ObjectVelocityBuffer, CompOffset, buffer.readf32(ObjectVelocityBuffer, CompOffset) + DirX * DeltaV)
-			buffer.writef32(ObjectVelocityBuffer, CompOffset + 4, buffer.readf32(ObjectVelocityBuffer, CompOffset + 4) + DirY * DeltaV)
-			buffer.writef32(ObjectVelocityBuffer, CompOffset + 8, buffer.readf32(ObjectVelocityBuffer, CompOffset + 8) + DirZ * DeltaV)
+			buffer.writef32(
+				ObjectVelocityBuffer,
+				CompOffset,
+				buffer.readf32(ObjectVelocityBuffer, CompOffset) + DirX * DeltaV
+			)
+			buffer.writef32(
+				ObjectVelocityBuffer,
+				CompOffset + 4,
+				buffer.readf32(ObjectVelocityBuffer, CompOffset + 4) + DirY * DeltaV
+			)
+			buffer.writef32(
+				ObjectVelocityBuffer,
+				CompOffset + 8,
+				buffer.readf32(ObjectVelocityBuffer, CompOffset + 8) + DirZ * DeltaV
+			)
 			continue
 		end
 
@@ -345,7 +366,7 @@ local function StepSingleDynamicObject(
 	const Fy = buffer.readf32(ObjectForceBuffer, CompOffset + 4) :: number
 	const Fz = buffer.readf32(ObjectForceBuffer, CompOffset + 8) :: number
 
-	local Vx: number, Vy: number, Vz: number = PhysicsLibrary.StepObjectVelocity(
+	local Vx: number, Vy: number, Vz: number = PhysicsMath.StepObjectVelocity(
 		buffer.readf32(ObjectVelocityBuffer, CompOffset),
 		buffer.readf32(ObjectVelocityBuffer, CompOffset + 4),
 		buffer.readf32(ObjectVelocityBuffer, CompOffset + 8),
@@ -366,7 +387,7 @@ local function StepSingleDynamicObject(
 	const Hz = buffer.readf32(SizeBuffer, CompOffset + 8) * 0.5 :: number
 
 	local Grounded: boolean
-	PosX, PosY, PosZ, Vx, Vy, Vz, Grounded = PhysicsLibrary.ResolveBodyWorldCollisions(
+	PosX, PosY, PosZ, Vx, Vy, Vz, Grounded = PhysicsMath.ResolveBodyWorldCollisions(
 		PosX,
 		PosY,
 		PosZ,
@@ -434,6 +455,7 @@ function PhysicsController.InitializePhysics()
 		ECSPositionBuffer = ObjectStorage.PositionData.GetData()
 		ECSSizeBuffer = ObjectStorage.SizeData.GetData()
 		ECSDirectionsBuffer = ObjectStorage.DirectionsData.GetData()
+		ECSPropertiesBuffer = ObjectStorage.PropertiesData.GetData()
 	end
 
 	Initialized = true
@@ -482,7 +504,7 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 
 	for _ = 1, SUBSTEPS do
 		const WasGrounded = PlayerGrounded :: boolean
-		PlayerVelX, PlayerVelY, PlayerVelZ, PlayerGrounded = PhysicsLibrary.StepPlayerVelocity(
+		PlayerVelX, PlayerVelY, PlayerVelZ, PlayerGrounded = PhysicsMath.StepPlayerVelocity(
 			PlayerVelX,
 			PlayerVelY,
 			PlayerVelZ,
@@ -503,7 +525,7 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 		PlayerPosZ += PlayerVelZ * StepDt
 
 		PlayerPosX, PlayerPosY, PlayerPosZ, PlayerVelX, PlayerVelY, PlayerVelZ, PlayerGrounded =
-			PhysicsLibrary.ResolveBodyWorldCollisions(
+			PhysicsMath.ResolveBodyWorldCollisions(
 				PlayerPosX,
 				PlayerPosY,
 				PlayerPosZ,
@@ -556,6 +578,14 @@ function PhysicsController.SetEntityDynamic(EntityId: number, IsDynamic: boolean
 	if not IsDynamic then
 		buffer.writeu8(DynamicFlags, FlagIndex, 0)
 		buffer.writef32(ObjectInvMassBuffer, FlagIndex * 4, 0)
+		if ECSPropertiesBuffer then
+			const PropReg = buffer.readu32(ECSPropertiesBuffer, FlagIndex * 4) :: number
+			buffer.writeu32(
+				ECSPropertiesBuffer,
+				FlagIndex * 4,
+				bit32.bor(PropReg, FLAG_CAN_COLLIDE, FLAG_IS_VISIBLE, FLAG_ANCHORED)
+			)
+		end
 		return
 	end
 

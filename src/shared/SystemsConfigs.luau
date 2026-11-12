@@ -10,10 +10,10 @@ local SystemsConfigs = {}
 
 -- Client --
 
-SystemsConfigs.RenderWidth = 150 :: number
+SystemsConfigs.RenderWidth = 600 :: number
 -- Horizontal pixel resolution of the renderer's EditableImage and frame buffers.
 
-SystemsConfigs.RenderHeight = 150 :: number
+SystemsConfigs.RenderHeight = 600 :: number
 -- Vertical pixel resolution of the renderer's EditableImage and frame buffers.
 
 SystemsConfigs.RenderTotalPixels = SystemsConfigs.RenderWidth * SystemsConfigs.RenderHeight :: number
@@ -22,7 +22,7 @@ SystemsConfigs.RenderTotalPixels = SystemsConfigs.RenderWidth * SystemsConfigs.R
 SystemsConfigs.ActorCount = 3 :: number
 -- Number of parallel worker Actors spawned to rasterize triangles across frames.
 
-SystemsConfigs.WorkerBufferMultiplier = 32 :: number
+SystemsConfigs.WorkerBufferMultiplier = 2 :: number
 -- Per-pixel byte multiplier used to allocate each worker's triangle command buffer.
 
 SystemsConfigs.RenderBufferLayoutSize = 28 :: number
@@ -43,17 +43,17 @@ SystemsConfigs.SunDirection = Vector3.new(-0.4, 0.85, -0.35).Unit :: Vector3
 SystemsConfigs.AmbientLight = 0.3 :: number
 -- Minimum ambient illumination factor (0-1) applied to all rendered part faces.
 
-SystemsConfigs.MinTriangleArea = 0.1 :: number
--- Minimum screen-space signed edge area required for a projected triangle to be queued for rasterization.
+SystemsConfigs.MinTriangleArea = 0.5 :: number
+-- Minimum screen-space signed edge area (2x pixel area; >= 0.5 keeps all visible 1-pixel triangles while culling degenerate slivers).
 
 SystemsConfigs.RenderNearClip = 0.4 :: number
 -- Near clipping plane distance in studs for camera-space part rejection and polygon clipping.
 
-SystemsConfigs.RenderFarClip = 1000 :: number
--- Far clipping plane distance in studs for camera-space part rejection and polygon clipping.
+SystemsConfigs.RenderFarClip = 200 :: number
+-- Far clipping plane distance in studs for camera-space part rejection and polygon clipping (matched to CullingFarClip).
 
-SystemsConfigs.GuardBandScale = 2 :: number
--- Scale multiplier applied to the screen-space frustum guard-band clipping planes.
+SystemsConfigs.GuardBandScale = 1.25 :: number
+-- 25% screen-space frustum guard-band scale so edge-straddling quads use fast-path projection without boundary pop-in.
 
 SystemsConfigs.ScriptableCameraParkPosition = Vector3.new(0, -50000, 0) :: Vector3
 -- World position where the client's Workspace Camera is initially parked when switched to Scriptable.
@@ -92,29 +92,29 @@ SystemsConfigs.CoreEventsFolderName = "CoreEvents" :: string
 SystemsConfigs.ReplicateRemoteEventName = "ReplicateEvent" :: string
 -- Name of the RemoteEvent used to replicate ECS component delta buffers from server to client.
 
-SystemsConfigs.CullingPaddingAmount = 1.0 :: number
--- Master frustum culling padding multiplier; increase to loosen culling bounds or decrease to tighten them.
+SystemsConfigs.CullingPaddingAmount = 1.03 :: number
+-- Master frustum culling padding multiplier; 1.03 adds a ~1.2-degree angular buffer over the 70-degree FOV to absorb 1-frame task.wait() rotation lag.
 
-SystemsConfigs.CullingBaseTanY = 0.70 :: number
--- Base vertical frustum half-angle tangent at the reference 70-degree FOV before CullingPaddingAmount is applied.
+SystemsConfigs.CullingBaseTanY = 0.7002 :: number
+-- Exact vertical frustum half-angle tangent at the reference 70-degree FOV (tan(35 deg) = 0.7002).
 
-SystemsConfigs.CullingBaseBackPadding = 10 :: number
--- Base distance in studs that the frustum origin is shifted backward behind the observer before CullingPaddingAmount is applied.
+SystemsConfigs.CullingBaseBackPadding = 3.5 :: number
+-- 3.5-stud backward origin shift so adjacent parts do not pop in when turning while still rejecting geometry behind the camera.
 
 SystemsConfigs.CullingRadiusPaddingFactor = 0.35 :: number
--- Bounding-radius approximation factor multiplied by (SizeX + SizeY + SizeZ) and CullingPaddingAmount during frustum checks.
+-- Secant-corrected L1 cube circumradius factor ((sqrt(3)/6) * sec(35 deg) = 0.2887 * 1.2208 = 0.3524) so rotated corners never pop at frustum planes.
 
 SystemsConfigs.CullingNearClip = 0.4 :: number
--- Near clipping plane distance in studs for view frustum culling.
+-- Near clipping plane distance in studs for view frustum culling (matched to RenderNearClip).
 
 SystemsConfigs.CullingFarClip = 200 :: number
--- Far clipping plane distance in studs for view frustum culling.
+-- Far clipping plane distance in studs for view frustum culling (matched to RenderFarClip).
 
-SystemsConfigs.OccluderInscribedRadiusFactor = 0.35 :: number
--- Scale factor applied to an entity's smallest axis to estimate its inscribed screen-space occluder radius.
+SystemsConfigs.OccluderInscribedRadiusFactor = 0.32 :: number
+-- Conservative scale factor applied to an entity's smallest axis so foreground occluders never overestimate back-face coverage.
 
-SystemsConfigs.OccluderMinProjectedRadius = 0.25 :: number
--- Minimum projected screen-space radius required for a foreground entity to become the active dominant occluder.
+SystemsConfigs.OccluderMinProjectedRadius = 0.26 :: number
+-- Minimum projected screen-space radius required for a foreground entity to become the active dominant occluder without false edge pop-in.
 
 SystemsConfigs.ECSComponentStride = 12 :: number
 -- Byte stride per entity for 3-float ECS component buffers (Position, Orientation, Visual, and Size: 3 x f32 = 12 bytes).
@@ -213,5 +213,13 @@ SystemsConfigs.PlayerQueueMaxCommands = 64 :: number
 
 SystemsConfigs.ObjectQueueMaxCommands = 1024 :: number
 -- Maximum queued dynamic object force or impulse commands per frame in PhysicsMovementQueue.
+
+-- BVH --
+
+SystemsConfigs.BVHStackCapacity = 64 :: number
+-- Maximum depth of the iterative BVH traversal stack for raycasting and spatial queries.
+
+SystemsConfigs.BVHMaxLeafEntities = 1 :: number
+-- Maximum number of entities grouped into a single BVH leaf node during tree construction.
 
 return SystemsConfigs

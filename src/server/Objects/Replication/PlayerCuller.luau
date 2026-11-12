@@ -7,6 +7,7 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStor
 const ServerScriptService = game:GetService("ServerScriptService") :: ServerScriptService
 
 -- Modules --
+const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const Storage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
 const PositionData = Storage.PositionData
 const OrientationData = Storage.OrientationData
@@ -23,8 +24,8 @@ const ViewCulling = require(
 )
 
 -- Configs --
-const COMPONENT_STRIDE = 12 :: number -- 3 x f32 per entity (position, orientation, visual, size)
-const DIRECTION_STRIDE = 36 :: number -- look + up + right, 3 x f32 each
+const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
+const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
 
 -- Buffers
 const PositionBuffer = PositionData.GetData() :: buffer
@@ -67,7 +68,13 @@ type PlayerDeltaState = {
 -- Tables --
 local PlayerStates = {} :: { [Player]: PlayerDeltaState }
 
-local PlayerEye = {}
+local PlayerCuller = {}
+
+function PlayerCuller.RemovePlayerState(PlayerObject: Player)
+	PlayerStates[PlayerObject] = nil
+end
+
+Players.PlayerRemoving:Connect(PlayerCuller.RemovePlayerState)
 
 local function GetOrCreatePlayerState(PlayerObject: Player, Character: Model?, EntityCount: number): PlayerDeltaState
 	local State = PlayerStates[PlayerObject] :: PlayerDeltaState?
@@ -151,17 +158,13 @@ local function HasEntityChanged(
 	return false
 end
 
-Players.PlayerRemoving:Connect(function(PlayerObject: Player)
-	PlayerStates[PlayerObject] = nil
-end)
-
 -- ============================================================================
 -- 1. CULLING FUNCTIONS - CONE & DELTA CULLING FOR REPLICATION
 -- ============================================================================
 
 -- Returns only the newly visible or changed entities inside the player's view cone,
 -- packed with the ECS strides, along with the delta counts.
-function PlayerEye.CullObjects(PlayerObject: Player): (buffer?, buffer?, buffer?, buffer?, buffer?, ECSTable?)
+function PlayerCuller.CullObjects(PlayerObject: Player): (buffer?, buffer?, buffer?, buffer?, buffer?, ECSTable?)
 	const Head = ViewCulling.GetObserverHead(PlayerObject) :: BasePart?
 	if not Head then
 		return nil, nil, nil, nil, nil, nil
@@ -259,4 +262,4 @@ function PlayerEye.CullObjects(PlayerObject: Player): (buffer?, buffer?, buffer?
 	return DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, Counts
 end
 
-return PlayerEye
+return PlayerCuller

@@ -1,0 +1,111 @@
+--!strict
+--!native
+--!optimize 2
+
+return function()
+	const SpecEnv = getfenv() :: {
+		describe: (string, () -> ()) -> (),
+		it: (string, () -> ()) -> (),
+		expect: (any) -> any,
+	}
+	const describe = SpecEnv.describe
+	const it = SpecEnv.it
+	const expect = SpecEnv.expect
+
+	const ReplicatedStorage = game:GetService("ReplicatedStorage")
+	const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
+
+	const MathModule = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("MathModule"))
+	const BufferHelper = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("BufferHelper"))
+
+	describe("1. 2D Edge Functions & Geometric Tests", function()
+		it("should return correct signed determinant for 2D edge queries", function()
+			-- Directed edge from (0, 0) to (10, 0)
+			const Above = MathModule.EdgeFunction(0, 0, 10, 0, 5, 5)
+			const Below = MathModule.EdgeFunction(0, 0, 10, 0, 5, -5)
+			const OnEdge = MathModule.EdgeFunction(0, 0, 10, 0, 5, 0)
+
+			expect(Above < 0).to.equal(true)
+			expect(Below > 0).to.equal(true)
+			expect(OnEdge).to.equal(0)
+		end)
+	end)
+
+	describe("2. Camera-Space Frustum Guardband & Projection", function()
+		it("should reject vertices behind the near plane or beyond far plane", function()
+			const BehindNear = vector.create(0, 0, 0.05) -- < 0.1 near clip
+			const InFront = vector.create(0, 0, 10)
+			const BeyondFar = vector.create(0, 0, 50000)
+
+			expect(MathModule.IsVertexInside(BehindNear, 1.5, 1.5)).to.equal(false)
+			expect(MathModule.IsVertexInside(InFront, 1.5, 1.5)).to.equal(true)
+			expect(MathModule.IsVertexInside(BeyondFar, 1.5, 1.5)).to.equal(false)
+		end)
+
+		it("should project 3D camera-space vertices onto integer 2D screen coordinates", function()
+			const OutBuffer = buffer.create(16)
+			const Vertex = vector.create(2, 4, 10)
+			const FocalLength = 100 :: number
+			const HalfW = 160 :: number
+			const HalfH = 120 :: number
+
+			MathModule.ProjectVertex(OutBuffer, 0, Vertex, FocalLength, HalfW, HalfH)
+
+			const ProjX = buffer.readf32(OutBuffer, 0)
+			const ProjY = buffer.readf32(OutBuffer, 4)
+			const InvZ = buffer.readf32(OutBuffer, 8)
+
+			-- Expected: X = floor(2/10 * 100 + 160) = 180
+			-- Expected: Y = floor(-4/10 * 100 + 120) = 80
+			expect(ProjX).to.equal(180)
+			expect(ProjY).to.equal(80)
+			expect(InvZ).to.be.near(0.1, 1e-4)
+		end)
+	end)
+
+	describe("3. Sutherland-Hodgman Polygon Clipping", function()
+		it("should clip a triangle straddling a plane and produce a quad", function()
+			const InputBuf = buffer.create(3 * 12)
+			const OutputBuf = buffer.create(6 * 12)
+
+			-- Triangle vertices: (0, 0, 2), (2, 0, -2), (-2, 0, -2) straddling plane Z = 0
+			BufferHelper.WriteVec3(InputBuf, 0, vector.create(0, 0, 2))
+			BufferHelper.WriteVec3(InputBuf, 12, vector.create(2, 0, -2))
+			BufferHelper.WriteVec3(InputBuf, 24, vector.create(-2, 0, -2))
+
+			-- Plane normal (0, 0, 1) offset 0 (keeps vertices with Z >= 0)
+			const ClippedCount = MathModule.ClipPolygon(InputBuf, 3, OutputBuf, vector.create(0, 0, 1), 0)
+			-- Triangle crossing plane creates 3 vertices inside half-space
+			expect(ClippedCount).to.equal(3)
+		end)
+	end)
+
+	describe("4. Buffer Helper Operations & SIMD Serialization", function()
+		it("should round-trip vector3 values accurately through buffers", function()
+			const TestBuf = buffer.create(12)
+			const Original = vector.create(123.45, -678.9, 0.001)
+
+			BufferHelper.WriteVec3(TestBuf, 0, Original)
+			const ReadBack = BufferHelper.ReadVec3(TestBuf, 0)
+
+			expect(math.abs(ReadBack.x - Original.x) < 1e-3).to.equal(true)
+			expect(math.abs(ReadBack.y - Original.y) < 1e-3).to.equal(true)
+			expect(math.abs(ReadBack.z - Original.z) < 1e-3).to.equal(true)
+		end)
+
+		it("should clear pixel and Z buffers cleanly", function()
+			const PixBuf = buffer.create(16)
+			const ZBuf = buffer.create(16)
+
+			buffer.fill(PixBuf, 0, 255, 16)
+			buffer.fill(ZBuf, 0, 255, 16)
+
+			BufferHelper.ClearBuffers(4, PixBuf, ZBuf)
+
+			-- Z buffer must be all zeroes
+			for i = 0, 12, 4 do
+				expect(buffer.readf32(ZBuf, i)).to.equal(0)
+			end
+		end)
+	end)
+end

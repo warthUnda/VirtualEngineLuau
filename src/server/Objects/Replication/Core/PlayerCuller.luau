@@ -1,9 +1,10 @@
+--!strict
 --!native
 --!optimize 2
 
 -- Services --
-const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
-const ServerScriptService = game:GetService("ServerScriptService") :: ServerScriptService
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const ServerScriptService = game:GetService("ServerScriptService")
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
@@ -62,8 +63,11 @@ PlayerCuller.RemovePlayerState = PlayerFunctions.RemovePlayerState
 -- 1. CULLING FUNCTIONS - CONE & DELTA CULLING FOR REPLICATION
 -- ============================================================================
 
--- Returns only the newly visible or changed entities inside the player's view cone,
--- packed with the ECS strides, along with the delta counts.
+--[=[
+	Culls world entities against a player's dynamic view cone, delta-checks mutations, and returns packed replication buffers.
+	@param PlayerObject Player -- Target replicating player.
+	@return (buffer?, buffer?, buffer?, buffer?, buffer?, ECSTable?) -- DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, Counts.
+]=]
 function PlayerCuller.CullObjects(PlayerObject: Player): (buffer?, buffer?, buffer?, buffer?, buffer?, ECSTable?)
 	const Head = ViewCulling.GetObserverHead(PlayerObject) :: BasePart?
 	if not Head then
@@ -87,7 +91,7 @@ function PlayerCuller.CullObjects(PlayerObject: Player): (buffer?, buffer?, buff
 
 	for i = 1, EntityCount do
 		const FlagOffset = i - 1 :: number
-		const IsStatic = buffer.readu8(StaticBuffer, FlagOffset) == 1 :: boolean
+		const IsStatic = (buffer.readu8(StaticBuffer, FlagOffset) == 1) :: boolean
 
 		if not IsStatic and ViewCulling.IsEntityCulled(i, PositionBuffer, SizeBuffer) then
 			buffer.writeu8(VisibleFlags, FlagOffset, 0)

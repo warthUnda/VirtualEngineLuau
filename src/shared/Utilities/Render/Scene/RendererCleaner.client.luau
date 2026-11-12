@@ -1,9 +1,10 @@
+--!strict
 --!native
 --!optimize 2
 
 -- Services --
-const Players = game:GetService("Players") :: Players
-const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+const Players = game:GetService("Players")
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- Static References --
 const LocalPlayer = Players.LocalPlayer :: Player
@@ -15,7 +16,9 @@ const ObjectStorageModule = (SelfActor and SelfActor:WaitForChild("ObjectStorage
 		:WaitForChild("ObjectStorage")
 
 -- Modules --
-const ObjectStorage = require(ObjectStorageModule)
+const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
+const ObjectStorage = (require :: any)(ObjectStorageModule) :: ECSMain.ECSStorage
 const ObjectECSData = ObjectStorage.ECSData
 const ObjectPositionData = ObjectStorage.PositionData
 const ObjectOrientationData = ObjectStorage.OrientationData
@@ -44,9 +47,18 @@ const ViewCulling = require(
 		:WaitForChild("ViewCulling")
 )
 
+const CleanerHelper = require(
+	ReplicatedStorage:WaitForChild("Shared")
+		:WaitForChild("Utilities")
+		:WaitForChild("Render")
+		:WaitForChild("Scene")
+		:WaitForChild("CleanerHelper")
+)
+
 -- Configs --
-const COMPONENT_STRIDE = 12 :: number
-const DIRECTION_STRIDE = 36 :: number
+const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
+const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+const CLEANER_TICK_INTERVAL = SystemsConfigs.CleanerTickInterval :: number
 
 -- Buffers
 const ObjectPositions = ObjectPositionData.GetData() :: buffer
@@ -67,21 +79,6 @@ const MAX_ENTITIES = buffer.len(ObjectPositions) // COMPONENT_STRIDE :: number
 const RenderSlotByObjectId = buffer.create((MAX_ENTITIES + 1) * 4) :: buffer
 const ObjectIdByRenderSlot = buffer.create((MAX_ENTITIES + 1) * 4) :: buffer
 
-local function RemoveRenderEntity(ObjectId: number, RenderSlot: number)
-	const LastRenderSlot = RenderCounts.EntityECSCount :: number
-	const LastObjectId = buffer.readu32(ObjectIdByRenderSlot, LastRenderSlot * 4) :: number
-
-	RenderECSData.DeleteEntity(RenderSlot)
-
-	if RenderSlot ~= LastRenderSlot and LastObjectId > 0 then
-		buffer.writeu32(RenderSlotByObjectId, LastObjectId * 4, RenderSlot)
-		buffer.writeu32(ObjectIdByRenderSlot, RenderSlot * 4, LastObjectId)
-	end
-
-	buffer.writeu32(RenderSlotByObjectId, ObjectId * 4, 0)
-	buffer.writeu32(ObjectIdByRenderSlot, LastRenderSlot * 4, 0)
-end
-
 -- ============================================================================
 -- 1. CLEANER LOOP - POPULATES & CULLS RENDER ECS STORAGE FROM OBJECT STORAGE
 -- ============================================================================
@@ -99,7 +96,14 @@ while true do
 
 			if ViewCulling.IsEntityCulled(i, ObjectPositions, ObjectSizes) then
 				if RenderSlot > 0 then
-					RemoveRenderEntity(i, RenderSlot)
+					CleanerHelper.RemoveRenderEntity(
+						RenderECSData,
+						RenderCounts,
+						RenderSlotByObjectId,
+						ObjectIdByRenderSlot,
+						i,
+						RenderSlot
+					)
 				end
 				continue
 			end
@@ -123,5 +127,5 @@ while true do
 		end
 	end
 
-	task.wait()
+	task.wait(CLEANER_TICK_INTERVAL)
 end

@@ -1,17 +1,16 @@
+--!strict
 --!native
 --!optimize 2
 
 -- Services --
-const Players = game:GetService("Players") :: Players
-const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+const Players = game:GetService("Players")
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- Static References --
-const RenderRoot = ReplicatedStorage:WaitForChild("Shared")
-	:WaitForChild("Utilities")
-	:WaitForChild("Render") :: Folder
+const RenderRoot = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities"):WaitForChild("Render")
 
-const WorkerFolder = RenderRoot:WaitForChild("Worker") :: Folder
-const SceneFolder = RenderRoot:WaitForChild("Scene") :: Folder
+const WorkerFolder = RenderRoot:WaitForChild("Worker")
+const SceneFolder = RenderRoot:WaitForChild("Scene")
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
@@ -25,6 +24,10 @@ local RenderBootstrap = {}
 -- 1. CREATE WORKER - CONTROLLER SETUP
 -- ============================================================================
 
+--[=[                                                                                                                         
+        Bootstraps the multi-threaded rendering environment by instantiating worker actors,                                          
+        cloning isolated ECS storage copies, replication receivers, and the main controller script.                                  
+    ]=]
 function RenderBootstrap.CreateSetup()
 	const PlayerScripts = Players.LocalPlayer:WaitForChild("PlayerScripts") :: PlayerScripts
 	const ClientFolder = PlayerScripts:WaitForChild("Client") :: Folder
@@ -41,7 +44,7 @@ function RenderBootstrap.CreateSetup()
 		NewWorkerActor.Parent = WorkerActorFolder
 		NewWorkerActor.Name = "ParallelSetup" .. i
 
-		const NewRenderTemplate = WorkerFolder:WaitForChild("ParallelWorker"):Clone() :: Script -- Executes the hard math in parallel
+		const NewRenderTemplate = WorkerFolder:WaitForChild("ParallelWorker"):Clone() :: Script
 		NewRenderTemplate.Name = "ParallelRender" .. i
 		NewRenderTemplate.Parent = NewWorkerActor
 	end
@@ -51,9 +54,6 @@ function RenderBootstrap.CreateSetup()
 	ControllerActor.Name = "Controller"
 	ControllerActor.Parent = PlayerScripts
 
-	-- Every Actor runs in its own Luau VM and gets its own copy of each ModuleScript it requires,
-	-- so the ECS storage has to be cloned into the controller Actor. The ReplicationReceiver is
-	-- cloned next to it so it fills the exact buffers this Actor renders from.
 	const ControllerStorage = ClientObjects:WaitForChild("ObjectStorage"):Clone()
 	ControllerStorage.Parent = ControllerActor
 

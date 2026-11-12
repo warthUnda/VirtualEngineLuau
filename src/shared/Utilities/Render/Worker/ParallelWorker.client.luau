@@ -1,9 +1,10 @@
+--!strict
 --!native
 --!optimize 2
 
 -- Services --
-const Players = game:GetService("Players") :: Players
-const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+const Players = game:GetService("Players")
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- Static References --
 const ControllerActor = Players.LocalPlayer:WaitForChild("PlayerScripts"):WaitForChild("Controller") :: Actor

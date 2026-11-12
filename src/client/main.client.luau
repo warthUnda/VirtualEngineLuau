@@ -1,9 +1,10 @@
+--!strict
 --!native
 --!optimize 2
 
 -- Services --
-const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
-const RunService = game:GetService("RunService") :: RunService
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const RunService = game:GetService("RunService")
 
 -- Static References --
 const SelfActor = script:GetActor() :: Actor?
@@ -11,7 +12,7 @@ if not SelfActor then
 	return
 end
 
-const Utilities = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities") :: Folder
+const Utilities = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities")
 
 -- Modules --
 const PhysicsController =
@@ -22,10 +23,6 @@ const Renderer = require(Utilities:WaitForChild("Render"):WaitForChild("Controll
 -- ============================================================================
 -- 1. INITIALIZATION
 -- ============================================================================
-
-const RenderBootstrap = require(script.Parent.RenderBootstrap)
-
-RenderBootstrap.CreateSetup()
 
 PhysicsController.InitializePhysics()
 Renderer.Init()

@@ -1,8 +1,9 @@
+--!strict
 --!native
 --!optimize 2
 
 -- Services --
-const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
@@ -115,6 +116,15 @@ local ECSMain = {}
 -- 1. COMPONENT LAYOUT WRITERS & BITPACKED PROPERTIES HELPERS
 -- ============================================================================
 
+--[=[
+	Writes 3D Vector3 float components (X, Y, Z) into a component buffer.
+	@param TargetBuffer buffer -- Target ECS component buffer.
+	@param MemoryOffset number -- Byte offset in buffer.
+	@param X number -- Vector component X.
+	@param Y number -- Vector component Y.
+	@param Z number -- Vector component Z.
+	@return number -- Next component byte offset.
+]=]
 function ECSMain.CreateVector3Layout(
 	TargetBuffer: buffer,
 	MemoryOffset: number,
@@ -129,6 +139,15 @@ function ECSMain.CreateVector3Layout(
 	return MemoryOffset + COMPONENT_STRIDE
 end
 
+--[=[
+	Writes 8-bit RGB color channels into a component buffer.
+	@param TargetBuffer buffer -- Target visual component buffer.
+	@param MemoryOffset number -- Byte offset in buffer.
+	@param R number -- Red color channel (0-255).
+	@param G number -- Green color channel (0-255).
+	@param B number -- Blue color channel (0-255).
+	@return number -- Next component byte offset.
+]=]
 function ECSMain.CreateVisualLayout(
 	TargetBuffer: buffer,
 	MemoryOffset: number,
@@ -143,6 +162,21 @@ function ECSMain.CreateVisualLayout(
 	return MemoryOffset + COMPONENT_STRIDE
 end
 
+--[=[
+	Writes orientation direction unit vectors (Look, Up, Right) into a direction buffer.
+	@param TargetBuffer buffer -- Target directions buffer.
+	@param MemoryOffset number -- Byte offset in buffer.
+	@param LookX number -- LookVector X.
+	@param LookY number -- LookVector Y.
+	@param LookZ number -- LookVector Z.
+	@param UpX number -- UpVector X.
+	@param UpY number -- UpVector Y.
+	@param UpZ number -- UpVector Z.
+	@param RightX number -- RightVector X.
+	@param RightY number -- RightVector Y.
+	@param RightZ number -- RightVector Z.
+	@return number -- Next direction byte offset.
+]=]
 function ECSMain.CreateDirectionsLayout(
 	TargetBuffer: buffer,
 	MemoryOffset: number,
@@ -171,6 +205,14 @@ function ECSMain.CreateDirectionsLayout(
 	return MemoryOffset + DIRECTION_STRIDE
 end
 
+--[=[
+	Packs boolean flags and dynamic object ID into a single 32-bit property register.
+	@param CanCollide boolean? -- Collision enabled flag.
+	@param IsVisible boolean? -- Visibility flag.
+	@param Anchored boolean? -- Anchored physics state flag.
+	@param DynamicId number? -- Bound dynamic OOP object ID.
+	@return number -- Packed 32-bit register.
+]=]
 function ECSMain.PackProperties(
 	CanCollide: boolean?,
 	IsVisible: boolean?,
@@ -195,6 +237,16 @@ function ECSMain.PackProperties(
 	)
 end
 
+--[=[
+	Packs and writes an entity's 32-bit property register into the properties buffer.
+	@param TargetBuffer buffer -- Target properties buffer.
+	@param MemoryOffset number -- Byte offset in buffer.
+	@param CanCollide boolean? -- Collision enabled flag.
+	@param IsVisible boolean? -- Visibility flag.
+	@param Anchored boolean? -- Anchored physics state flag.
+	@param DynamicId number? -- Bound dynamic OOP object ID.
+	@return number -- Next properties byte offset.
+]=]
 function ECSMain.CreatePropertiesLayout(
 	TargetBuffer: buffer,
 	MemoryOffset: number,
@@ -209,22 +261,47 @@ function ECSMain.CreatePropertiesLayout(
 	return MemoryOffset + PROPERTIES_STRIDE
 end
 
+--[=[
+	Checks whether the CanCollide bit is set in a 32-bit property register.
+	@param Register number -- 32-bit property register.
+	@return boolean -- True if collidable.
+]=]
 function ECSMain.CanEntityCollide(Register: number): boolean
 	return bit32.btest(Register, FLAG_CAN_COLLIDE)
 end
 
+--[=[
+	Checks whether the IsVisible bit is set in a 32-bit property register.
+	@param Register number -- 32-bit property register.
+	@return boolean -- True if visible.
+]=]
 function ECSMain.IsEntityVisible(Register: number): boolean
 	return bit32.btest(Register, FLAG_IS_VISIBLE)
 end
 
+--[=[
+	Checks whether the Anchored bit is set in a 32-bit property register.
+	@param Register number -- 32-bit property register.
+	@return boolean -- True if anchored.
+]=]
 function ECSMain.IsEntityAnchored(Register: number): boolean
 	return bit32.btest(Register, FLAG_ANCHORED)
 end
 
+--[=[
+	Checks whether an entity has a bound dynamic OOP object ID in its register.
+	@param Register number -- 32-bit property register.
+	@return boolean -- True if a dynamic ID is present.
+]=]
 function ECSMain.HasEntityDynamicId(Register: number): boolean
 	return bit32.btest(Register, FLAG_HAS_DYNAMIC_ID)
 end
 
+--[=[
+	Extracts the bound dynamic OOP object ID from a 32-bit property register.
+	@param Register number -- 32-bit property register.
+	@return number -- Extracted dynamic ID (or 0 if none).
+]=]
 function ECSMain.GetEntityDynamicId(Register: number): number
 	if not bit32.btest(Register, FLAG_HAS_DYNAMIC_ID) then
 		return 0
@@ -233,6 +310,12 @@ function ECSMain.GetEntityDynamicId(Register: number): number
 	return bit32.rshift(Register, DYNAMIC_ID_SHIFT)
 end
 
+--[=[
+	Updates an entity's dynamic OOP ID in-place inside the properties buffer.
+	@param PropertiesBuffer buffer -- Properties buffer.
+	@param EntityId number -- Target entity ID.
+	@param DynamicId number -- New dynamic OOP object ID (0 to clear).
+]=]
 function ECSMain.SetEntityDynamicId(PropertiesBuffer: buffer, EntityId: number, DynamicId: number)
 	const Offset = (EntityId - 1) * PROPERTIES_STRIDE :: number
 	const CurrentRegister = buffer.readu32(PropertiesBuffer, Offset) :: number
@@ -252,6 +335,13 @@ end
 -- 2. ENTITY REGISTRATION & LIFECYCLE FUNCTIONS
 -- ============================================================================
 
+--[=[
+	Registers a new entity slot across the synchronized ECS count table.
+	@param Counts ECSTable -- Table tracking active component counts.
+	@param StaticBuffer buffer? -- Optional static entity marker buffer.
+	@param IsStatic boolean? -- True if entity is unmoving static geometry.
+	@return number -- New unique EntityId.
+]=]
 function ECSMain.RegisterEntity(Counts: ECSTable, StaticBuffer: buffer?, IsStatic: boolean?): number
 	const NextCount = Counts.EntityECSCount + 1 :: number
 
@@ -270,6 +360,11 @@ function ECSMain.RegisterEntity(Counts: ECSTable, StaticBuffer: buffer?, IsStati
 	return NextCount
 end
 
+--[=[
+	Directly resets all component count fields in the ECS table.
+	@param Counts ECSTable -- Table tracking active component counts.
+	@param EntityCount number -- Desired entity count.
+]=]
 function ECSMain.SetEntityCount(Counts: ECSTable, EntityCount: number)
 	Counts.EntityECSCount = EntityCount
 	Counts.OrientationECSCount = EntityCount
@@ -280,6 +375,18 @@ function ECSMain.SetEntityCount(Counts: ECSTable, EntityCount: number)
 	Counts.PropertiesECSCount = EntityCount
 end
 
+--[=[
+	Deletes an entity using O(1) swap-and-pop compaction to keep buffers contiguous.
+	@param EntityId number -- Entity ID to remove.
+	@param Counts ECSTable -- Component count table.
+	@param PositionBuffer buffer -- World position buffer.
+	@param OrientationBuffer buffer -- Orientation vector buffer.
+	@param VisualBuffer buffer -- Visual color buffer.
+	@param SizeBuffer buffer -- Part bounding size buffer.
+	@param DirectionsBuffer buffer -- Basis unit vectors buffer.
+	@param StaticBuffer buffer? -- Optional static marker buffer.
+	@param PropertiesBuffer buffer? -- Optional bitpacked properties buffer.
+]=]
 function ECSMain.DeleteEntity(
 	EntityId: number,
 	Counts: ECSTable,
@@ -342,6 +449,10 @@ end
 -- 3. COMPONENT & UNIFIED STORAGE FACTORIES
 -- ============================================================================
 
+--[=[
+	Creates an isolated Vector3 component storage buffer and accessor interface.
+	@return Vector3Component -- Initialized Vector3 component interface.
+]=]
 function ECSMain.CreateVector3Component(): Vector3Component
 	const ComponentBuffer = buffer.create(COMPONENT_BUFFER_SIZE) :: buffer
 	local Component = {}
@@ -357,6 +468,10 @@ function ECSMain.CreateVector3Component(): Vector3Component
 	return Component
 end
 
+--[=[
+	Creates an isolated Visual RGB component storage buffer and accessor interface.
+	@return VisualComponent -- Initialized Visual component interface.
+]=]
 function ECSMain.CreateVisualComponent(): VisualComponent
 	const VisualBuffer = buffer.create(COMPONENT_BUFFER_SIZE) :: buffer
 	local Component = {}
@@ -372,6 +487,10 @@ function ECSMain.CreateVisualComponent(): VisualComponent
 	return Component
 end
 
+--[=[
+	Creates an isolated basis directions component buffer and accessor interface.
+	@return DirectionsComponent -- Initialized directions component interface.
+]=]
 function ECSMain.CreateDirectionsComponent(): DirectionsComponent
 	const DirectionsBuffer = buffer.create(DIRECTION_BUFFER_SIZE) :: buffer
 	local Component = {}
@@ -410,6 +529,16 @@ function ECSMain.CreateDirectionsComponent(): DirectionsComponent
 	return Component
 end
 
+--[=[
+	Creates or writes into a bitpacked properties component buffer.
+	@param TargetBuffer buffer? -- Optional target buffer (if writing directly).
+	@param MemoryOffset number? -- Optional byte offset (if writing directly).
+	@param CanCollide boolean? -- Collision flag.
+	@param IsVisible boolean? -- Visibility flag.
+	@param Anchored boolean? -- Anchored flag.
+	@param DynamicId number? -- Dynamic OOP ID.
+	@return any -- Returns component table if creating, or next offset if writing.
+]=]
 function ECSMain.CreatePropertiesComponent(
 	TargetBuffer: buffer?,
 	MemoryOffset: number?,
@@ -442,6 +571,11 @@ function ECSMain.CreatePropertiesComponent(
 	return PropertiesComponent
 end
 
+--[=[
+	Creates a dynamic OOP objects table linked to entity property registers.
+	@param PropertiesBuffer buffer -- The entity properties buffer to link IDs into.
+	@return DynamicObjectsComponent -- Initialized dynamic objects registry.
+]=]
 function ECSMain.CreateDynamicObjectsComponent(PropertiesBuffer: buffer): DynamicObjectsComponent
 	local ObjectsTable = {} :: { [number]: any }
 	local FreeIds = {} :: { number }
@@ -458,7 +592,7 @@ function ECSMain.CreateDynamicObjectsComponent(PropertiesBuffer: buffer): Dynami
 
 	function DynamicObjectsList.AddObject(ObjectInstance: any, EntityId: number?): number
 		local DynamicId = 0 :: number
-		const FreeCount = #FreeIds :: number
+		const FreeCount = (#FreeIds) :: number
 
 		if FreeCount > 0 then
 			DynamicId = FreeIds[FreeCount]
@@ -558,6 +692,11 @@ function ECSMain.CreateDynamicObjectsComponent(PropertiesBuffer: buffer): Dynami
 	return DynamicObjectsList
 end
 
+--[=[
+	Constructs a complete, unified ECS storage container with all component buffers.
+	@param IncludeStaticBuffer boolean? -- Whether to allocate a static geometry marker buffer.
+	@return ECSStorage -- Fully initialized ECS storage structure.
+]=]
 function ECSMain.CreateStorage(IncludeStaticBuffer: boolean?): ECSStorage
 	const PositionData = ECSMain.CreateVector3Component()
 	const OrientationData = ECSMain.CreateVector3Component()

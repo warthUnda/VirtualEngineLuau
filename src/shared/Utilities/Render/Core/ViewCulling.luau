@@ -1,10 +1,11 @@
+--!strict
 --!native
 --!optimize 2
 
 -- Services --
-const Players = game:GetService("Players") :: Players
-const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
-const RunService = game:GetService("RunService") :: RunService
+const Players = game:GetService("Players")
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const RunService = game:GetService("RunService")
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
@@ -68,6 +69,11 @@ local ViewCulling = {}
 -- 1. CULLING FUNCTIONS - FRUSTUM & DOMINANT OCCLUDER
 -- ============================================================================
 
+--[=[
+	Resolves the observer player's character Head BasePart.
+	@param TargetPlayer Player? -- Target player instance (defaults to LocalPlayer).
+	@return BasePart? -- Observer Head instance (or nil).
+]=]
 function ViewCulling.GetObserverHead(TargetPlayer: Player?): BasePart?
 	const ResolvedPlayer = TargetPlayer or Players.LocalPlayer :: Player?
 	if not ResolvedPlayer then
@@ -87,8 +93,11 @@ function ViewCulling.GetObserverHead(TargetPlayer: Player?): BasePart?
 	return nil
 end
 
--- Pulls the frustum origin backward behind the camera based on Head-to-Camera distance.
--- This naturally pads both the immediate surroundings and the frustum cone without trig.
+--[=[
+	Pulls the frustum origin backward behind the camera based on Head-to-Camera distance.
+	This naturally pads both the immediate surroundings and the frustum cone without trig.
+	@param Head BasePart -- Observer Head instance providing base position and orientation.
+]=]
 function ViewCulling.UpdateDynamicView(Head: BasePart)
 	const HeadPos = Head.Position :: Vector3
 	local Origin = HeadPos
@@ -124,7 +133,13 @@ function ViewCulling.UpdateDynamicView(Head: BasePart)
 	HasOccluder = false
 end
 
--- O(1) Frustum + Dominant Occluder check per entity (no sqrt, no nested loop).
+--[=[
+	Evaluates whether an entity is outside the view frustum or occluded by a dominant occluder.
+	@param EntityIndex number -- 1-based ECS entity index.
+	@param Positions buffer -- Positions buffer.
+	@param Sizes buffer -- Sizes buffer.
+	@return boolean -- True if the entity is culled (not visible).
+]=]
 function ViewCulling.IsEntityCulled(EntityIndex: number, Positions: buffer, Sizes: buffer): boolean
 	const Offset = (EntityIndex - 1) * COMPONENT_STRIDE :: number
 

@@ -1,3 +1,4 @@
+--!strict
 --!native
 --!optimize 2
 
@@ -8,12 +9,18 @@ local SystemsConfigs = {}
 -- Each config should have a SystemsConfigs.Whatever = whatever type
 -- Make sure to type them and to in the next line give documentation as to what it does
 
+-- Im thinking about making the virtual engine open source for those that are curious
+-- For the renderer ive showed you, it can handle 400 x 400 comfortably while having alot of stress on my intel core 3U
+-- if there is no such stress it can easily go 600 x 600
+
+-- i will soon add OOP to my ECS storage here, it will just use a numerical pointer for that to reference its parent OOP object
+
 -- Client --
 
-SystemsConfigs.RenderWidth = 600 :: number
+SystemsConfigs.RenderWidth = 300 :: number
 -- Horizontal pixel resolution of the renderer's EditableImage and frame buffers.
 
-SystemsConfigs.RenderHeight = 600 :: number
+SystemsConfigs.RenderHeight = 300 :: number
 -- Vertical pixel resolution of the renderer's EditableImage and frame buffers.
 
 SystemsConfigs.RenderTotalPixels = SystemsConfigs.RenderWidth * SystemsConfigs.RenderHeight :: number
@@ -83,6 +90,9 @@ SystemsConfigs.ReplicationTickInterval = 0 :: number
 
 SystemsConfigs.StaticObjectsFolderName = "Static" :: string
 -- Name of the Workspace folder whose descendant BaseParts are flagged as static entities in the server ECS.
+
+SystemsConfigs.WorkspaceCleanupDelay = 5 :: number
+-- Delay in seconds after server startup before original Workspace BaseParts are destroyed once registered in the ECS.
 
 -- Shared --
 
@@ -169,7 +179,7 @@ SystemsConfigs.PlayerHalfExtents = Vector3.new(1.0, 2.5, 1.0) :: Vector3
 SystemsConfigs.PlayerMoveForce = 4400.0 :: number
 -- Horizontal driving force in Newtons applied to accelerate the player on grounded surfaces.
 
-SystemsConfigs.PlayerMaxGroundSpeed = 18.0 :: number
+SystemsConfigs.PlayerMaxGroundSpeed = 60 :: number
 -- Target maximum horizontal ground speed in studs per second.
 
 SystemsConfigs.PlayerGroundFriction = 10.0 :: number
@@ -208,6 +218,12 @@ SystemsConfigs.ObjectRestitution = 0.15 :: number
 SystemsConfigs.ObjectSleepSpeedThreshold = 0.08 :: number
 -- Velocity magnitude threshold in studs per second below which grounded dynamic objects settle to sleep.
 
+SystemsConfigs.PhysicsBroadphasePadding = 2.0 :: number
+-- World-space AABB padding in studs around a moving body when querying the BVH for collision candidates.
+
+SystemsConfigs.PlayerMaxWishScale = 2.5 :: number
+-- Maximum movement speed multiplier allowed when combining directional player movement inputs.
+
 -- BVH --
 
 SystemsConfigs.BVHStackCapacity = 64 :: number
@@ -215,5 +231,8 @@ SystemsConfigs.BVHStackCapacity = 64 :: number
 
 SystemsConfigs.BVHMaxLeafEntities = 1 :: number
 -- Maximum number of entities grouped into a single BVH leaf node during tree construction.
+
+SystemsConfigs.BVHMutationScanBudget = 256 :: number
+-- Number of static entities scanned per query to detect silent buffer mutations without full-array scans.
 
 return SystemsConfigs

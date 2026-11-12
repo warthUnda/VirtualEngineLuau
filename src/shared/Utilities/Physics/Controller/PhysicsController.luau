@@ -1,25 +1,22 @@
+--!strict
 --!native
 --!optimize 2
 
 -- Services --
-const Players = game:GetService("Players") :: Players
-const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
-const RunService = game:GetService("RunService") :: RunService
-const UserInputService = game:GetService("UserInputService") :: UserInputService
+const Players = game:GetService("Players")
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const RunService = game:GetService("RunService")
 
 -- Static References --
 const IS_CLIENT = RunService:IsClient() :: boolean
-const SharedFolder = ReplicatedStorage:WaitForChild("Shared") :: Folder
-const UtilitiesFolder = SharedFolder:WaitForChild("Utilities") :: Folder
-const PhysicsFolder = UtilitiesFolder:WaitForChild("Physics") :: Folder
+const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
+const UtilitiesFolder = SharedFolder:WaitForChild("Utilities")
+const PhysicsFolder = UtilitiesFolder:WaitForChild("Physics")
 
 -- Modules --
 const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 const PhysicsMath = require(PhysicsFolder:WaitForChild("Core"):WaitForChild("PhysicsMath"))
-
-const CameraStore = if IS_CLIENT
-	then require(UtilitiesFolder:WaitForChild("Render"):WaitForChild("Camera"):WaitForChild("CameraStore"))
-	else nil
+const PhysicsControllerHelper = require(script.Parent.PhysicsControllerHelper)
 
 -- Configs --
 const MAX_DELTA_TIME = SystemsConfigs.PhysicsMaxDeltaTime :: number
@@ -35,13 +32,12 @@ const PLAYER_HX = PLAYER_HALF_EXTENTS.X :: number
 const PLAYER_HY = PLAYER_HALF_EXTENTS.Y :: number
 const PLAYER_HZ = PLAYER_HALF_EXTENTS.Z :: number
 
-const OBJECT_DEFAULT_DENSITY = SystemsConfigs.ObjectDefaultDensity :: number
-const OBJECT_RESTITUTION = SystemsConfigs.ObjectRestitution :: number
-const SLEEP_SPEED_THRESHOLD = SystemsConfigs.ObjectSleepSpeedThreshold :: number
-const SLEEP_SPEED_SQ = SLEEP_SPEED_THRESHOLD * SLEEP_SPEED_THRESHOLD :: number
-
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const MAX_ENTITIES = SystemsConfigs.ECSMaxEntities :: number
+
+const FLAG_CAN_COLLIDE = bit32.lshift(1, 1) :: number
+const FLAG_IS_VISIBLE = bit32.lshift(1, 2) :: number
+const FLAG_ANCHORED = bit32.lshift(1, 3) :: number
 
 -- Tables --
 local Initialized = false :: boolean
@@ -74,10 +70,6 @@ local ECSSizeBuffer: buffer? = nil
 local ECSDirectionsBuffer: buffer? = nil
 local ECSPropertiesBuffer: buffer? = nil
 
-const FLAG_CAN_COLLIDE = bit32.lshift(1, 1) :: number
-const FLAG_IS_VISIBLE = bit32.lshift(1, 2) :: number
-const FLAG_ANCHORED = bit32.lshift(1, 3) :: number
-
 const DynamicFlags = buffer.create(MAX_ENTITIES) :: buffer -- 0 = static, 1 = awake dynamic, 2 = sleeping dynamic
 const ObjectGroundedFlags = buffer.create(MAX_ENTITIES) :: buffer
 const ObjectVelocityBuffer = buffer.create(MAX_ENTITIES * COMPONENT_STRIDE) :: buffer
@@ -88,277 +80,29 @@ const ActiveForceSlots = buffer.create(MAX_ENTITIES * 4) :: buffer
 local PhysicsController = {}
 
 -- ============================================================================
--- 1. INTERNAL HELPERS - STORAGE BINDING, INPUT & DIRECT STATE STEPPING
+-- 1. PUBLIC CONTROLLER API - INITIALIZATION, DIRECT ACTIONS & SIMULATION
 -- ============================================================================
 
-local function ResolveObjectStorage(): Instance?
-	if not IS_CLIENT then
-		return nil
-	end
-
-	const LocalPlayer = Players.LocalPlayer :: Player?
-	if not LocalPlayer then
-		return nil
-	end
-
-	const PlayerScripts = LocalPlayer:WaitForChild("PlayerScripts") :: PlayerScripts
-	const ControllerActor = PlayerScripts:FindFirstChild("Controller") :: Actor?
-	if ControllerActor then
-		const ActorStorage = ControllerActor:FindFirstChild("ObjectStorage")
-		if ActorStorage then
-			return ActorStorage
-		end
-	end
-
-	return PlayerScripts:WaitForChild("Client"):WaitForChild("Objects"):WaitForChild("ObjectStorage")
-end
-
-local function ConfigureCharacterInstance(Character: Model)
-	const Humanoid = Character:FindFirstChildWhichIsA("Humanoid") :: Humanoid?
-	if Humanoid then
-		Humanoid.PlatformStand = true
-	end
-
-	for _, Descendant: Instance in ipairs(Character:GetDescendants()) do
-		if Descendant:IsA("BasePart") then
-			Descendant.CanCollide = false
-		end
-	end
-
-	const RootPart = (
-		Character:FindFirstChild("HumanoidRootPart") or Character:WaitForChild("HumanoidRootPart", 5)
-	) :: BasePart?
-	if not RootPart then
+function PhysicsController.BindCharacter(Character: Model)
+	const RootPart, StartX, StartY, StartZ = PhysicsControllerHelper.ConfigureCharacterInstance(Character)
+	if not RootPart or not StartX or not StartY or not StartZ then
 		return
 	end
 
-	RootPart.Anchored = true
-	RootPart.CanCollide = false
 	HostRootPart = RootPart
-
-	const StartPos = RootPart.Position :: Vector3
-	SpawnPosX, SpawnPosY, SpawnPosZ = StartPos.X, StartPos.Y + 0.5, StartPos.Z
-	PlayerPosX, PlayerPosY, PlayerPosZ = SpawnPosX, SpawnPosY, SpawnPosZ
+	SpawnPosX, SpawnPosY, SpawnPosZ = StartX, StartY, StartZ
+	PlayerPosX, PlayerPosY, PlayerPosZ = StartX, StartY, StartZ
 	PlayerVelX, PlayerVelY, PlayerVelZ = 0, 0, 0
 end
-
-local function SampleKeyboardInput()
-	if not IS_CLIENT or not CameraStore then
-		return
-	end
-
-	if UserInputService:GetFocusedTextBox() ~= nil then
-		return
-	end
-
-	const CamLook = CameraStore.GetCameraLook() :: Vector3
-	const CamRight = CameraStore.GetCameraRight() :: Vector3
-
-	local ForwardX: number, ForwardZ: number = CamLook.X, CamLook.Z
-	const ForwardLen = math.sqrt(ForwardX * ForwardX + ForwardZ * ForwardZ) :: number
-	if ForwardLen > 1e-5 then
-		ForwardX /= ForwardLen
-		ForwardZ /= ForwardLen
-	end
-
-	local RightX: number, RightZ: number = CamRight.X, CamRight.Z
-	const RightLen = math.sqrt(RightX * RightX + RightZ * RightZ) :: number
-	if RightLen > 1e-5 then
-		RightX /= RightLen
-		RightZ /= RightLen
-	end
-
-	local MoveX = 0 :: number
-	local MoveZ = 0 :: number
-
-	if UserInputService:IsKeyDown(Enum.KeyCode.W) then
-		MoveX += ForwardX
-		MoveZ += ForwardZ
-	end
-	if UserInputService:IsKeyDown(Enum.KeyCode.S) then
-		MoveX -= ForwardX
-		MoveZ -= ForwardZ
-	end
-	if UserInputService:IsKeyDown(Enum.KeyCode.D) then
-		MoveX += RightX
-		MoveZ += RightZ
-	end
-	if UserInputService:IsKeyDown(Enum.KeyCode.A) then
-		MoveX -= RightX
-		MoveZ -= RightZ
-	end
-
-	const MoveLen = math.sqrt(MoveX * MoveX + MoveZ * MoveZ) :: number
-	if MoveLen > 1e-5 then
-		PendingWishX += MoveX / MoveLen
-		PendingWishZ += MoveZ / MoveLen
-		PendingMaxScale = math.max(PendingMaxScale, 1.0)
-	end
-
-	if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-		PendingJumpRequested = true
-	end
-end
-
-local function FlushPlayerIntent(): (number, number, number, boolean)
-	const RawWishX = PendingWishX :: number
-	const RawWishZ = PendingWishZ :: number
-	const MaxScale = PendingMaxScale :: number
-	const JumpRequested = PendingJumpRequested :: boolean
-
-	PendingWishX = 0
-	PendingWishZ = 0
-	PendingMaxScale = 0
-	PendingJumpRequested = false
-
-	const WishLen = math.sqrt(RawWishX * RawWishX + RawWishZ * RawWishZ) :: number
-	if WishLen <= 1e-5 then
-		return 0, 0, 0, JumpRequested
-	end
-
-	return RawWishX / WishLen, RawWishZ / WishLen, math.min(MaxScale, 2.5), JumpRequested
-end
-
-local function EnsureDynamicEntityMass(EntityId: number, SizeBuffer: buffer?, CustomMass: number?): number
-	const MassOffset = (EntityId - 1) * 4 :: number
-	const ExistingInvMass = buffer.readf32(ObjectInvMassBuffer, MassOffset) :: number
-	if ExistingInvMass > 0 and CustomMass == nil then
-		return ExistingInvMass
-	end
-
-	local ResolvedMass = CustomMass :: number?
-	if not ResolvedMass or ResolvedMass <= 0 then
-		if SizeBuffer then
-			const CompOffset = (EntityId - 1) * COMPONENT_STRIDE :: number
-			const Sx = math.max(0.1, buffer.readf32(SizeBuffer, CompOffset)) :: number
-			const Sy = math.max(0.1, buffer.readf32(SizeBuffer, CompOffset + 4)) :: number
-			const Sz = math.max(0.1, buffer.readf32(SizeBuffer, CompOffset + 8)) :: number
-			ResolvedMass = Sx * Sy * Sz * OBJECT_DEFAULT_DENSITY
-		else
-			ResolvedMass = OBJECT_DEFAULT_DENSITY
-		end
-	end
-
-	const InvMass = 1 / (ResolvedMass :: number) :: number
-	buffer.writef32(ObjectInvMassBuffer, MassOffset, InvMass)
-
-	if ECSPropertiesBuffer then
-		const PropReg = buffer.readu32(ECSPropertiesBuffer, MassOffset) :: number
-		const UpdatedReg =
-			bit32.bor(bit32.band(PropReg, bit32.bnot(FLAG_ANCHORED)), FLAG_CAN_COLLIDE, FLAG_IS_VISIBLE) :: number
-		buffer.writeu32(ECSPropertiesBuffer, MassOffset, UpdatedReg)
-	end
-
-	return InvMass
-end
-
-local function StepSingleDynamicObject(
-	EntityId: number,
-	EntityCount: number,
-	StepDt: number,
-	PositionBuffer: buffer,
-	SizeBuffer: buffer,
-	DirectionsBuffer: buffer
-)
-	const FlagIndex = EntityId - 1 :: number
-	const CompOffset = FlagIndex * COMPONENT_STRIDE :: number
-
-	const InvMass = buffer.readf32(ObjectInvMassBuffer, FlagIndex * 4) :: number
-	if InvMass <= 0 then
-		buffer.writeu8(DynamicFlags, FlagIndex, 0)
-		return
-	end
-
-	const WasGrounded = (buffer.readu8(ObjectGroundedFlags, FlagIndex) == 1) :: boolean
-	const Fx = buffer.readf32(ObjectForceBuffer, CompOffset) :: number
-	const Fy = buffer.readf32(ObjectForceBuffer, CompOffset + 4) :: number
-	const Fz = buffer.readf32(ObjectForceBuffer, CompOffset + 8) :: number
-
-	local Vx: number, Vy: number, Vz: number = PhysicsMath.StepObjectVelocity(
-		buffer.readf32(ObjectVelocityBuffer, CompOffset),
-		buffer.readf32(ObjectVelocityBuffer, CompOffset + 4),
-		buffer.readf32(ObjectVelocityBuffer, CompOffset + 8),
-		Fx,
-		Fy,
-		Fz,
-		InvMass,
-		WasGrounded,
-		StepDt
-	)
-
-	local PosX = buffer.readf32(PositionBuffer, CompOffset) + Vx * StepDt :: number
-	local PosY = buffer.readf32(PositionBuffer, CompOffset + 4) + Vy * StepDt :: number
-	local PosZ = buffer.readf32(PositionBuffer, CompOffset + 8) + Vz * StepDt :: number
-
-	const Hx = buffer.readf32(SizeBuffer, CompOffset) * 0.5 :: number
-	const Hy = buffer.readf32(SizeBuffer, CompOffset + 4) * 0.5 :: number
-	const Hz = buffer.readf32(SizeBuffer, CompOffset + 8) * 0.5 :: number
-
-	local Grounded: boolean
-	PosX, PosY, PosZ, Vx, Vy, Vz, Grounded = PhysicsMath.ResolveBodyWorldCollisions(
-		PosX,
-		PosY,
-		PosZ,
-		Hx,
-		Hy,
-		Hz,
-		Vx,
-		Vy,
-		Vz,
-		InvMass,
-		OBJECT_RESTITUTION,
-		EntityId,
-		EntityCount,
-		PositionBuffer,
-		SizeBuffer,
-		DirectionsBuffer,
-		DynamicFlags,
-		ObjectVelocityBuffer,
-		ObjectInvMassBuffer
-	)
-
-	buffer.writef32(PositionBuffer, CompOffset, PosX)
-	buffer.writef32(PositionBuffer, CompOffset + 4, PosY)
-	buffer.writef32(PositionBuffer, CompOffset + 8, PosZ)
-	buffer.writeu8(ObjectGroundedFlags, FlagIndex, if Grounded then 1 else 0)
-
-	const SpeedSq = Vx * Vx + Vy * Vy + Vz * Vz :: number
-	const HasAppliedForce = (Fx ~= 0 or Fy ~= 0 or Fz ~= 0) :: boolean
-	if Grounded and not HasAppliedForce and SpeedSq < SLEEP_SPEED_SQ then
-		buffer.writef32(ObjectVelocityBuffer, CompOffset, 0)
-		buffer.writef32(ObjectVelocityBuffer, CompOffset + 4, 0)
-		buffer.writef32(ObjectVelocityBuffer, CompOffset + 8, 0)
-		buffer.writeu8(DynamicFlags, FlagIndex, 2)
-		return
-	end
-
-	buffer.writef32(ObjectVelocityBuffer, CompOffset, Vx)
-	buffer.writef32(ObjectVelocityBuffer, CompOffset + 4, Vy)
-	buffer.writef32(ObjectVelocityBuffer, CompOffset + 8, Vz)
-end
-
-local function ClearAccumulatedForces()
-	for i = 0, ActiveForceCount - 1 do
-		const CompOffset = buffer.readu32(ActiveForceSlots, i * 4) :: number
-		buffer.writef32(ObjectForceBuffer, CompOffset, 0)
-		buffer.writef32(ObjectForceBuffer, CompOffset + 4, 0)
-		buffer.writef32(ObjectForceBuffer, CompOffset + 8, 0)
-	end
-	ActiveForceCount = 0
-end
-
--- ============================================================================
--- 2. PUBLIC CONTROLLER API - INITIALIZATION, DIRECT ACTIONS & SIMULATION
--- ============================================================================
 
 function PhysicsController.InitializePhysics()
 	if Initialized then
 		return
 	end
 
-	const ObjectStorageModule = ResolveObjectStorage()
+	const ObjectStorageModule = PhysicsControllerHelper.ResolveObjectStorage()
 	if ObjectStorageModule then
-		const ObjectStorage = require(ObjectStorageModule)
+		const ObjectStorage = (require :: any)(ObjectStorageModule)
 		ECSDataModule = ObjectStorage.ECSData
 		ECSPositionBuffer = ObjectStorage.PositionData.GetData()
 		ECSSizeBuffer = ObjectStorage.SizeData.GetData()
@@ -378,9 +122,9 @@ function PhysicsController.InitializePhysics()
 	end
 
 	if LocalPlayer.Character then
-		task.spawn(ConfigureCharacterInstance, LocalPlayer.Character)
+		task.spawn(PhysicsController.BindCharacter, LocalPlayer.Character)
 	end
-	LocalPlayer.CharacterAdded:Connect(ConfigureCharacterInstance)
+	LocalPlayer.CharacterAdded:Connect(PhysicsController.BindCharacter)
 end
 
 function PhysicsController.AddPlayerMovement(
@@ -425,44 +169,50 @@ function PhysicsController.AddObjectMovement(
 		return
 	end
 
-	const InvMass = EnsureDynamicEntityMass(EntityId, ECSSizeBuffer, nil) :: number
+	const InverseMass = PhysicsControllerHelper.EnsureDynamicEntityMass(
+		EntityId,
+		ObjectInvMassBuffer,
+		ECSSizeBuffer,
+		ECSPropertiesBuffer,
+		nil
+	) :: number
 	const FlagIndex = EntityId - 1 :: number
 	const CompOffset = FlagIndex * COMPONENT_STRIDE :: number
 
 	buffer.writeu8(DynamicFlags, FlagIndex, 1)
 
 	if IsImpulse then
-		const DeltaV = Magnitude * InvMass :: number
+		const DeltaVelocity = Magnitude * InverseMass :: number
 		buffer.writef32(
 			ObjectVelocityBuffer,
 			CompOffset,
-			buffer.readf32(ObjectVelocityBuffer, CompOffset) + DirX * DeltaV
+			buffer.readf32(ObjectVelocityBuffer, CompOffset) + DirX * DeltaVelocity
 		)
 		buffer.writef32(
 			ObjectVelocityBuffer,
 			CompOffset + 4,
-			buffer.readf32(ObjectVelocityBuffer, CompOffset + 4) + DirY * DeltaV
+			buffer.readf32(ObjectVelocityBuffer, CompOffset + 4) + DirY * DeltaVelocity
 		)
 		buffer.writef32(
 			ObjectVelocityBuffer,
 			CompOffset + 8,
-			buffer.readf32(ObjectVelocityBuffer, CompOffset + 8) + DirZ * DeltaV
+			buffer.readf32(ObjectVelocityBuffer, CompOffset + 8) + DirZ * DeltaVelocity
 		)
 		return
 	end
 
-	const PrevFx = buffer.readf32(ObjectForceBuffer, CompOffset) :: number
-	const PrevFy = buffer.readf32(ObjectForceBuffer, CompOffset + 4) :: number
-	const PrevFz = buffer.readf32(ObjectForceBuffer, CompOffset + 8) :: number
+	const PrevForceX = buffer.readf32(ObjectForceBuffer, CompOffset) :: number
+	const PrevForceY = buffer.readf32(ObjectForceBuffer, CompOffset + 4) :: number
+	const PrevForceZ = buffer.readf32(ObjectForceBuffer, CompOffset + 8) :: number
 
-	if PrevFx == 0 and PrevFy == 0 and PrevFz == 0 and ActiveForceCount < MAX_ENTITIES then
+	if PrevForceX == 0 and PrevForceY == 0 and PrevForceZ == 0 and ActiveForceCount < MAX_ENTITIES then
 		buffer.writeu32(ActiveForceSlots, ActiveForceCount * 4, CompOffset)
 		ActiveForceCount += 1
 	end
 
-	buffer.writef32(ObjectForceBuffer, CompOffset, PrevFx + DirX * Magnitude)
-	buffer.writef32(ObjectForceBuffer, CompOffset + 4, PrevFy + DirY * Magnitude)
-	buffer.writef32(ObjectForceBuffer, CompOffset + 8, PrevFz + DirZ * Magnitude)
+	buffer.writef32(ObjectForceBuffer, CompOffset, PrevForceX + DirX * Magnitude)
+	buffer.writef32(ObjectForceBuffer, CompOffset + 4, PrevForceY + DirY * Magnitude)
+	buffer.writef32(ObjectForceBuffer, CompOffset + 8, PrevForceZ + DirZ * Magnitude)
 end
 
 function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
@@ -474,23 +224,54 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 	const SizeBuffer = ECSSizeBuffer
 	const DirectionsBuffer = ECSDirectionsBuffer
 	if not PositionBuffer or not SizeBuffer or not DirectionsBuffer or not ECSDataModule then
-		FlushPlayerIntent()
-		ClearAccumulatedForces()
+		PendingWishX = 0
+		PendingWishZ = 0
+		PendingMaxScale = 0
+		PendingJumpRequested = false
+		ActiveForceCount = PhysicsControllerHelper.ClearAccumulatedForces(
+			ActiveForceCount,
+			ActiveForceSlots,
+			ObjectForceBuffer
+		)
 		return
 	end
 
 	const EntityCount = math.min(ECSDataModule.GetCounts().EntityECSCount :: number, MAX_ENTITIES) :: number
 	if EntityCount <= 0 then
-		FlushPlayerIntent()
-		ClearAccumulatedForces()
+		PendingWishX = 0
+		PendingWishZ = 0
+		PendingMaxScale = 0
+		PendingJumpRequested = false
+		ActiveForceCount = PhysicsControllerHelper.ClearAccumulatedForces(
+			ActiveForceCount,
+			ActiveForceSlots,
+			ObjectForceBuffer
+		)
 		return
 	end
 
-	SampleKeyboardInput()
-	const WishX: number, WishZ: number, WishScale: number, JumpRequested: boolean = FlushPlayerIntent()
+	PendingWishX, PendingWishZ, PendingMaxScale, PendingJumpRequested =
+		PhysicsControllerHelper.SampleKeyboardInput(
+			PendingWishX,
+			PendingWishZ,
+			PendingMaxScale,
+			PendingJumpRequested
+		)
 
-	const ClampedDt = math.clamp(DeltaTime or (1 / 60), 1e-4, MAX_DELTA_TIME) :: number
-	const StepDt = ClampedDt / SUBSTEPS :: number
+	const WishX: number, WishZ: number, WishScale: number, JumpRequested: boolean =
+		PhysicsControllerHelper.FlushPlayerIntent(
+			PendingWishX,
+			PendingWishZ,
+			PendingMaxScale,
+			PendingJumpRequested
+		)
+	PendingWishX = 0
+	PendingWishZ = 0
+	PendingMaxScale = 0
+	PendingJumpRequested = false
+
+	const ClampedDeltaTime = math.clamp(DeltaTime or (1 / 60), 1e-4, MAX_DELTA_TIME) :: number
+	const StepDeltaTime = ClampedDeltaTime / SUBSTEPS :: number
 	local PendingJump = JumpRequested :: boolean
 
 	for _ = 1, SUBSTEPS do
@@ -504,16 +285,16 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 			WishScale,
 			PendingJump,
 			PlayerGrounded,
-			StepDt
+			StepDeltaTime
 		)
 
 		if WasGrounded and PendingJump then
 			PendingJump = false
 		end
 
-		PlayerPosX += PlayerVelX * StepDt
-		PlayerPosY += PlayerVelY * StepDt
-		PlayerPosZ += PlayerVelZ * StepDt
+		PlayerPosX += PlayerVelX * StepDeltaTime
+		PlayerPosY += PlayerVelY * StepDeltaTime
+		PlayerPosZ += PlayerVelZ * StepDeltaTime
 
 		PlayerPosX, PlayerPosY, PlayerPosZ, PlayerVelX, PlayerVelY, PlayerVelZ, PlayerGrounded =
 			PhysicsMath.ResolveBodyWorldCollisions(
@@ -540,12 +321,28 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 
 		for EntityId = 1, EntityCount do
 			if buffer.readu8(DynamicFlags, EntityId - 1) == 1 then
-				StepSingleDynamicObject(EntityId, EntityCount, StepDt, PositionBuffer, SizeBuffer, DirectionsBuffer)
+				PhysicsControllerHelper.StepSingleDynamicObject(
+					EntityId,
+					EntityCount,
+					StepDeltaTime,
+					PositionBuffer,
+					SizeBuffer,
+					DirectionsBuffer,
+					DynamicFlags,
+					ObjectGroundedFlags,
+					ObjectVelocityBuffer,
+					ObjectForceBuffer,
+					ObjectInvMassBuffer
+				)
 			end
 		end
 	end
 
-	ClearAccumulatedForces()
+	ActiveForceCount = PhysicsControllerHelper.ClearAccumulatedForces(
+		ActiveForceCount,
+		ActiveForceSlots,
+		ObjectForceBuffer
+	)
 
 	if PlayerPosY < VOID_RESET_Y then
 		PlayerPosX, PlayerPosY, PlayerPosZ = SpawnPosX, SpawnPosY, SpawnPosZ
@@ -578,7 +375,13 @@ function PhysicsController.SetEntityDynamic(EntityId: number, IsDynamic: boolean
 		return
 	end
 
-	EnsureDynamicEntityMass(EntityId, ECSSizeBuffer, CustomMass)
+	PhysicsControllerHelper.EnsureDynamicEntityMass(
+		EntityId,
+		ObjectInvMassBuffer,
+		ECSSizeBuffer,
+		ECSPropertiesBuffer,
+		CustomMass
+	)
 	buffer.writeu8(DynamicFlags, FlagIndex, 1)
 end
 

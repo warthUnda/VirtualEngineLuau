@@ -1,8 +1,9 @@
+--!strict
 --!native
 --!optimize 2
 
 -- Services --
-const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
@@ -11,6 +12,7 @@ const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForC
 const CLEAR_R = SystemsConfigs.ClearColorR :: number
 const CLEAR_G = SystemsConfigs.ClearColorG :: number
 const CLEAR_B = SystemsConfigs.ClearColorB :: number
+const RENDER_BUFFER_LAYOUT_SIZE = SystemsConfigs.RenderBufferLayoutSize :: number
 const PACKED_CLEAR_COLOR = bit32.bor(CLEAR_R, bit32.lshift(CLEAR_G, 8), bit32.lshift(CLEAR_B, 16), 0xFF000000) :: number
 
 -- Buffers
@@ -19,8 +21,18 @@ local ClearPixelTemplate: buffer? = nil
 
 local BufferHelper = {}
 
-BufferHelper.RenderBufferLayoutSize = 28 :: number
+BufferHelper.RenderBufferLayoutSize = RENDER_BUFFER_LAYOUT_SIZE :: number
 
+-- ============================================================================
+-- 1. BUFFER READ / WRITE & FRAME CLEAR HELPERS
+-- ============================================================================
+
+--[=[
+	Reads 3 consecutive f32 numbers from a buffer into a Luau SIMD vector.
+	@param TargetBuffer buffer -- Source memory buffer.
+	@param Offset number -- Byte offset to read from.
+	@return vector -- SIMD vector containing (X, Y, Z).
+]=]
 function BufferHelper.ReadVec3(TargetBuffer: buffer, Offset: number): vector
 	return vector.create(
 		buffer.readf32(TargetBuffer, Offset),
@@ -29,13 +41,24 @@ function BufferHelper.ReadVec3(TargetBuffer: buffer, Offset: number): vector
 	)
 end
 
+--[=[
+	Writes a Luau SIMD vector's (X, Y, Z) components as 3 consecutive f32 floats into a buffer.
+	@param TargetBuffer buffer -- Target destination buffer.
+	@param Offset number -- Byte offset to write at.
+	@param Value vector -- Source SIMD vector.
+]=]
 function BufferHelper.WriteVec3(TargetBuffer: buffer, Offset: number, Value: vector)
 	buffer.writef32(TargetBuffer, Offset, Value.x)
 	buffer.writef32(TargetBuffer, Offset + 4, Value.y)
 	buffer.writef32(TargetBuffer, Offset + 8, Value.z)
 end
 
-local function EnsureClearTemplate(ByteLength: number): buffer
+--[=[
+	Ensures the pre-filled background clear pixel template buffer is allocated and sized.
+	@param ByteLength number -- Total required byte capacity.
+	@return buffer -- Pre-filled template buffer.
+]=]
+function BufferHelper.EnsureClearTemplate(ByteLength: number): buffer
 	if ClearTemplateSize < ByteLength then
 		local NewPixelTemplate = buffer.create(ByteLength) :: buffer
 		for i = 0, ByteLength - 4, 4 do
@@ -48,46 +71,77 @@ local function EnsureClearTemplate(ByteLength: number): buffer
 	return ClearPixelTemplate :: buffer
 end
 
+--[=[
+	Packs 3 projected triangle vertices and a 32-bit packed color into the worker render queue buffer.
+	@param TargetBuffer buffer -- Destination render command buffer.
+	@param MemoryOffset number -- Current byte offset in render command buffer.
+	@param Vertex0X number -- Screen vertex 0 X coordinate.
+	@param Vertex0Y number -- Screen vertex 0 Y coordinate.
+	@param ScaledInverseZ0 number -- Pre-scaled 1/Z depth for vertex 0.
+	@param Vertex1X number -- Screen vertex 1 X coordinate.
+	@param Vertex1Y number -- Screen vertex 1 Y coordinate.
+	@param ScaledInverseZ1 number -- Pre-scaled 1/Z depth for vertex 1.
+	@param Vertex2X number -- Screen vertex 2 X coordinate.
+	@param Vertex2Y number -- Screen vertex 2 Y coordinate.
+	@param ScaledInverseZ2 number -- Pre-scaled 1/Z depth for vertex 2.
+	@param PackedColor number -- Packed 32-bit RGBA color.
+	@return number -- Next byte offset in render command buffer.
+]=]
 function BufferHelper.CreateRenderBuffer(
 	TargetBuffer: buffer,
 	MemoryOffset: number,
-	X0: number,
-	Y0: number,
-	Z0: number,
-	X1: number,
-	Y1: number,
-	Z1: number,
-	X2: number,
-	Y2: number,
-	Z2: number,
+	Vertex0X: number,
+	Vertex0Y: number,
+	ScaledInverseZ0: number,
+	Vertex1X: number,
+	Vertex1Y: number,
+	ScaledInverseZ1: number,
+	Vertex2X: number,
+	Vertex2Y: number,
+	ScaledInverseZ2: number,
 	PackedColor: number
 ): number
 	-- Three 8-byte vertices and one 4-byte packed RGBA u32 color (28 bytes total, zero padding).
-	buffer.writei16(TargetBuffer, MemoryOffset, X0)
-	buffer.writei16(TargetBuffer, MemoryOffset + 2, Y0)
-	buffer.writef32(TargetBuffer, MemoryOffset + 4, Z0)
+	buffer.writei16(TargetBuffer, MemoryOffset, Vertex0X)
+	buffer.writei16(TargetBuffer, MemoryOffset + 2, Vertex0Y)
+	buffer.writef32(TargetBuffer, MemoryOffset + 4, ScaledInverseZ0)
 
-	buffer.writei16(TargetBuffer, MemoryOffset + 8, X1)
-	buffer.writei16(TargetBuffer, MemoryOffset + 10, Y1)
-	buffer.writef32(TargetBuffer, MemoryOffset + 12, Z1)
+	buffer.writei16(TargetBuffer, MemoryOffset + 8, Vertex1X)
+	buffer.writei16(TargetBuffer, MemoryOffset + 10, Vertex1Y)
+	buffer.writef32(TargetBuffer, MemoryOffset + 12, ScaledInverseZ1)
 
-	buffer.writei16(TargetBuffer, MemoryOffset + 16, X2)
-	buffer.writei16(TargetBuffer, MemoryOffset + 18, Y2)
-	buffer.writef32(TargetBuffer, MemoryOffset + 20, Z2)
+	buffer.writei16(TargetBuffer, MemoryOffset + 16, Vertex2X)
+	buffer.writei16(TargetBuffer, MemoryOffset + 18, Vertex2Y)
+	buffer.writef32(TargetBuffer, MemoryOffset + 20, ScaledInverseZ2)
 
 	buffer.writeu32(TargetBuffer, MemoryOffset + 24, PackedColor)
 
-	return MemoryOffset + 28
+	return MemoryOffset + RENDER_BUFFER_LAYOUT_SIZE
 end
 
+--[=[
+	Clears the entire pixel and Z buffer to the default background state.
+	@param TotalPixels number -- Total screen pixel count (Width * Height).
+	@param PixelBuffer buffer -- Destination color pixel buffer.
+	@param ZBuffer buffer -- Destination 32-bit depth buffer.
+]=]
 function BufferHelper.ClearBuffers(TotalPixels: number, PixelBuffer: buffer, ZBuffer: buffer)
 	const ByteLength = TotalPixels * 4 :: number
-	const Template = EnsureClearTemplate(ByteLength)
+	const Template = BufferHelper.EnsureClearTemplate(ByteLength)
 
 	buffer.copy(PixelBuffer, 0, Template, 0, ByteLength)
 	buffer.fill(ZBuffer, 0, 0, ByteLength)
 end
 
+--[=[
+	Clears only the scanline rows marked dirty between MinY and MaxY.
+	@param Width number -- Screen width in pixels.
+	@param MinY number -- Minimum modified scanline Y index.
+	@param MaxY number -- Maximum modified scanline Y index.
+	@param TotalPixels number -- Total screen pixel count.
+	@param PixelBuffer buffer -- Destination color pixel buffer.
+	@param ZBuffer buffer -- Destination 32-bit depth buffer.
+]=]
 function BufferHelper.ClearDirtyRows(
 	Width: number,
 	MinY: number,
@@ -100,7 +154,7 @@ function BufferHelper.ClearDirtyRows(
 		return
 	end
 
-	const Template = EnsureClearTemplate(TotalPixels * 4)
+	const Template = BufferHelper.EnsureClearTemplate(TotalPixels * 4)
 	const RowStride = Width * 4 :: number
 	const StartOffset = MinY * RowStride :: number
 	const DirtyByteLength = (MaxY - MinY + 1) * RowStride :: number

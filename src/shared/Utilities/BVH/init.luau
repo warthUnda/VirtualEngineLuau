@@ -1,19 +1,15 @@
+--!strict
 --!native
 --!optimize 2
 
 -- Services --
-const Players = game:GetService("Players") :: Players
-const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
-const RunService = game:GetService("RunService") :: RunService
-const ServerScriptService = game:GetService("ServerScriptService") :: ServerScriptService
-
--- Static References --
-const IS_SERVER = RunService:IsServer() :: boolean
-const SelfActor = script:GetActor() :: Actor?
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
+const BVHHelper = require(script.BVHHelper)
+const BVHMath = require(script.BVHMath)
 
 -- Configs --
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
@@ -27,8 +23,6 @@ const ITEM_BOUNDS_STRIDE = 36 :: number
 const CACHED_STATE_STRIDE = 28 :: number
 const MAX_BVH_NODES = MAX_ENTITIES * 2 :: number
 const MAX_NODE_BYTES = MAX_BVH_NODES * NODE_STRIDE :: number
-const SAFE_BALANCED_DEPTH = math.max(16, STACK_CAPACITY - 16) :: number
-const MUTATION_SCAN_BUDGET = 256 :: number
 
 const FLAG_CAN_COLLIDE = bit32.lshift(1, 1) :: number
 const FLAG_ANCHORED = bit32.lshift(1, 3) :: number
@@ -47,9 +41,6 @@ const TraversalStackBuffer = buffer.create(STACK_CAPACITY * 4) :: buffer
 
 -- Tables --
 local ActiveStorage: ECSMain.ECSStorage? = nil
-local DefaultServerStorage: ECSMain.ECSStorage? = nil
-local DefaultClientStorage: ECSMain.ECSStorage? = nil
-local DefaultRenderStorage: ECSMain.ECSStorage? = nil
 
 local AllocatedNodeBytes = 0 :: number
 local DynamicEntityCount = 0 :: number
@@ -62,252 +53,15 @@ local RayGeneration = 0 :: number
 local BVH = {}
 
 -- ============================================================================
--- 1. STORAGE RESOLUTION & MUTATION DETECTION
+-- 1. FLAT-BUFFER TREE BUILDER
 -- ============================================================================
 
-local function IsECSStorage(Candidate: any): boolean
-	return type(Candidate) == "table"
-		and Candidate.ECSData ~= nil
-		and Candidate.PositionData ~= nil
-		and Candidate.SizeData ~= nil
-		and Candidate.DirectionsData ~= nil
-end
-
-local function ResolveStorage(ProvidedStorage: ECSMain.ECSStorage?): ECSMain.ECSStorage?
-	if ProvidedStorage and IsECSStorage(ProvidedStorage) then
-		return ProvidedStorage
-	end
-
-	if IS_SERVER then
-		if not DefaultServerStorage then
-			const ServerFolder = ServerScriptService:FindFirstChild("Server")
-			const ObjectsFolder = if ServerFolder then ServerFolder:FindFirstChild("Objects") else nil
-			const ObjectsECS = if ObjectsFolder then ObjectsFolder:FindFirstChild("ObjectsECS") else nil
-			const StorageModule = if ObjectsECS then ObjectsECS:FindFirstChild("Storage") else nil
-			if StorageModule and StorageModule:IsA("ModuleScript") then
-				DefaultServerStorage = require(StorageModule) :: any
-			end
-		end
-		return DefaultServerStorage
-	end
-
-	if not DefaultClientStorage then
-		const ActorStorage = if SelfActor then SelfActor:FindFirstChild("ObjectStorage") else nil
-		if ActorStorage and ActorStorage:IsA("ModuleScript") then
-			DefaultClientStorage = require(ActorStorage) :: any
-		else
-			const LocalPlayer = Players.LocalPlayer :: Player?
-			const PlayerScripts = if LocalPlayer then LocalPlayer:FindFirstChild("PlayerScripts") else nil
-			const ControllerActor = if PlayerScripts then PlayerScripts:FindFirstChild("Controller") else nil
-			const ControllerStorage = if ControllerActor then ControllerActor:FindFirstChild("ObjectStorage") else nil
-			if ControllerStorage and ControllerStorage:IsA("ModuleScript") then
-				DefaultClientStorage = require(ControllerStorage) :: any
-			elseif PlayerScripts then
-				const ClientFolder = PlayerScripts:FindFirstChild("Client")
-				const ObjectsFolder = if ClientFolder then ClientFolder:FindFirstChild("Objects") else nil
-				const ObjStorage = if ObjectsFolder then ObjectsFolder:FindFirstChild("ObjectStorage") else nil
-				if ObjStorage and ObjStorage:IsA("ModuleScript") then
-					DefaultClientStorage = require(ObjStorage) :: any
-				end
-			end
-		end
-	end
-
-	if DefaultClientStorage and DefaultClientStorage.ECSData.GetCounts().EntityECSCount > 0 then
-		return DefaultClientStorage
-	end
-
-	if not DefaultRenderStorage then
-		const SharedFolder = ReplicatedStorage:FindFirstChild("Shared")
-		const UtilitiesFolder = if SharedFolder then SharedFolder:FindFirstChild("Utilities") else nil
-		const RenderFolder = if UtilitiesFolder then UtilitiesFolder:FindFirstChild("Render") else nil
-		const RenderStorageModule = if RenderFolder then RenderFolder:FindFirstChild("ECSStorage") else nil
-		if RenderStorageModule and RenderStorageModule:IsA("ModuleScript") then
-			DefaultRenderStorage = require(RenderStorageModule) :: any
-		end
-	end
-
-	return DefaultRenderStorage or DefaultClientStorage
-end
-
-local function NeedsRebuild(Storage: ECSMain.ECSStorage, EntityCount: number): boolean
-	if Storage ~= ActiveStorage or EntityCount ~= LastBuiltEntityCount then
-		return true
-	end
-
-	const DynList = Storage.DynamicObjectsList
-	if DynList then
-		if DynList.Counts.ActiveCount ~= LastDynamicActiveCount or DynList.Counts.NextId ~= LastDynamicNextId then
-			return true
-		end
-	end
-
-	if EntityCount <= 0 then
-		return false
-	end
-
-	const PositionBuffer = Storage.PositionData.GetData() :: buffer
-	const SizeBuffer = Storage.SizeData.GetData() :: buffer
-	const DirectionsBuffer = Storage.DirectionsData.GetData() :: buffer
-	const PropertiesBuffer = Storage.PropertiesData.GetData() :: buffer
-
-	const CheckCount = math.min(EntityCount, MUTATION_SCAN_BUDGET) :: number
-	local EntityId = MutationScanCursor :: number
-	if EntityId < 1 or EntityId > EntityCount then
-		EntityId = 1
-	end
-
-	for _ = 1, CheckCount do
-		const StateOffset = (EntityId - 1) * CACHED_STATE_STRIDE :: number
-		const PropOffset = (EntityId - 1) * PROPERTIES_STRIDE :: number
-		const CurrentProp = buffer.readu32(PropertiesBuffer, PropOffset) :: number
-
-		if CurrentProp ~= buffer.readu32(CachedStateBuffer, StateOffset + 24) then
-			MutationScanCursor = EntityId
-			return true
-		end
-
-		if buffer.readu8(EntityIsDynamicBuffer, EntityId) == 0 then
-			const CompOffset = (EntityId - 1) * COMPONENT_STRIDE :: number
-			const DirOffset = (EntityId - 1) * DIRECTION_STRIDE :: number
-			const BoundsOffset = (EntityId - 1) * ITEM_BOUNDS_STRIDE :: number
-
-			if
-				buffer.readf32(PositionBuffer, CompOffset) ~= buffer.readf32(ItemBoundsBuffer, BoundsOffset + 24)
-				or buffer.readf32(PositionBuffer, CompOffset + 4) ~= buffer.readf32(ItemBoundsBuffer, BoundsOffset + 28)
-				or buffer.readf32(PositionBuffer, CompOffset + 8) ~= buffer.readf32(ItemBoundsBuffer, BoundsOffset + 32)
-				or buffer.readf32(SizeBuffer, CompOffset) ~= buffer.readf32(CachedStateBuffer, StateOffset)
-				or buffer.readf32(SizeBuffer, CompOffset + 4) ~= buffer.readf32(CachedStateBuffer, StateOffset + 4)
-				or buffer.readf32(SizeBuffer, CompOffset + 8) ~= buffer.readf32(CachedStateBuffer, StateOffset + 8)
-				or buffer.readf32(DirectionsBuffer, DirOffset) ~= buffer.readf32(CachedStateBuffer, StateOffset + 12)
-				or buffer.readf32(DirectionsBuffer, DirOffset + 16) ~= buffer.readf32(CachedStateBuffer, StateOffset + 16)
-				or buffer.readf32(DirectionsBuffer, DirOffset + 32) ~= buffer.readf32(CachedStateBuffer, StateOffset + 20)
-			then
-				MutationScanCursor = EntityId
-				return true
-			end
-		end
-
-		EntityId += 1
-		if EntityId > EntityCount then
-			EntityId = 1
-		end
-	end
-
-	MutationScanCursor = EntityId
-	return false
-end
-
--- ============================================================================
--- 2. FLAT-BUFFER TREE BUILDER
--- ============================================================================
-
-local function BuildSubtree(StartIdx: number, EndIdx: number, Depth: number): number
-	const NodeOffset = AllocatedNodeBytes :: number
-	AllocatedNodeBytes += NODE_STRIDE
-
-	local MinX: number, MinY: number, MinZ: number = math.huge, math.huge, math.huge
-	local MaxX: number, MaxY: number, MaxZ: number = -math.huge, -math.huge, -math.huge
-	local CMinX: number, CMinY: number, CMinZ: number = math.huge, math.huge, math.huge
-	local CMaxX: number, CMaxY: number, CMaxZ: number = -math.huge, -math.huge, -math.huge
-
-	for i = StartIdx, EndIdx do
-		const EntityId = buffer.readu32(ItemIndicesBuffer, (i - 1) * 4) :: number
-		const BoundsOffset = (EntityId - 1) * ITEM_BOUNDS_STRIDE :: number
-
-		const BMinX = buffer.readf32(ItemBoundsBuffer, BoundsOffset) :: number
-		const BMinY = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 4) :: number
-		const BMinZ = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 8) :: number
-		const BMaxX = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 12) :: number
-		const BMaxY = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 16) :: number
-		const BMaxZ = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 20) :: number
-		const Cx = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 24) :: number
-		const Cy = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 28) :: number
-		const Cz = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 32) :: number
-
-		if BMinX < MinX then MinX = BMinX end
-		if BMinY < MinY then MinY = BMinY end
-		if BMinZ < MinZ then MinZ = BMinZ end
-		if BMaxX > MaxX then MaxX = BMaxX end
-		if BMaxY > MaxY then MaxY = BMaxY end
-		if BMaxZ > MaxZ then MaxZ = BMaxZ end
-
-		if Cx < CMinX then CMinX = Cx end
-		if Cy < CMinY then CMinY = Cy end
-		if Cz < CMinZ then CMinZ = Cz end
-		if Cx > CMaxX then CMaxX = Cx end
-		if Cy > CMaxY then CMaxY = Cy end
-		if Cz > CMaxZ then CMaxZ = Cz end
-	end
-
-	buffer.writef32(NodeBuffer, NodeOffset, MinX)
-	buffer.writef32(NodeBuffer, NodeOffset + 4, MinY)
-	buffer.writef32(NodeBuffer, NodeOffset + 8, MinZ)
-	buffer.writef32(NodeBuffer, NodeOffset + 16, MaxX)
-	buffer.writef32(NodeBuffer, NodeOffset + 20, MaxY)
-	buffer.writef32(NodeBuffer, NodeOffset + 24, MaxZ)
-
-	if StartIdx >= EndIdx or AllocatedNodeBytes + (NODE_STRIDE * 2) > MAX_NODE_BYTES then
-		const LeafEntityId = buffer.readu32(ItemIndicesBuffer, (StartIdx - 1) * 4) :: number
-		buffer.writeu32(NodeBuffer, NodeOffset + 12, LeafEntityId)
-		buffer.writeu32(NodeBuffer, NodeOffset + 28, 0)
-		return NodeOffset
-	end
-
-	const ExtentX = CMaxX - CMinX :: number
-	const ExtentY = CMaxY - CMinY :: number
-	const ExtentZ = CMaxZ - CMinZ :: number
-
-	local AxisOffset = 24 :: number
-	local SplitPos = (CMinX + CMaxX) * 0.5 :: number
-	local MaxExtent = ExtentX :: number
-
-	if ExtentY > MaxExtent then
-		AxisOffset = 28
-		SplitPos = (CMinY + CMaxY) * 0.5
-		MaxExtent = ExtentY
-	end
-	if ExtentZ > MaxExtent then
-		AxisOffset = 32
-		SplitPos = (CMinZ + CMaxZ) * 0.5
-		MaxExtent = ExtentZ
-	end
-
-	local Mid = (StartIdx + EndIdx) // 2 :: number
-	if MaxExtent > 1e-4 and Depth < SAFE_BALANCED_DEPTH then
-		local Left = StartIdx :: number
-		local Right = EndIdx :: number
-
-		while Left <= Right do
-			const LeftEntity = buffer.readu32(ItemIndicesBuffer, (Left - 1) * 4) :: number
-			const CenterVal = buffer.readf32(ItemBoundsBuffer, (LeftEntity - 1) * ITEM_BOUNDS_STRIDE + AxisOffset) :: number
-			if CenterVal < SplitPos then
-				Left += 1
-			else
-				const RightEntity = buffer.readu32(ItemIndicesBuffer, (Right - 1) * 4) :: number
-				buffer.writeu32(ItemIndicesBuffer, (Left - 1) * 4, RightEntity)
-				buffer.writeu32(ItemIndicesBuffer, (Right - 1) * 4, LeftEntity)
-				Right -= 1
-			end
-		end
-
-		if Left > StartIdx and Left <= EndIdx then
-			Mid = Left - 1
-		end
-	end
-
-	const NextDepth = Depth + 1 :: number
-	const LeftNodeOffset = BuildSubtree(StartIdx, Mid, NextDepth) :: number
-	const RightNodeOffset = BuildSubtree(Mid + 1, EndIdx, NextDepth) :: number
-
-	buffer.writeu32(NodeBuffer, NodeOffset + 12, LeftNodeOffset)
-	buffer.writeu32(NodeBuffer, NodeOffset + 28, RightNodeOffset)
-
-	return NodeOffset
-end
-
+--[=[
+	Rebuilds the static and dynamic BVH hierarchy over the given ECS storage.
+	@param ProvidedStorage ECSMain.ECSStorage? -- Target ECS storage; if nil, resolves default.
+]=]
 function BVH.Rebuild(ProvidedStorage: ECSMain.ECSStorage?)
-	const Storage = ResolveStorage(ProvidedStorage)
+	const Storage = BVHHelper.ResolveStorage(ProvidedStorage)
 	if not Storage then
 		return
 	end
@@ -366,9 +120,11 @@ function BVH.Rebuild(ProvidedStorage: ECSMain.ECSStorage?)
 		end
 
 		const HasDynamicObject = bit32.btest(PropRegister, FLAG_HAS_DYNAMIC_ID) :: boolean
-		const IsDynamic = HasDynamicObject
+		const IsDynamic = (
+			HasDynamicObject
 			or (StaticBuffer ~= nil and buffer.readu8(StaticBuffer, EntityId - 1) == 0)
-			or (PropRegister ~= 0 and not bit32.btest(PropRegister, FLAG_ANCHORED)) :: boolean
+			or (PropRegister ~= 0 and not bit32.btest(PropRegister, FLAG_ANCHORED))
+		) :: boolean
 
 		if IsDynamic then
 			buffer.writeu8(EntityIsDynamicBuffer, EntityId, 1)
@@ -378,13 +134,13 @@ function BVH.Rebuild(ProvidedStorage: ECSMain.ECSStorage?)
 			buffer.writeu8(EntityIsDynamicBuffer, EntityId, 0)
 		end
 
-		const PosX = buffer.readf32(PositionBuffer, CompOffset) :: number
-		const PosY = buffer.readf32(PositionBuffer, CompOffset + 4) :: number
-		const PosZ = buffer.readf32(PositionBuffer, CompOffset + 8) :: number
+		const PositionX = buffer.readf32(PositionBuffer, CompOffset) :: number
+		const PositionY = buffer.readf32(PositionBuffer, CompOffset + 4) :: number
+		const PositionZ = buffer.readf32(PositionBuffer, CompOffset + 8) :: number
 
-		const Hx = math.abs(RawSizeX) * 0.5 :: number
-		const Hy = math.abs(RawSizeY) * 0.5 :: number
-		const Hz = math.abs(RawSizeZ) * 0.5 :: number
+		const HalfSizeX = math.abs(RawSizeX) * 0.5 :: number
+		const HalfSizeY = math.abs(RawSizeY) * 0.5 :: number
+		const HalfSizeZ = math.abs(RawSizeZ) * 0.5 :: number
 
 		local LookX = buffer.readf32(DirectionsBuffer, DirOffset) :: number
 		local LookY = buffer.readf32(DirectionsBuffer, DirOffset + 4) :: number
@@ -404,20 +160,23 @@ function BVH.Rebuild(ProvidedStorage: ECSMain.ECSStorage?)
 			RightX, RightY, RightZ = 1, 0, 0
 		end
 
-		const WorldHx = math.abs(RightX) * Hx + math.abs(UpX) * Hy + math.abs(LookX) * Hz :: number
-		const WorldHy = math.abs(RightY) * Hx + math.abs(UpY) * Hy + math.abs(LookY) * Hz :: number
-		const WorldHz = math.abs(RightZ) * Hx + math.abs(UpZ) * Hy + math.abs(LookZ) * Hz :: number
+		const WorldExtentX =
+			math.abs(RightX) * HalfSizeX + math.abs(UpX) * HalfSizeY + math.abs(LookX) * HalfSizeZ :: number
+		const WorldExtentY =
+			math.abs(RightY) * HalfSizeX + math.abs(UpY) * HalfSizeY + math.abs(LookY) * HalfSizeZ :: number
+		const WorldExtentZ =
+			math.abs(RightZ) * HalfSizeX + math.abs(UpZ) * HalfSizeY + math.abs(LookZ) * HalfSizeZ :: number
 
 		const BoundsOffset = (EntityId - 1) * ITEM_BOUNDS_STRIDE :: number
-		buffer.writef32(ItemBoundsBuffer, BoundsOffset, PosX - WorldHx)
-		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 4, PosY - WorldHy)
-		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 8, PosZ - WorldHz)
-		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 12, PosX + WorldHx)
-		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 16, PosY + WorldHy)
-		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 20, PosZ + WorldHz)
-		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 24, PosX)
-		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 28, PosY)
-		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 32, PosZ)
+		buffer.writef32(ItemBoundsBuffer, BoundsOffset, PositionX - WorldExtentX)
+		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 4, PositionY - WorldExtentY)
+		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 8, PositionZ - WorldExtentZ)
+		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 12, PositionX + WorldExtentX)
+		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 16, PositionY + WorldExtentY)
+		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 20, PositionZ + WorldExtentZ)
+		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 24, PositionX)
+		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 28, PositionY)
+		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 32, PositionZ)
 
 		if not IsDynamic then
 			StaticItemCount += 1
@@ -426,259 +185,37 @@ function BVH.Rebuild(ProvidedStorage: ECSMain.ECSStorage?)
 	end
 
 	if StaticItemCount > 0 then
-		BuildSubtree(1, StaticItemCount, 0)
+		const _, NextAllocatedNodeBytes = BVHHelper.BuildSubtree(
+			NodeBuffer,
+			ItemBoundsBuffer,
+			ItemIndicesBuffer,
+			0,
+			1,
+			StaticItemCount,
+			0
+		)
+		AllocatedNodeBytes = NextAllocatedNodeBytes
 	end
 end
 
 -- ============================================================================
--- 3. SCALAR RAY-AABB & RAY-OBB INTERSECTION KERNELS
+-- 2. UNIFIED 1-CALL RAYCAST (STATIC BVH + LIVE DYNAMIC OOP OBJECTS)
 -- ============================================================================
 
-local function TestNodeAABB(
-	NodeOffset: number,
-	Ox: number,
-	Oy: number,
-	Oz: number,
-	InvDx: number,
-	InvDy: number,
-	InvDz: number,
-	MaxDist: number
-): (boolean, number)
-	const MinX = buffer.readf32(NodeBuffer, NodeOffset) :: number
-	const MinY = buffer.readf32(NodeBuffer, NodeOffset + 4) :: number
-	const MinZ = buffer.readf32(NodeBuffer, NodeOffset + 8) :: number
-	const MaxX = buffer.readf32(NodeBuffer, NodeOffset + 16) :: number
-	const MaxY = buffer.readf32(NodeBuffer, NodeOffset + 20) :: number
-	const MaxZ = buffer.readf32(NodeBuffer, NodeOffset + 24) :: number
-
-	const Tx1 = (MinX - Ox) * InvDx :: number
-	const Tx2 = (MaxX - Ox) * InvDx :: number
-	local Tmin = math.min(Tx1, Tx2) :: number
-	local Tmax = math.max(Tx1, Tx2) :: number
-
-	const Ty1 = (MinY - Oy) * InvDy :: number
-	const Ty2 = (MaxY - Oy) * InvDy :: number
-	Tmin = math.max(Tmin, math.min(Ty1, Ty2))
-	Tmax = math.min(Tmax, math.max(Ty1, Ty2))
-
-	const Tz1 = (MinZ - Oz) * InvDz :: number
-	const Tz2 = (MaxZ - Oz) * InvDz :: number
-	Tmin = math.max(Tmin, math.min(Tz1, Tz2))
-	Tmax = math.min(Tmax, math.max(Tz1, Tz2))
-
-	const EntryDist = math.max(0, Tmin) :: number
-	return (Tmax >= EntryDist) and (EntryDist < MaxDist), EntryDist
-end
-
-local function TestBoxOBB(
-	Ox: number,
-	Oy: number,
-	Oz: number,
-	Dx: number,
-	Dy: number,
-	Dz: number,
-	PosX: number,
-	PosY: number,
-	PosZ: number,
-	Hx: number,
-	Hy: number,
-	Hz: number,
-	RightX: number,
-	RightY: number,
-	RightZ: number,
-	UpX: number,
-	UpY: number,
-	UpZ: number,
-	LookX: number,
-	LookY: number,
-	LookZ: number,
-	MaxDist: number
-): (boolean, number, number, number, number)
-	const DeltaX = Ox - PosX :: number
-	const DeltaY = Oy - PosY :: number
-	const DeltaZ = Oz - PosZ :: number
-
-	const LocalOx = DeltaX * RightX + DeltaY * RightY + DeltaZ * RightZ :: number
-	const LocalOy = DeltaX * UpX + DeltaY * UpY + DeltaZ * UpZ :: number
-	const LocalOz = DeltaX * LookX + DeltaY * LookY + DeltaZ * LookZ :: number
-
-	const LocalDx = Dx * RightX + Dy * RightY + Dz * RightZ :: number
-	const LocalDy = Dx * UpX + Dy * UpY + Dz * UpZ :: number
-	const LocalDz = Dx * LookX + Dy * LookY + Dz * LookZ :: number
-
-	const InvLx = if math.abs(LocalDx) > 1e-8 then 1 / LocalDx else (if LocalDx >= 0 then 1e30 else -1e30) :: number
-	const InvLy = if math.abs(LocalDy) > 1e-8 then 1 / LocalDy else (if LocalDy >= 0 then 1e30 else -1e30) :: number
-	const InvLz = if math.abs(LocalDz) > 1e-8 then 1 / LocalDz else (if LocalDz >= 0 then 1e30 else -1e30) :: number
-
-	const Tx1 = (-Hx - LocalOx) * InvLx :: number
-	const Tx2 = (Hx - LocalOx) * InvLx :: number
-	local Tmin = math.min(Tx1, Tx2) :: number
-	local Tmax = math.max(Tx1, Tx2) :: number
-	local HitAxis = 0 :: number
-
-	const Ty1 = (-Hy - LocalOy) * InvLy :: number
-	const Ty2 = (Hy - LocalOy) * InvLy :: number
-	const TyMin = math.min(Ty1, Ty2) :: number
-	const TyMax = math.max(Ty1, Ty2) :: number
-	if TyMin > Tmin then
-		Tmin = TyMin
-		HitAxis = 1
-	end
-	if TyMax < Tmax then
-		Tmax = TyMax
-	end
-
-	const Tz1 = (-Hz - LocalOz) * InvLz :: number
-	const Tz2 = (Hz - LocalOz) * InvLz :: number
-	const TzMin = math.min(Tz1, Tz2) :: number
-	const TzMax = math.max(Tz1, Tz2) :: number
-	if TzMin > Tmin then
-		Tmin = TzMin
-		HitAxis = 2
-	end
-	if TzMax < Tmax then
-		Tmax = TzMax
-	end
-
-	const EntryDist = math.max(0, Tmin) :: number
-	if Tmax < EntryDist or EntryDist >= MaxDist then
-		return false, MaxDist, 0, 0, 0
-	end
-
-	if HitAxis == 0 then
-		const Sign = if LocalDx > 0 then -1 else 1 :: number
-		return true, EntryDist, RightX * Sign, RightY * Sign, RightZ * Sign
-	elseif HitAxis == 1 then
-		const Sign = if LocalDy > 0 then -1 else 1 :: number
-		return true, EntryDist, UpX * Sign, UpY * Sign, UpZ * Sign
-	else
-		const Sign = if LocalDz > 0 then -1 else 1 :: number
-		return true, EntryDist, LookX * Sign, LookY * Sign, LookZ * Sign
-	end
-end
-
-local function TestEntityOBB(
-	EntityId: number,
-	Ox: number,
-	Oy: number,
-	Oz: number,
-	Dx: number,
-	Dy: number,
-	Dz: number,
-	MaxDist: number,
-	PositionBuffer: buffer,
-	SizeBuffer: buffer,
-	DirectionsBuffer: buffer,
-	PropertiesBuffer: buffer
-): (boolean, number, number, number, number)
-	const PropRegister = buffer.readu32(PropertiesBuffer, (EntityId - 1) * PROPERTIES_STRIDE) :: number
-	if PropRegister ~= 0 and not bit32.btest(PropRegister, FLAG_CAN_COLLIDE) then
-		return false, MaxDist, 0, 0, 0
-	end
-
-	const CompOffset = (EntityId - 1) * COMPONENT_STRIDE :: number
-
-	const PosX = buffer.readf32(PositionBuffer, CompOffset) :: number
-	const PosY = buffer.readf32(PositionBuffer, CompOffset + 4) :: number
-	const PosZ = buffer.readf32(PositionBuffer, CompOffset + 8) :: number
-
-	const Hx = math.abs(buffer.readf32(SizeBuffer, CompOffset)) * 0.5 :: number
-	const Hy = math.abs(buffer.readf32(SizeBuffer, CompOffset + 4)) * 0.5 :: number
-	const Hz = math.abs(buffer.readf32(SizeBuffer, CompOffset + 8)) * 0.5 :: number
-
-	const RelX = PosX - Ox :: number
-	const RelY = PosY - Oy :: number
-	const RelZ = PosZ - Oz :: number
-	const RadiusSq = Hx * Hx + Hy * Hy + Hz * Hz :: number
-	const Proj = RelX * Dx + RelY * Dy + RelZ * Dz :: number
-	const PerpDistSq = (RelX * RelX + RelY * RelY + RelZ * RelZ) - (Proj * Proj) :: number
-	if PerpDistSq > RadiusSq + 1e-5 then
-		return false, MaxDist, 0, 0, 0
-	end
-
-	const Radius = math.sqrt(RadiusSq) :: number
-	if Proj < -Radius or (Proj - Radius) >= MaxDist then
-		return false, MaxDist, 0, 0, 0
-	end
-
-	const DirOffset = (EntityId - 1) * DIRECTION_STRIDE :: number
-
-	local LookX = buffer.readf32(DirectionsBuffer, DirOffset) :: number
-	local LookY = buffer.readf32(DirectionsBuffer, DirOffset + 4) :: number
-	local LookZ = buffer.readf32(DirectionsBuffer, DirOffset + 8) :: number
-
-	local UpX = buffer.readf32(DirectionsBuffer, DirOffset + 12) :: number
-	local UpY = buffer.readf32(DirectionsBuffer, DirOffset + 16) :: number
-	local UpZ = buffer.readf32(DirectionsBuffer, DirOffset + 20) :: number
-
-	local RightX = buffer.readf32(DirectionsBuffer, DirOffset + 24) :: number
-	local RightY = buffer.readf32(DirectionsBuffer, DirOffset + 28) :: number
-	local RightZ = buffer.readf32(DirectionsBuffer, DirOffset + 32) :: number
-
-	if RightX * RightX + RightY * RightY + RightZ * RightZ < 0.5 then
-		LookX, LookY, LookZ = 0, 0, -1
-		UpX, UpY, UpZ = 0, 1, 0
-		RightX, RightY, RightZ = 1, 0, 0
-	end
-
-	return TestBoxOBB(
-		Ox,
-		Oy,
-		Oz,
-		Dx,
-		Dy,
-		Dz,
-		PosX,
-		PosY,
-		PosZ,
-		Hx,
-		Hy,
-		Hz,
-		RightX,
-		RightY,
-		RightZ,
-		UpX,
-		UpY,
-		UpZ,
-		LookX,
-		LookY,
-		LookZ,
-		MaxDist
-	)
-end
-
-local function IsIgnored(
-	EntityId: number,
-	DynObject: any,
-	IgnoredId: number,
-	IgnoreFilter: any
-): boolean
-	if EntityId > 0 and EntityId == IgnoredId then
-		return true
-	end
-	if IgnoreFilter == nil then
-		return false
-	end
-	if DynObject ~= nil and IgnoreFilter == DynObject then
-		return true
-	end
-	if type(IgnoreFilter) == "table" then
-		if EntityId > 0 and IgnoreFilter[EntityId] == true then
-			return true
-		end
-		for _, Item in ipairs(IgnoreFilter) do
-			if (EntityId > 0 and Item == EntityId) or (DynObject ~= nil and Item == DynObject) then
-				return true
-			end
-		end
-	end
-	return false
-end
-
--- ============================================================================
--- 4. UNIFIED 1-CALL RAYCAST (STATIC BVH + LIVE DYNAMIC OOP OBJECTS)
--- ============================================================================
-
+--[=[
+	Casts a ray through the BVH hierarchy returning the closest hit entity and OOP object.
+	Accepts both (Origin, Direction, MaxDistance, IgnoreFilter, Storage) and (Storage, Origin, Direction, ...) calling styles.
+	@param Arg1 any -- Ray origin (Vector3) or ECSStorage.
+	@param Arg2 any -- Ray direction (Vector3) or Ray origin (Vector3).
+	@param Arg3 any? -- MaxDistance (number), ECSStorage, or IgnoreFilter.
+	@param Arg4 any? -- IgnoreFilter, MaxDistance (number), or ECSStorage.
+	@param Arg5 any? -- ECSStorage or IgnoreFilter.
+	@return number? -- Hit ECS entity ID (or nil).
+	@return any? -- Hit dynamic OOP object (or nil).
+	@return number -- Hit distance along ray.
+	@return Vector3? -- Hit world position.
+	@return Vector3? -- Hit surface outward normal.
+]=]
 function BVH.Raycast(
 	Arg1: any,
 	Arg2: any,
@@ -687,24 +224,24 @@ function BVH.Raycast(
 	Arg5: any?
 ): (number?, any?, number, Vector3?, Vector3?)
 	local Origin: Vector3? = nil
-	local Dir: Vector3? = nil
+	local DirectionVector: Vector3? = nil
 	local MaxDistanceArg: number? = nil
 	local IgnoreFilter: any = nil
 	local ProvidedStorage: ECSMain.ECSStorage? = nil
 
 	if typeof(Arg1) == "Vector3" then
 		Origin = Arg1
-		Dir = if typeof(Arg2) == "Vector3" then Arg2 else nil
+		DirectionVector = if typeof(Arg2) == "Vector3" then Arg2 else nil
 		if type(Arg3) == "number" then
 			MaxDistanceArg = Arg3
-			if IsECSStorage(Arg4) then
+			if BVHHelper.IsECSStorage(Arg4) then
 				ProvidedStorage = Arg4
 				IgnoreFilter = Arg5
 			else
 				IgnoreFilter = Arg4
-				ProvidedStorage = if IsECSStorage(Arg5) then Arg5 else nil
+				ProvidedStorage = if BVHHelper.IsECSStorage(Arg5) then Arg5 else nil
 			end
-		elseif IsECSStorage(Arg3) then
+		elseif BVHHelper.IsECSStorage(Arg3) then
 			ProvidedStorage = Arg3
 			if type(Arg4) == "number" then
 				MaxDistanceArg = Arg4
@@ -714,12 +251,15 @@ function BVH.Raycast(
 			end
 		else
 			IgnoreFilter = Arg3
-			ProvidedStorage = if IsECSStorage(Arg4) then Arg4 elseif IsECSStorage(Arg5) then Arg5 else nil
+			ProvidedStorage = if BVHHelper.IsECSStorage(Arg4)
+				then Arg4
+				elseif BVHHelper.IsECSStorage(Arg5) then Arg5
+				else nil
 		end
-	elseif IsECSStorage(Arg1) then
+	elseif BVHHelper.IsECSStorage(Arg1) then
 		ProvidedStorage = Arg1
 		Origin = if typeof(Arg2) == "Vector3" then Arg2 else nil
-		Dir = if typeof(Arg3) == "Vector3" then Arg3 else nil
+		DirectionVector = if typeof(Arg3) == "Vector3" then Arg3 else nil
 		if type(Arg4) == "number" then
 			MaxDistanceArg = Arg4
 			IgnoreFilter = Arg5
@@ -728,24 +268,24 @@ function BVH.Raycast(
 		end
 	end
 
-	if not Origin or not Dir then
+	if not Origin or not DirectionVector then
 		return nil, nil, 0, nil, nil
 	end
 
-	const Ox: number, Oy: number, Oz: number = Origin.X, Origin.Y, Origin.Z
+	const OriginX: number, OriginY: number, OriginZ: number = Origin.X, Origin.Y, Origin.Z
 	if
-		Ox ~= Ox
-		or Oy ~= Oy
-		or Oz ~= Oz
-		or math.abs(Ox) == math.huge
-		or math.abs(Oy) == math.huge
-		or math.abs(Oz) == math.huge
+		OriginX ~= OriginX
+		or OriginY ~= OriginY
+		or OriginZ ~= OriginZ
+		or math.abs(OriginX) == math.huge
+		or math.abs(OriginY) == math.huge
+		or math.abs(OriginZ) == math.huge
 	then
 		return nil, nil, 0, nil, nil
 	end
 
-	const DirLen = Dir.Magnitude :: number
-	if not (DirLen > 1e-8 and DirLen < math.huge) then
+	const DirectionLength = DirectionVector.Magnitude :: number
+	if not (DirectionLength > 1e-8 and DirectionLength < math.huge) then
 		return nil, nil, 0, nil, nil
 	end
 
@@ -753,26 +293,45 @@ function BVH.Raycast(
 		return nil, nil, 0, nil, nil
 	end
 
-	const InvDirLen = 1 / DirLen :: number
-	const Dx = Dir.X * InvDirLen :: number
-	const Dy = Dir.Y * InvDirLen :: number
-	const Dz = Dir.Z * InvDirLen :: number
-	const MaxDist = if MaxDistanceArg then math.min(MaxDistanceArg, 1e15) else DirLen :: number
+	const InverseDirectionLength = 1 / DirectionLength :: number
+	const DirectionX = DirectionVector.X * InverseDirectionLength :: number
+	const DirectionY = DirectionVector.Y * InverseDirectionLength :: number
+	const DirectionZ = DirectionVector.Z * InverseDirectionLength :: number
+	const MaxDistance = if MaxDistanceArg then math.min(MaxDistanceArg, 1e15) else DirectionLength :: number
 
-	const Storage = ResolveStorage(ProvidedStorage)
+	const Storage = BVHHelper.ResolveStorage(ProvidedStorage)
 	if not Storage then
-		return nil, nil, MaxDist, nil, nil
+		return nil, nil, MaxDistance, nil, nil
 	end
 
 	const RawEntityCount = Storage.ECSData.GetCounts().EntityECSCount :: number
 	const EntityCount = math.clamp(RawEntityCount, 0, MAX_ENTITIES) :: number
-	if NeedsRebuild(Storage, EntityCount) then
+	local ShouldRebuild: boolean
+	ShouldRebuild, MutationScanCursor = BVHHelper.NeedsRebuild(
+		Storage,
+		ActiveStorage,
+		EntityCount,
+		LastBuiltEntityCount,
+		LastDynamicActiveCount,
+		LastDynamicNextId,
+		MutationScanCursor,
+		CachedStateBuffer,
+		EntityIsDynamicBuffer,
+		ItemBoundsBuffer
+	)
+	if ShouldRebuild then
 		BVH.Rebuild(Storage)
 	end
 
-	const InvDx = if math.abs(Dx) > 1e-8 then 1 / Dx else (if Dx >= 0 then 1e30 else -1e30) :: number
-	const InvDy = if math.abs(Dy) > 1e-8 then 1 / Dy else (if Dy >= 0 then 1e30 else -1e30) :: number
-	const InvDz = if math.abs(Dz) > 1e-8 then 1 / Dz else (if Dz >= 0 then 1e30 else -1e30) :: number
+	const InverseDirectionX = if math.abs(DirectionX) > 1e-8
+		then 1 / DirectionX
+		else (if DirectionX >= 0 then 1e30 else -1e30) :: number
+	const InverseDirectionY = if math.abs(DirectionY) > 1e-8
+		then 1 / DirectionY
+		else (if DirectionY >= 0 then 1e30 else -1e30) :: number
+	const InverseDirectionZ = if math.abs(DirectionZ) > 1e-8
+		then 1 / DirectionZ
+		else (if DirectionZ >= 0 then 1e30 else -1e30) :: number
 
 	const PositionBuffer = Storage.PositionData.GetData() :: buffer
 	const SizeBuffer = Storage.SizeData.GetData() :: buffer
@@ -783,16 +342,26 @@ function BVH.Raycast(
 	RayGeneration += 1
 	const CurrentRayGen = RayGeneration :: number
 	const IgnoredId = if type(IgnoreFilter) == "number" then IgnoreFilter else 0 :: number
-	const HasComplexIgnore = IgnoreFilter ~= nil and type(IgnoreFilter) ~= "number" :: boolean
+	const HasComplexIgnore = (IgnoreFilter ~= nil and type(IgnoreFilter) ~= "number") :: boolean
 
-	local ClosestDist = MaxDist :: number
+	local ClosestDistance = MaxDistance :: number
 	local HitEntityId = 0 :: number
 	local HitDynamicObject: any = nil
-	local BestNx: number, BestNy: number, BestNz: number = 0, 1, 0
+	local BestNormalX: number, BestNormalY: number, BestNormalZ: number = 0, 1, 0
 
 	-- 1. Traverse Flat-Buffer Static BVH (Near-First Child Ordering)
 	if AllocatedNodeBytes > 0 then
-		const RootHit, _ = TestNodeAABB(0, Ox, Oy, Oz, InvDx, InvDy, InvDz, ClosestDist)
+		const RootHit, _ = BVHMath.TestNodeAABB(
+			NodeBuffer,
+			0,
+			OriginX,
+			OriginY,
+			OriginZ,
+			InverseDirectionX,
+			InverseDirectionY,
+			InverseDirectionZ,
+			ClosestDistance
+		)
 		if RootHit then
 			local StackTop = 1 :: number
 			buffer.writeu32(TraversalStackBuffer, 0, 0)
@@ -812,41 +381,61 @@ function BVH.Raycast(
 						const EntityObj = if DynamicObjectsList
 							then DynamicObjectsList.GetObjectByEntityId(EntityId)
 							else nil
-						if IsIgnored(EntityId, EntityObj, IgnoredId, IgnoreFilter) then
+						if BVHHelper.IsIgnored(EntityId, EntityObj, IgnoredId, IgnoreFilter) then
 							continue
 						end
 					end
 
 					buffer.writeu32(TestedGenBuffer, EntityId * 4, CurrentRayGen)
 
-					const Hit, HitDist, Nx, Ny, Nz = TestEntityOBB(
+					const Hit, HitDistance, NormalX, NormalY, NormalZ = BVHMath.TestEntityOBB(
 						EntityId,
-						Ox,
-						Oy,
-						Oz,
-						Dx,
-						Dy,
-						Dz,
-						ClosestDist,
+						OriginX,
+						OriginY,
+						OriginZ,
+						DirectionX,
+						DirectionY,
+						DirectionZ,
+						ClosestDistance,
 						PositionBuffer,
 						SizeBuffer,
 						DirectionsBuffer,
 						PropertiesBuffer
 					)
 					if Hit then
-						ClosestDist = HitDist
+						ClosestDistance = HitDistance
 						HitEntityId = EntityId
 						HitDynamicObject = nil
-						BestNx, BestNy, BestNz = Nx, Ny, Nz
+						BestNormalX, BestNormalY, BestNormalZ = NormalX, NormalY, NormalZ
 					end
 				else
 					const LeftOffset = buffer.readu32(NodeBuffer, NodeOffset + 12) :: number
-					const HitL, DistL = TestNodeAABB(LeftOffset, Ox, Oy, Oz, InvDx, InvDy, InvDz, ClosestDist)
-					const HitR, DistR = TestNodeAABB(RightOffset, Ox, Oy, Oz, InvDx, InvDy, InvDz, ClosestDist)
+					const HitLeft, DistanceLeft = BVHMath.TestNodeAABB(
+						NodeBuffer,
+						LeftOffset,
+						OriginX,
+						OriginY,
+						OriginZ,
+						InverseDirectionX,
+						InverseDirectionY,
+						InverseDirectionZ,
+						ClosestDistance
+					)
+					const HitRight, DistanceRight = BVHMath.TestNodeAABB(
+						NodeBuffer,
+						RightOffset,
+						OriginX,
+						OriginY,
+						OriginZ,
+						InverseDirectionX,
+						InverseDirectionY,
+						InverseDirectionZ,
+						ClosestDistance
+					)
 
-					if HitL and HitR then
+					if HitLeft and HitRight then
 						if StackTop + 2 <= STACK_CAPACITY then
-							if DistL < DistR then
+							if DistanceLeft < DistanceRight then
 								buffer.writeu32(TraversalStackBuffer, StackTop * 4, RightOffset)
 								buffer.writeu32(TraversalStackBuffer, (StackTop + 1) * 4, LeftOffset)
 							else
@@ -855,10 +444,10 @@ function BVH.Raycast(
 							end
 							StackTop += 2
 						end
-					elseif HitL and StackTop < STACK_CAPACITY then
+					elseif HitLeft and StackTop < STACK_CAPACITY then
 						buffer.writeu32(TraversalStackBuffer, StackTop * 4, LeftOffset)
 						StackTop += 1
-					elseif HitR and StackTop < STACK_CAPACITY then
+					elseif HitRight and StackTop < STACK_CAPACITY then
 						buffer.writeu32(TraversalStackBuffer, StackTop * 4, RightOffset)
 						StackTop += 1
 					end
@@ -879,32 +468,32 @@ function BVH.Raycast(
 
 		if HasComplexIgnore then
 			const EntityObj = if DynamicObjectsList then DynamicObjectsList.GetObjectByEntityId(EntityId) else nil
-			if IsIgnored(EntityId, EntityObj, IgnoredId, IgnoreFilter) then
+			if BVHHelper.IsIgnored(EntityId, EntityObj, IgnoredId, IgnoreFilter) then
 				continue
 			end
 		end
 
 		buffer.writeu32(TestedGenBuffer, EntityId * 4, CurrentRayGen)
 
-		const Hit, HitDist, Nx, Ny, Nz = TestEntityOBB(
+		const Hit, HitDistance, NormalX, NormalY, NormalZ = BVHMath.TestEntityOBB(
 			EntityId,
-			Ox,
-			Oy,
-			Oz,
-			Dx,
-			Dy,
-			Dz,
-			ClosestDist,
+			OriginX,
+			OriginY,
+			OriginZ,
+			DirectionX,
+			DirectionY,
+			DirectionZ,
+			ClosestDistance,
 			PositionBuffer,
 			SizeBuffer,
 			DirectionsBuffer,
 			PropertiesBuffer
 		)
 		if Hit then
-			ClosestDist = HitDist
+			ClosestDistance = HitDistance
 			HitEntityId = EntityId
 			HitDynamicObject = nil
-			BestNx, BestNy, BestNz = Nx, Ny, Nz
+			BestNormalX, BestNormalY, BestNormalZ = NormalX, NormalY, NormalZ
 		end
 	end
 
@@ -924,37 +513,37 @@ function BVH.Raycast(
 				if BoundEntityId == IgnoredId or buffer.readu32(TestedGenBuffer, BoundEntityId * 4) == CurrentRayGen then
 					continue
 				end
-				if HasComplexIgnore and IsIgnored(BoundEntityId, DynObject, IgnoredId, IgnoreFilter) then
+				if HasComplexIgnore and BVHHelper.IsIgnored(BoundEntityId, DynObject, IgnoredId, IgnoreFilter) then
 					continue
 				end
 
 				buffer.writeu32(TestedGenBuffer, BoundEntityId * 4, CurrentRayGen)
 
-				const Hit, HitDist, Nx, Ny, Nz = TestEntityOBB(
+				const Hit, HitDistance, NormalX, NormalY, NormalZ = BVHMath.TestEntityOBB(
 					BoundEntityId,
-					Ox,
-					Oy,
-					Oz,
-					Dx,
-					Dy,
-					Dz,
-					ClosestDist,
+					OriginX,
+					OriginY,
+					OriginZ,
+					DirectionX,
+					DirectionY,
+					DirectionZ,
+					ClosestDistance,
 					PositionBuffer,
 					SizeBuffer,
 					DirectionsBuffer,
 					PropertiesBuffer
 				)
 				if Hit then
-					ClosestDist = HitDist
+					ClosestDistance = HitDistance
 					HitEntityId = BoundEntityId
 					HitDynamicObject = DynObject
-					BestNx, BestNy, BestNz = Nx, Ny, Nz
+					BestNormalX, BestNormalY, BestNormalZ = NormalX, NormalY, NormalZ
 				end
 			elseif type(DynObject) == "table" or typeof(DynObject) == "Instance" then
 				const ObjEntityId = if type(DynObject) == "table" and type((DynObject :: any).EntityId) == "number"
 					then (DynObject :: any).EntityId :: number
 					else 0
-				if IsIgnored(ObjEntityId, DynObject, IgnoredId, IgnoreFilter) then
+				if BVHHelper.IsIgnored(ObjEntityId, DynObject, IgnoredId, IgnoreFilter) then
 					continue
 				end
 				if type(DynObject) == "table" and (DynObject :: any).CanCollide == false then
@@ -968,9 +557,9 @@ function BVH.Raycast(
 				const ObjSize: Vector3? = (DynObject :: any).Size
 
 				if typeof(ObjPos) == "Vector3" and typeof(ObjSize) == "Vector3" then
-					const Hx = math.abs(ObjSize.X) * 0.5 :: number
-					const Hy = math.abs(ObjSize.Y) * 0.5 :: number
-					const Hz = math.abs(ObjSize.Z) * 0.5 :: number
+					const HalfSizeX = math.abs(ObjSize.X) * 0.5 :: number
+					const HalfSizeY = math.abs(ObjSize.Y) * 0.5 :: number
+					const HalfSizeZ = math.abs(ObjSize.Z) * 0.5 :: number
 
 					local RightX: number, RightY: number, RightZ: number = 1, 0, 0
 					local UpX: number, UpY: number, UpZ: number = 0, 1, 0
@@ -985,19 +574,19 @@ function BVH.Raycast(
 						LookX, LookY, LookZ = Look.X, Look.Y, Look.Z
 					end
 
-					const Hit, HitDist, Nx, Ny, Nz = TestBoxOBB(
-						Ox,
-						Oy,
-						Oz,
-						Dx,
-						Dy,
-						Dz,
+					const Hit, HitDistance, NormalX, NormalY, NormalZ = BVHMath.TestBoxOBB(
+						OriginX,
+						OriginY,
+						OriginZ,
+						DirectionX,
+						DirectionY,
+						DirectionZ,
 						ObjPos.X,
 						ObjPos.Y,
 						ObjPos.Z,
-						Hx,
-						Hy,
-						Hz,
+						HalfSizeX,
+						HalfSizeY,
+						HalfSizeZ,
 						RightX,
 						RightY,
 						RightZ,
@@ -1007,13 +596,13 @@ function BVH.Raycast(
 						LookX,
 						LookY,
 						LookZ,
-						ClosestDist
+						ClosestDistance
 					)
 					if Hit then
-						ClosestDist = HitDist
+						ClosestDistance = HitDistance
 						HitEntityId = ObjEntityId
 						HitDynamicObject = DynObject
-						BestNx, BestNy, BestNz = Nx, Ny, Nz
+						BestNormalX, BestNormalY, BestNormalZ = NormalX, NormalY, NormalZ
 					end
 				end
 			end
@@ -1021,7 +610,7 @@ function BVH.Raycast(
 	end
 
 	if HitEntityId == 0 and HitDynamicObject == nil then
-		return nil, nil, MaxDist, nil, nil
+		return nil, nil, MaxDistance, nil, nil
 	end
 
 	if HitDynamicObject == nil and HitEntityId > 0 and DynamicObjectsList then
@@ -1032,16 +621,28 @@ function BVH.Raycast(
 		end
 	end
 
-	const HitPosition = Vector3.new(Ox + Dx * ClosestDist, Oy + Dy * ClosestDist, Oz + Dz * ClosestDist) :: Vector3
-	const HitNormal = Vector3.new(BestNx, BestNy, BestNz) :: Vector3
+	const HitPosition = Vector3.new(
+		OriginX + DirectionX * ClosestDistance,
+		OriginY + DirectionY * ClosestDistance,
+		OriginZ + DirectionZ * ClosestDistance
+	) :: Vector3
+	const HitNormal = Vector3.new(BestNormalX, BestNormalY, BestNormalZ) :: Vector3
 
-	return if HitEntityId > 0 then HitEntityId else nil, HitDynamicObject, ClosestDist, HitPosition, HitNormal
+	return if HitEntityId > 0 then HitEntityId else nil, HitDynamicObject, ClosestDistance, HitPosition, HitNormal
 end
 
 -- ============================================================================
--- 5. FAST AABB SPATIAL QUERY
+-- 3. FAST AABB SPATIAL QUERY
 -- ============================================================================
 
+--[=[
+	Queries the spatial tree for all entities whose bounding boxes overlap the given AABB.
+	@param QueryMin Vector3 -- Minimum query bounds corner.
+	@param QueryMax Vector3 -- Maximum query bounds corner.
+	@param ResultsTable { number }? -- Optional reusable table to fill with hit entity IDs.
+	@param ProvidedStorage ECSMain.ECSStorage? -- Target ECS storage.
+	@return number -- Total count of overlapping entities found.
+]=]
 function BVH.QueryAABB(
 	QueryMin: Vector3,
 	QueryMax: Vector3,
@@ -1052,23 +653,36 @@ function BVH.QueryAABB(
 		return 0
 	end
 
-	const Storage = ResolveStorage(ProvidedStorage)
+	const Storage = BVHHelper.ResolveStorage(ProvidedStorage)
 	if not Storage then
 		return 0
 	end
 
 	const RawEntityCount = Storage.ECSData.GetCounts().EntityECSCount :: number
 	const EntityCount = math.clamp(RawEntityCount, 0, MAX_ENTITIES) :: number
-	if NeedsRebuild(Storage, EntityCount) then
+	local ShouldRebuild: boolean
+	ShouldRebuild, MutationScanCursor = BVHHelper.NeedsRebuild(
+		Storage,
+		ActiveStorage,
+		EntityCount,
+		LastBuiltEntityCount,
+		LastDynamicActiveCount,
+		LastDynamicNextId,
+		MutationScanCursor,
+		CachedStateBuffer,
+		EntityIsDynamicBuffer,
+		ItemBoundsBuffer
+	)
+	if ShouldRebuild then
 		BVH.Rebuild(Storage)
 	end
 
-	const QMinX = math.min(QueryMin.X, QueryMax.X) :: number
-	const QMinY = math.min(QueryMin.Y, QueryMax.Y) :: number
-	const QMinZ = math.min(QueryMin.Z, QueryMax.Z) :: number
-	const QMaxX = math.max(QueryMin.X, QueryMax.X) :: number
-	const QMaxY = math.max(QueryMin.Y, QueryMax.Y) :: number
-	const QMaxZ = math.max(QueryMin.Z, QueryMax.Z) :: number
+	const QueryMinX = math.min(QueryMin.X, QueryMax.X) :: number
+	const QueryMinY = math.min(QueryMin.Y, QueryMax.Y) :: number
+	const QueryMinZ = math.min(QueryMin.Z, QueryMax.Z) :: number
+	const QueryMaxX = math.max(QueryMin.X, QueryMax.X) :: number
+	const QueryMaxY = math.max(QueryMin.Y, QueryMax.Y) :: number
+	const QueryMaxZ = math.max(QueryMin.Z, QueryMax.Z) :: number
 
 	local ResultCount = 0 :: number
 
@@ -1081,12 +695,12 @@ function BVH.QueryAABB(
 			const NodeOffset = buffer.readu32(TraversalStackBuffer, StackTop * 4) :: number
 
 			if
-				buffer.readf32(NodeBuffer, NodeOffset) > QMaxX
-				or buffer.readf32(NodeBuffer, NodeOffset + 16) < QMinX
-				or buffer.readf32(NodeBuffer, NodeOffset + 4) > QMaxY
-				or buffer.readf32(NodeBuffer, NodeOffset + 20) < QMinY
-				or buffer.readf32(NodeBuffer, NodeOffset + 8) > QMaxZ
-				or buffer.readf32(NodeBuffer, NodeOffset + 24) < QMinZ
+				buffer.readf32(NodeBuffer, NodeOffset) > QueryMaxX
+				or buffer.readf32(NodeBuffer, NodeOffset + 16) < QueryMinX
+				or buffer.readf32(NodeBuffer, NodeOffset + 4) > QueryMaxY
+				or buffer.readf32(NodeBuffer, NodeOffset + 20) < QueryMinY
+				or buffer.readf32(NodeBuffer, NodeOffset + 8) > QueryMaxZ
+				or buffer.readf32(NodeBuffer, NodeOffset + 24) < QueryMinZ
 			then
 				continue
 			end
@@ -1130,13 +744,13 @@ function BVH.QueryAABB(
 		const CompOffset = (EntityId - 1) * COMPONENT_STRIDE :: number
 		const DirOffset = (EntityId - 1) * DIRECTION_STRIDE :: number
 
-		const PosX = buffer.readf32(PositionBuffer, CompOffset) :: number
-		const PosY = buffer.readf32(PositionBuffer, CompOffset + 4) :: number
-		const PosZ = buffer.readf32(PositionBuffer, CompOffset + 8) :: number
+		const PositionX = buffer.readf32(PositionBuffer, CompOffset) :: number
+		const PositionY = buffer.readf32(PositionBuffer, CompOffset + 4) :: number
+		const PositionZ = buffer.readf32(PositionBuffer, CompOffset + 8) :: number
 
-		const Hx = math.abs(buffer.readf32(SizeBuffer, CompOffset)) * 0.5 :: number
-		const Hy = math.abs(buffer.readf32(SizeBuffer, CompOffset + 4)) * 0.5 :: number
-		const Hz = math.abs(buffer.readf32(SizeBuffer, CompOffset + 8)) * 0.5 :: number
+		const HalfSizeX = math.abs(buffer.readf32(SizeBuffer, CompOffset)) * 0.5 :: number
+		const HalfSizeY = math.abs(buffer.readf32(SizeBuffer, CompOffset + 4)) * 0.5 :: number
+		const HalfSizeZ = math.abs(buffer.readf32(SizeBuffer, CompOffset + 8)) * 0.5 :: number
 
 		local LookX = buffer.readf32(DirectionsBuffer, DirOffset) :: number
 		local LookY = buffer.readf32(DirectionsBuffer, DirOffset + 4) :: number
@@ -1156,17 +770,20 @@ function BVH.QueryAABB(
 			RightX, RightY, RightZ = 1, 0, 0
 		end
 
-		const WorldHx = math.abs(RightX) * Hx + math.abs(UpX) * Hy + math.abs(LookX) * Hz :: number
-		const WorldHy = math.abs(RightY) * Hx + math.abs(UpY) * Hy + math.abs(LookY) * Hz :: number
-		const WorldHz = math.abs(RightZ) * Hx + math.abs(UpZ) * Hy + math.abs(LookZ) * Hz :: number
+		const WorldExtentX =
+			math.abs(RightX) * HalfSizeX + math.abs(UpX) * HalfSizeY + math.abs(LookX) * HalfSizeZ :: number
+		const WorldExtentY =
+			math.abs(RightY) * HalfSizeX + math.abs(UpY) * HalfSizeY + math.abs(LookY) * HalfSizeZ :: number
+		const WorldExtentZ =
+			math.abs(RightZ) * HalfSizeX + math.abs(UpZ) * HalfSizeY + math.abs(LookZ) * HalfSizeZ :: number
 
 		if
-			PosX - WorldHx <= QMaxX
-			and PosX + WorldHx >= QMinX
-			and PosY - WorldHy <= QMaxY
-			and PosY + WorldHy >= QMinY
-			and PosZ - WorldHz <= QMaxZ
-			and PosZ + WorldHz >= QMinZ
+			PositionX - WorldExtentX <= QueryMaxX
+			and PositionX + WorldExtentX >= QueryMinX
+			and PositionY - WorldExtentY <= QueryMaxY
+			and PositionY + WorldExtentY >= QueryMinY
+			and PositionZ - WorldExtentZ <= QueryMaxZ
+			and PositionZ + WorldExtentZ >= QueryMinZ
 		then
 			ResultCount += 1
 			if ResultsTable then

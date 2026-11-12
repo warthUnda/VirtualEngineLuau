@@ -1,37 +1,30 @@
+--!strict
 --!native
 --!optimize 2
 
 -- Services --
-const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const BVH = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities"):WaitForChild("BVH"))
+const PhysicsMathHelper = require(script.Parent.PhysicsMathHelper)
 
 -- Configs --
 const GRAVITY = SystemsConfigs.PhysicsGravity :: number
 const FALL_GRAVITY_MULTIPLIER = SystemsConfigs.PhysicsFallGravityMultiplier :: number
 
 const PLAYER_MASS = SystemsConfigs.PlayerMass :: number
-const PLAYER_INV_MASS = 1 / PLAYER_MASS :: number
-const PLAYER_MOVE_FORCE = SystemsConfigs.PlayerMoveForce :: number
-const PLAYER_MAX_GROUND_SPEED = SystemsConfigs.PlayerMaxGroundSpeed :: number
-const PLAYER_GROUND_FRICTION = SystemsConfigs.PlayerGroundFriction :: number
-const PLAYER_BRAKE_MULTIPLIER = SystemsConfigs.PlayerBrakeMultiplier :: number
-const PLAYER_STOP_SPEED = SystemsConfigs.PlayerStopSpeed :: number
-const PLAYER_AIR_CONTROL = SystemsConfigs.PlayerAirControlMultiplier :: number
-const PLAYER_AIR_DRAG = SystemsConfigs.PlayerAirDrag :: number
 const PLAYER_JUMP_VELOCITY = SystemsConfigs.PlayerJumpImpulse / PLAYER_MASS :: number
 const WALKABLE_NORMAL_Y = SystemsConfigs.PlayerWalkableNormalY :: number
 
 const OBJECT_LINEAR_DRAG = SystemsConfigs.ObjectLinearDrag :: number
 const OBJECT_SURFACE_FRICTION = SystemsConfigs.ObjectSurfaceFriction :: number
-const OBJECT_RESTITUTION = SystemsConfigs.ObjectRestitution :: number
 
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
 const MAX_ENTITIES = SystemsConfigs.ECSMaxEntities :: number
-const BROADPHASE_PADDING = 2.0 :: number
+const BROADPHASE_PADDING = SystemsConfigs.PhysicsBroadphasePadding :: number
 
 -- Tables --
 const BroadphaseCandidates = table.create(MAX_ENTITIES, 0) :: { number }
@@ -42,147 +35,134 @@ local PhysicsMath = {}
 -- 1. VELOCITY & INERTIA INTEGRATION
 -- ============================================================================
 
-local function ApplyStopFriction(Vx: number, Vz: number, FrictionRate: number, Dt: number): (number, number)
-	const HorizSpeed = math.sqrt(Vx * Vx + Vz * Vz) :: number
-	if HorizSpeed <= 1e-5 then
-		return 0, 0
-	end
-
-	const Control = math.max(HorizSpeed, PLAYER_STOP_SPEED) :: number
-	const Drop = Control * FrictionRate * Dt :: number
-	const Scale = math.max(0, HorizSpeed - Drop) / HorizSpeed :: number
-	return Vx * Scale, Vz * Scale
-end
-
-local function IntegrateGroundedDrive(
-	Vx: number,
-	Vz: number,
-	WishX: number,
-	WishZ: number,
-	WishScale: number,
-	Dt: number
-): (number, number)
-	if WishScale <= 1e-4 then
-		return ApplyStopFriction(Vx, Vz, PLAYER_GROUND_FRICTION * PLAYER_BRAKE_MULTIPLIER, Dt)
-	end
-
-	local ParallelSpeed = Vx * WishX + Vz * WishZ :: number
-	const LateralDecay = math.max(0, 1 - PLAYER_GROUND_FRICTION * Dt) :: number
-	const LateralX = (Vx - ParallelSpeed * WishX) * LateralDecay :: number
-	const LateralZ = (Vz - ParallelSpeed * WishZ) * LateralDecay :: number
-
-	const TargetSpeed = PLAYER_MAX_GROUND_SPEED * WishScale :: number
-	const DriveStep = (PLAYER_MOVE_FORCE * PLAYER_INV_MASS) * WishScale * Dt :: number
-
-	if ParallelSpeed < 0 then
-		const BrakeDecay = math.max(0, 1 - PLAYER_GROUND_FRICTION * PLAYER_BRAKE_MULTIPLIER * Dt) :: number
-		ParallelSpeed = math.min(TargetSpeed, ParallelSpeed * BrakeDecay + DriveStep)
-	elseif ParallelSpeed < TargetSpeed then
-		ParallelSpeed = math.min(TargetSpeed, ParallelSpeed + DriveStep)
-	else
-		ParallelSpeed = math.max(TargetSpeed, ParallelSpeed - ParallelSpeed * PLAYER_GROUND_FRICTION * Dt)
-	end
-
-	return LateralX + WishX * ParallelSpeed, LateralZ + WishZ * ParallelSpeed
-end
-
-local function IntegrateAirborneDrive(
-	Vx: number,
-	Vz: number,
-	WishX: number,
-	WishZ: number,
-	WishScale: number,
-	Dt: number
-): (number, number)
-	const AirDecay = math.max(0, 1 - PLAYER_AIR_DRAG * Dt) :: number
-	local NextVx = Vx * AirDecay :: number
-	local NextVz = Vz * AirDecay :: number
-
-	if WishScale <= 1e-4 then
-		return NextVx, NextVz
-	end
-
-	const ProjectedSpeed = NextVx * WishX + NextVz * WishZ :: number
-	const TargetSpeed = PLAYER_MAX_GROUND_SPEED * WishScale :: number
-	const MaxAirStep = (PLAYER_MOVE_FORCE * PLAYER_INV_MASS * PLAYER_AIR_CONTROL) * WishScale * Dt :: number
-	const AirAdd = math.clamp(TargetSpeed - ProjectedSpeed, 0, MaxAirStep) :: number
-
-	return NextVx + WishX * AirAdd, NextVz + WishZ * AirAdd
-end
-
+--[=[
+	Steps player linear velocity forward by DeltaTime, applying ground or airborne wish drive, friction, jump, and gravity.
+	@param VelocityX number -- Current velocity X.
+	@param VelocityY number -- Current velocity Y.
+	@param VelocityZ number -- Current velocity Z.
+	@param WishX number -- Normalized horizontal wish direction X.
+	@param WishZ number -- Normalized horizontal wish direction Z.
+	@param WishScale number -- Desired movement speed scalar.
+	@param JumpRequested boolean -- True if jump button is active.
+	@param IsGrounded boolean -- True if resting on a walkable surface.
+	@param DeltaTime number -- Elapsed frame time in seconds.
+	@return (number, number, number, boolean) -- NextVelocityX, NextVelocityY, NextVelocityZ, NextGrounded.
+]=]
 function PhysicsMath.StepPlayerVelocity(
-	Vx: number,
-	Vy: number,
-	Vz: number,
+	VelocityX: number,
+	VelocityY: number,
+	VelocityZ: number,
 	WishX: number,
 	WishZ: number,
 	WishScale: number,
 	JumpRequested: boolean,
 	IsGrounded: boolean,
-	Dt: number
+	DeltaTime: number
 ): (number, number, number, boolean)
-	local NextVx = Vx :: number
-	local NextVy = Vy :: number
-	local NextVz = Vz :: number
+	local NextVelocityX = VelocityX :: number
+	local NextVelocityY = VelocityY :: number
+	local NextVelocityZ = VelocityZ :: number
 	local NextGrounded = IsGrounded :: boolean
 
 	if NextGrounded then
-		NextVx, NextVz = IntegrateGroundedDrive(NextVx, NextVz, WishX, WishZ, WishScale, Dt)
+		NextVelocityX, NextVelocityZ = PhysicsMathHelper.IntegrateGroundedDrive(
+			NextVelocityX,
+			NextVelocityZ,
+			WishX,
+			WishZ,
+			WishScale,
+			DeltaTime
+		)
 		if JumpRequested then
-			NextVy = math.max(NextVy, PLAYER_JUMP_VELOCITY)
+			NextVelocityY = math.max(NextVelocityY, PLAYER_JUMP_VELOCITY)
 			NextGrounded = false
 		end
 	else
-		NextVx, NextVz = IntegrateAirborneDrive(NextVx, NextVz, WishX, WishZ, WishScale, Dt)
+		NextVelocityX, NextVelocityZ = PhysicsMathHelper.IntegrateAirborneDrive(
+			NextVelocityX,
+			NextVelocityZ,
+			WishX,
+			WishZ,
+			WishScale,
+			DeltaTime
+		)
 	end
 
-	const GravityScale = if NextVy < 0 then FALL_GRAVITY_MULTIPLIER else 1.0 :: number
-	NextVy -= GRAVITY * GravityScale * Dt
+	const GravityScale = if NextVelocityY < 0 then FALL_GRAVITY_MULTIPLIER else 1.0 :: number
+	NextVelocityY -= GRAVITY * GravityScale * DeltaTime
 
-	return NextVx, NextVy, NextVz, NextGrounded
+	return NextVelocityX, NextVelocityY, NextVelocityZ, NextGrounded
 end
 
+--[=[
+	Integrates external forces, gravity, and drag onto a dynamic object's linear velocity.
+	@param VelocityX number -- Current velocity X.
+	@param VelocityY number -- Current velocity Y.
+	@param VelocityZ number -- Current velocity Z.
+	@param ForceX number -- Net force X in Newtons.
+	@param ForceY number -- Net force Y in Newtons.
+	@param ForceZ number -- Net force Z in Newtons.
+	@param InverseMass number -- 1 / mass in kg.
+	@param IsGrounded boolean -- Whether resting on a surface.
+	@param DeltaTime number -- Elapsed frame time in seconds.
+	@return (number, number, number) -- NextVelocityX, NextVelocityY, NextVelocityZ.
+]=]
 function PhysicsMath.StepObjectVelocity(
-	Vx: number,
-	Vy: number,
-	Vz: number,
+	VelocityX: number,
+	VelocityY: number,
+	VelocityZ: number,
 	ForceX: number,
 	ForceY: number,
 	ForceZ: number,
-	InvMass: number,
+	InverseMass: number,
 	IsGrounded: boolean,
-	Dt: number
+	DeltaTime: number
 ): (number, number, number)
-	const AccelScale = InvMass * Dt :: number
-	local NextVx = Vx + ForceX * AccelScale :: number
-	local NextVy = Vy + ForceY * AccelScale - GRAVITY * Dt :: number
-	local NextVz = Vz + ForceZ * AccelScale :: number
+	const AccelerationScale = InverseMass * DeltaTime :: number
+	local NextVelocityX = VelocityX + ForceX * AccelerationScale :: number
+	local NextVelocityY = VelocityY + ForceY * AccelerationScale - GRAVITY * DeltaTime :: number
+	local NextVelocityZ = VelocityZ + ForceZ * AccelerationScale :: number
 
-	const LinearDecay = math.max(0, 1 - OBJECT_LINEAR_DRAG * Dt) :: number
-	NextVx *= LinearDecay
-	NextVy *= LinearDecay
-	NextVz *= LinearDecay
+	const LinearDecay = math.max(0, 1 - OBJECT_LINEAR_DRAG * DeltaTime) :: number
+	NextVelocityX *= LinearDecay
+	NextVelocityY *= LinearDecay
+	NextVelocityZ *= LinearDecay
 
 	if IsGrounded then
-		const SurfaceDecay = math.max(0, 1 - OBJECT_SURFACE_FRICTION * Dt) :: number
-		NextVx *= SurfaceDecay
-		NextVz *= SurfaceDecay
+		const SurfaceDecay = math.max(0, 1 - OBJECT_SURFACE_FRICTION * DeltaTime) :: number
+		NextVelocityX *= SurfaceDecay
+		NextVelocityZ *= SurfaceDecay
 	end
 
-	return NextVx, NextVy, NextVz
+	return NextVelocityX, NextVelocityY, NextVelocityZ
 end
 
 -- ============================================================================
 -- 2. COLLISION DETECTION & IMPULSE RESOLUTION (BOX VS ECS OBB)
 -- ============================================================================
 
+--[=[
+	Performs a Separating Axis Theorem (SAT) collision test between an axis-aligned box body and an oriented ECS box.
+	@param BodyX number -- Center position X of the testing body.
+	@param BodyY number -- Center position Y of the testing body.
+	@param BodyZ number -- Center position Z of the testing body.
+	@param BodyHalfSizeX number -- Half size X of the testing body.
+	@param BodyHalfSizeY number -- Half size Y of the testing body.
+	@param BodyHalfSizeZ number -- Half size Z of the testing body.
+	@param CompOffset number -- Byte offset in position/size buffers for the target entity.
+	@param DirOffset number -- Byte offset in directions buffer for the target entity.
+	@param PositionBuffer buffer -- ECS positions buffer.
+	@param SizeBuffer buffer -- ECS sizes buffer.
+	@param DirectionsBuffer buffer -- ECS directions buffer.
+	@return (boolean, number, number, number, number) -- Overlaps, NormalX, NormalY, NormalZ, Penetration.
+]=]
 function PhysicsMath.TestBoxVsOBB(
 	BodyX: number,
 	BodyY: number,
 	BodyZ: number,
-	BodyHx: number,
-	BodyHy: number,
-	BodyHz: number,
+	BodyHalfSizeX: number,
+	BodyHalfSizeY: number,
+	BodyHalfSizeZ: number,
 	CompOffset: number,
 	DirOffset: number,
 	PositionBuffer: buffer,
@@ -196,16 +176,16 @@ function PhysicsMath.TestBoxVsOBB(
 		return false, 0, 0, 0, 0
 	end
 
-	const Dx = BodyX - buffer.readf32(PositionBuffer, CompOffset) :: number
-	const Dy = BodyY - buffer.readf32(PositionBuffer, CompOffset + 4) :: number
-	const Dz = BodyZ - buffer.readf32(PositionBuffer, CompOffset + 8) :: number
+	const DeltaX = BodyX - buffer.readf32(PositionBuffer, CompOffset) :: number
+	const DeltaY = BodyY - buffer.readf32(PositionBuffer, CompOffset + 4) :: number
+	const DeltaZ = BodyZ - buffer.readf32(PositionBuffer, CompOffset + 8) :: number
 
 	-- Broadphase rejection before reading the 36-byte orientation basis
-	const BroadRadius = (SizeX + SizeY + SizeZ) * 0.5 :: number
+	const BroadphaseRadius = (SizeX + SizeY + SizeZ) * 0.5 :: number
 	if
-		math.abs(Dx) > BodyHx + BroadRadius
-		or math.abs(Dy) > BodyHy + BroadRadius
-		or math.abs(Dz) > BodyHz + BroadRadius
+		math.abs(DeltaX) > BodyHalfSizeX + BroadphaseRadius
+		or math.abs(DeltaY) > BodyHalfSizeY + BroadphaseRadius
+		or math.abs(DeltaZ) > BodyHalfSizeZ + BroadphaseRadius
 	then
 		return false, 0, 0, 0, 0
 	end
@@ -228,170 +208,127 @@ function PhysicsMath.TestBoxVsOBB(
 		RightX, RightY, RightZ = 1, 0, 0
 	end
 
-	const Hx: number, Hy: number, Hz: number = SizeX * 0.5, SizeY * 0.5, SizeZ * 0.5
+	const HalfSizeX: number, HalfSizeY: number, HalfSizeZ: number = SizeX * 0.5, SizeY * 0.5, SizeZ * 0.5
 
-	const WorldHx = math.abs(RightX) * Hx + math.abs(UpX) * Hy + math.abs(LookX) * Hz :: number
-	const OverlapX = (BodyHx + WorldHx) - math.abs(Dx) :: number
+	const WorldExtentX =
+		math.abs(RightX) * HalfSizeX + math.abs(UpX) * HalfSizeY + math.abs(LookX) * HalfSizeZ :: number
+	const OverlapX = (BodyHalfSizeX + WorldExtentX) - math.abs(DeltaX) :: number
 	if OverlapX <= 0 then
 		return false, 0, 0, 0, 0
 	end
 
-	const WorldHy = math.abs(RightY) * Hx + math.abs(UpY) * Hy + math.abs(LookY) * Hz :: number
-	const OverlapY = (BodyHy + WorldHy) - math.abs(Dy) :: number
+	const WorldExtentY =
+		math.abs(RightY) * HalfSizeX + math.abs(UpY) * HalfSizeY + math.abs(LookY) * HalfSizeZ :: number
+	const OverlapY = (BodyHalfSizeY + WorldExtentY) - math.abs(DeltaY) :: number
 	if OverlapY <= 0 then
 		return false, 0, 0, 0, 0
 	end
 
-	const WorldHz = math.abs(RightZ) * Hx + math.abs(UpZ) * Hy + math.abs(LookZ) * Hz :: number
-	const OverlapZ = (BodyHz + WorldHz) - math.abs(Dz) :: number
+	const WorldExtentZ =
+		math.abs(RightZ) * HalfSizeX + math.abs(UpZ) * HalfSizeY + math.abs(LookZ) * HalfSizeZ :: number
+	const OverlapZ = (BodyHalfSizeZ + WorldExtentZ) - math.abs(DeltaZ) :: number
 	if OverlapZ <= 0 then
 		return false, 0, 0, 0, 0
 	end
 
 	local MinOverlap = OverlapY :: number
-	local BestNx = 0 :: number
-	local BestNy = if Dy >= 0 then 1 else -1 :: number
-	local BestNz = 0 :: number
+	local BestNormalX = 0 :: number
+	local BestNormalY = if DeltaY >= 0 then 1 else -1 :: number
+	local BestNormalZ = 0 :: number
 
 	if OverlapX < MinOverlap then
 		MinOverlap = OverlapX
-		BestNx = if Dx >= 0 then 1 else -1
-		BestNy = 0
-		BestNz = 0
+		BestNormalX = if DeltaX >= 0 then 1 else -1
+		BestNormalY = 0
+		BestNormalZ = 0
 	end
 
 	if OverlapZ < MinOverlap then
 		MinOverlap = OverlapZ
-		BestNx = 0
-		BestNy = 0
-		BestNz = if Dz >= 0 then 1 else -1
+		BestNormalX = 0
+		BestNormalY = 0
+		BestNormalZ = if DeltaZ >= 0 then 1 else -1
 	end
 
-	const DistU = Dx * UpX + Dy * UpY + Dz * UpZ :: number
-	const BodyProjU = math.abs(UpX) * BodyHx + math.abs(UpY) * BodyHy + math.abs(UpZ) * BodyHz :: number
-	const OverlapU = (BodyProjU + Hy) - math.abs(DistU) :: number
-	if OverlapU <= 0 then
+	const UpAxisDistance = DeltaX * UpX + DeltaY * UpY + DeltaZ * UpZ :: number
+	const BodyProjectedUp =
+		math.abs(UpX) * BodyHalfSizeX + math.abs(UpY) * BodyHalfSizeY + math.abs(UpZ) * BodyHalfSizeZ :: number
+	const OverlapUp = (BodyProjectedUp + HalfSizeY) - math.abs(UpAxisDistance) :: number
+	if OverlapUp <= 0 then
 		return false, 0, 0, 0, 0
 	end
 
-	if OverlapU < MinOverlap then
-		const SignU = if DistU >= 0 then 1 else -1 :: number
-		MinOverlap = OverlapU
-		BestNx, BestNy, BestNz = UpX * SignU, UpY * SignU, UpZ * SignU
+	if OverlapUp < MinOverlap then
+		const UpAxisSign = if UpAxisDistance >= 0 then 1 else -1 :: number
+		MinOverlap = OverlapUp
+		BestNormalX, BestNormalY, BestNormalZ = UpX * UpAxisSign, UpY * UpAxisSign, UpZ * UpAxisSign
 	end
 
-	const DistR = Dx * RightX + Dy * RightY + Dz * RightZ :: number
-	const BodyProjR = math.abs(RightX) * BodyHx + math.abs(RightY) * BodyHy + math.abs(RightZ) * BodyHz :: number
-	const OverlapR = (BodyProjR + Hx) - math.abs(DistR) :: number
-	if OverlapR <= 0 then
+	const RightAxisDistance = DeltaX * RightX + DeltaY * RightY + DeltaZ * RightZ :: number
+	const BodyProjectedRight =
+		math.abs(RightX) * BodyHalfSizeX + math.abs(RightY) * BodyHalfSizeY + math.abs(RightZ) * BodyHalfSizeZ :: number
+	const OverlapRight = (BodyProjectedRight + HalfSizeX) - math.abs(RightAxisDistance) :: number
+	if OverlapRight <= 0 then
 		return false, 0, 0, 0, 0
 	end
 
-	if OverlapR < MinOverlap then
-		const SignR = if DistR >= 0 then 1 else -1 :: number
-		MinOverlap = OverlapR
-		BestNx, BestNy, BestNz = RightX * SignR, RightY * SignR, RightZ * SignR
+	if OverlapRight < MinOverlap then
+		const RightAxisSign = if RightAxisDistance >= 0 then 1 else -1 :: number
+		MinOverlap = OverlapRight
+		BestNormalX, BestNormalY, BestNormalZ = RightX * RightAxisSign, RightY * RightAxisSign, RightZ * RightAxisSign
 	end
 
-	const DistL = Dx * LookX + Dy * LookY + Dz * LookZ :: number
-	const BodyProjL = math.abs(LookX) * BodyHx + math.abs(LookY) * BodyHy + math.abs(LookZ) * BodyHz :: number
-	const OverlapL = (BodyProjL + Hz) - math.abs(DistL) :: number
-	if OverlapL <= 0 then
+	const LookAxisDistance = DeltaX * LookX + DeltaY * LookY + DeltaZ * LookZ :: number
+	const BodyProjectedLook =
+		math.abs(LookX) * BodyHalfSizeX + math.abs(LookY) * BodyHalfSizeY + math.abs(LookZ) * BodyHalfSizeZ :: number
+	const OverlapLook = (BodyProjectedLook + HalfSizeZ) - math.abs(LookAxisDistance) :: number
+	if OverlapLook <= 0 then
 		return false, 0, 0, 0, 0
 	end
 
-	if OverlapL < MinOverlap then
-		const SignL = if DistL >= 0 then 1 else -1 :: number
-		MinOverlap = OverlapL
-		BestNx, BestNy, BestNz = LookX * SignL, LookY * SignL, LookZ * SignL
+	if OverlapLook < MinOverlap then
+		const LookAxisSign = if LookAxisDistance >= 0 then 1 else -1 :: number
+		MinOverlap = OverlapLook
+		BestNormalX, BestNormalY, BestNormalZ = LookX * LookAxisSign, LookY * LookAxisSign, LookZ * LookAxisSign
 	end
 
-	return true, BestNx, BestNy, BestNz, MinOverlap
+	return true, BestNormalX, BestNormalY, BestNormalZ, MinOverlap
 end
 
-local function ResolveDynamicPairContact(
-	BodyX: number,
-	BodyY: number,
-	BodyZ: number,
-	Vx: number,
-	Vy: number,
-	Vz: number,
-	BodyInvMass: number,
-	OtherEntityIndex: number,
-	Nx: number,
-	Ny: number,
-	Nz: number,
-	Penetration: number,
-	PositionBuffer: buffer,
-	DynamicFlags: buffer,
-	ObjectVelocityBuffer: buffer,
-	ObjectInvMassBuffer: buffer
-): (number, number, number, number, number, number)
-	const FlagIndex = OtherEntityIndex - 1 :: number
-	const OtherCompOffset = FlagIndex * COMPONENT_STRIDE :: number
-	const OtherInvMass = buffer.readf32(ObjectInvMassBuffer, FlagIndex * 4) :: number
-	const TotalInvMass = BodyInvMass + OtherInvMass :: number
-
-	if TotalInvMass <= 1e-6 then
-		return BodyX + Nx * Penetration, BodyY + Ny * Penetration, BodyZ + Nz * Penetration, Vx, Vy, Vz
-	end
-
-	buffer.writeu8(DynamicFlags, FlagIndex, 1)
-
-	const BodyShare = BodyInvMass / TotalInvMass :: number
-	const OtherShare = OtherInvMass / TotalInvMass :: number
-
-	const NextBodyX = BodyX + Nx * (Penetration * BodyShare) :: number
-	const NextBodyY = BodyY + Ny * (Penetration * BodyShare) :: number
-	const NextBodyZ = BodyZ + Nz * (Penetration * BodyShare) :: number
-
-	buffer.writef32(
-		PositionBuffer,
-		OtherCompOffset,
-		buffer.readf32(PositionBuffer, OtherCompOffset) - Nx * (Penetration * OtherShare)
-	)
-	buffer.writef32(
-		PositionBuffer,
-		OtherCompOffset + 4,
-		buffer.readf32(PositionBuffer, OtherCompOffset + 4) - Ny * (Penetration * OtherShare)
-	)
-	buffer.writef32(
-		PositionBuffer,
-		OtherCompOffset + 8,
-		buffer.readf32(PositionBuffer, OtherCompOffset + 8) - Nz * (Penetration * OtherShare)
-	)
-
-	const OtherVx = buffer.readf32(ObjectVelocityBuffer, OtherCompOffset) :: number
-	const OtherVy = buffer.readf32(ObjectVelocityBuffer, OtherCompOffset + 4) :: number
-	const OtherVz = buffer.readf32(ObjectVelocityBuffer, OtherCompOffset + 8) :: number
-
-	const RelVn = (Vx - OtherVx) * Nx + (Vy - OtherVy) * Ny + (Vz - OtherVz) * Nz :: number
-	if RelVn >= 0 then
-		return NextBodyX, NextBodyY, NextBodyZ, Vx, Vy, Vz
-	end
-
-	const ImpulseScalar = -(1 + OBJECT_RESTITUTION) * RelVn / TotalInvMass :: number
-	const BodyImpulse = ImpulseScalar * BodyInvMass :: number
-	const OtherImpulse = ImpulseScalar * OtherInvMass :: number
-
-	buffer.writef32(ObjectVelocityBuffer, OtherCompOffset, OtherVx - Nx * OtherImpulse)
-	buffer.writef32(ObjectVelocityBuffer, OtherCompOffset + 4, OtherVy - Ny * OtherImpulse)
-	buffer.writef32(ObjectVelocityBuffer, OtherCompOffset + 8, OtherVz - Nz * OtherImpulse)
-
-	return NextBodyX, NextBodyY, NextBodyZ, Vx + Nx * BodyImpulse, Vy + Ny * BodyImpulse, Vz + Nz * BodyImpulse
-end
-
+--[=[
+	Resolves broadphase and narrowphase collisions between a dynamic body and the world using BVH and SAT.
+	@param BodyX number -- Body center position X.
+	@param BodyY number -- Body center position Y.
+	@param BodyZ number -- Body center position Z.
+	@param BodyHalfSizeX number -- Body half extent X.
+	@param BodyHalfSizeY number -- Body half extent Y.
+	@param BodyHalfSizeZ number -- Body half extent Z.
+	@param VelocityX number -- Body linear velocity X.
+	@param VelocityY number -- Body linear velocity Y.
+	@param VelocityZ number -- Body linear velocity Z.
+	@param BodyInverseMass number -- 1 / mass in kg.
+	@param Restitution number -- Coefficient of restitution.
+	@param IgnoreEntityId number -- Entity ID to ignore during collision.
+	@param EntityCount number -- Total active ECS entity count.
+	@param PositionBuffer buffer -- ECS positions buffer.
+	@param SizeBuffer buffer -- ECS sizes buffer.
+	@param DirectionsBuffer buffer -- ECS directions buffer.
+	@param DynamicFlags buffer -- ECS dynamic flags buffer.
+	@param ObjectVelocityBuffer buffer -- Dynamic objects velocity buffer.
+	@param ObjectInvMassBuffer buffer -- Dynamic objects inverse mass buffer.
+	@return (number, number, number, number, number, number, boolean) -- NextX, NextY, NextZ, NextVelX, NextVelY, NextVelZ, Grounded.
+]=]
 function PhysicsMath.ResolveBodyWorldCollisions(
 	BodyX: number,
 	BodyY: number,
 	BodyZ: number,
-	BodyHx: number,
-	BodyHy: number,
-	BodyHz: number,
-	Vx: number,
-	Vy: number,
-	Vz: number,
-	BodyInvMass: number,
+	BodyHalfSizeX: number,
+	BodyHalfSizeY: number,
+	BodyHalfSizeZ: number,
+	VelocityX: number,
+	VelocityY: number,
+	VelocityZ: number,
+	BodyInverseMass: number,
 	Restitution: number,
 	IgnoreEntityId: number,
 	EntityCount: number,
@@ -405,14 +342,14 @@ function PhysicsMath.ResolveBodyWorldCollisions(
 	local NextX = BodyX :: number
 	local NextY = BodyY :: number
 	local NextZ = BodyZ :: number
-	local NextVx = Vx :: number
-	local NextVy = Vy :: number
-	local NextVz = Vz :: number
+	local NextVelocityX = VelocityX :: number
+	local NextVelocityY = VelocityY :: number
+	local NextVelocityZ = VelocityZ :: number
 	local Grounded = false :: boolean
 
-	const QueryPadX = BodyHx + BROADPHASE_PADDING :: number
-	const QueryPadY = BodyHy + BROADPHASE_PADDING :: number
-	const QueryPadZ = BodyHz + BROADPHASE_PADDING :: number
+	const QueryPadX = BodyHalfSizeX + BROADPHASE_PADDING :: number
+	const QueryPadY = BodyHalfSizeY + BROADPHASE_PADDING :: number
+	const QueryPadZ = BodyHalfSizeZ + BROADPHASE_PADDING :: number
 	const CandidateCount = BVH.QueryAABB(
 		Vector3.new(NextX - QueryPadX, NextY - QueryPadY, NextZ - QueryPadZ),
 		Vector3.new(NextX + QueryPadX, NextY + QueryPadY, NextZ + QueryPadZ),
@@ -420,73 +357,75 @@ function PhysicsMath.ResolveBodyWorldCollisions(
 	) :: number
 
 	for CandidateIdx = 1, CandidateCount do
-		const i = BroadphaseCandidates[CandidateIdx] :: number
-		if i == IgnoreEntityId or i < 1 or i > EntityCount then
+		const EntityId = BroadphaseCandidates[CandidateIdx] :: number
+		if EntityId == IgnoreEntityId or EntityId < 1 or EntityId > EntityCount then
 			continue
 		end
 
-		const CompOffset = (i - 1) * COMPONENT_STRIDE :: number
-		const DirOffset = (i - 1) * DIRECTION_STRIDE :: number
+		const CompOffset = (EntityId - 1) * COMPONENT_STRIDE :: number
+		const DirOffset = (EntityId - 1) * DIRECTION_STRIDE :: number
 
-		const Hit: boolean, Nx: number, Ny: number, Nz: number, Penetration: number = PhysicsMath.TestBoxVsOBB(
-			NextX,
-			NextY,
-			NextZ,
-			BodyHx,
-			BodyHy,
-			BodyHz,
-			CompOffset,
-			DirOffset,
-			PositionBuffer,
-			SizeBuffer,
-			DirectionsBuffer
-		)
+		const Hit: boolean, NormalX: number, NormalY: number, NormalZ: number, Penetration: number =
+			PhysicsMath.TestBoxVsOBB(
+				NextX,
+				NextY,
+				NextZ,
+				BodyHalfSizeX,
+				BodyHalfSizeY,
+				BodyHalfSizeZ,
+				CompOffset,
+				DirOffset,
+				PositionBuffer,
+				SizeBuffer,
+				DirectionsBuffer
+			)
 
 		if not Hit then
 			continue
 		end
 
-		if Ny >= WALKABLE_NORMAL_Y then
+		if NormalY >= WALKABLE_NORMAL_Y then
 			Grounded = true
 		end
 
-		const OtherDynamicState = buffer.readu8(DynamicFlags, i - 1) :: number
+		const OtherDynamicState = buffer.readu8(DynamicFlags, EntityId - 1) :: number
 		if OtherDynamicState > 0 then
-			NextX, NextY, NextZ, NextVx, NextVy, NextVz = ResolveDynamicPairContact(
-				NextX,
-				NextY,
-				NextZ,
-				NextVx,
-				NextVy,
-				NextVz,
-				BodyInvMass,
-				i,
-				Nx,
-				Ny,
-				Nz,
-				Penetration,
-				PositionBuffer,
-				DynamicFlags,
-				ObjectVelocityBuffer,
-				ObjectInvMassBuffer
-			)
+			NextX, NextY, NextZ, NextVelocityX, NextVelocityY, NextVelocityZ =
+				PhysicsMathHelper.ResolveDynamicPairContact(
+					NextX,
+					NextY,
+					NextZ,
+					NextVelocityX,
+					NextVelocityY,
+					NextVelocityZ,
+					BodyInverseMass,
+					EntityId,
+					NormalX,
+					NormalY,
+					NormalZ,
+					Penetration,
+					PositionBuffer,
+					DynamicFlags,
+					ObjectVelocityBuffer,
+					ObjectInvMassBuffer
+				)
 			continue
 		end
 
-		NextX += Nx * Penetration
-		NextY += Ny * Penetration
-		NextZ += Nz * Penetration
+		NextX += NormalX * Penetration
+		NextY += NormalY * Penetration
+		NextZ += NormalZ * Penetration
 
-		const Vn = NextVx * Nx + NextVy * Ny + NextVz * Nz :: number
-		if Vn < 0 then
-			const BounceScale = -(1 + Restitution) * Vn :: number
-			NextVx += Nx * BounceScale
-			NextVy += Ny * BounceScale
-			NextVz += Nz * BounceScale
+		const NormalVelocity = NextVelocityX * NormalX + NextVelocityY * NormalY + NextVelocityZ * NormalZ :: number
+		if NormalVelocity < 0 then
+			const BounceScale = -(1 + Restitution) * NormalVelocity :: number
+			NextVelocityX += NormalX * BounceScale
+			NextVelocityY += NormalY * BounceScale
+			NextVelocityZ += NormalZ * BounceScale
 		end
 	end
 
-	return NextX, NextY, NextZ, NextVx, NextVy, NextVz, Grounded
+	return NextX, NextY, NextZ, NextVelocityX, NextVelocityY, NextVelocityZ, Grounded
 end
 
 return PhysicsMath

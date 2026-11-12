@@ -1,10 +1,11 @@
+--!strict
 --!native
 --!optimize 2
 
 -- Services --
-const Players = game:GetService("Players") :: Players
-const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
-const ServerScriptService = game:GetService("ServerScriptService") :: ServerScriptService
+const Players = game:GetService("Players")
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const ServerScriptService = game:GetService("ServerScriptService")
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
@@ -49,12 +50,23 @@ local PlayerFunctions = {}
 -- 1. PLAYER DELTA STATE & CHANGE DETECTION FUNCTIONS
 -- ============================================================================
 
+--[=[
+	Cleans up the delta replication state cache for a leaving player.
+	@param PlayerObject Player -- Player instance to remove.
+]=]
 function PlayerFunctions.RemovePlayerState(PlayerObject: Player)
 	PlayerStates[PlayerObject] = nil
 end
 
 Players.PlayerRemoving:Connect(PlayerFunctions.RemovePlayerState)
 
+--[=[
+	Retrieves or instantiates the cached replication shadow buffers for a player.
+	@param PlayerObject Player -- Target replicating player.
+	@param Character Model? -- Current player character model.
+	@param EntityCount number -- Current total world entity count.
+	@return PlayerDeltaState -- Player's delta tracking state.
+]=]
 function PlayerFunctions.GetOrCreatePlayerState(
 	PlayerObject: Player,
 	Character: Model?,
@@ -87,6 +99,17 @@ function PlayerFunctions.GetOrCreatePlayerState(
 	return State
 end
 
+--[=[
+	Checks whether an entity's position, orientation, visual, size, or directions have changed since last replication.
+	@param Offset number -- Byte offset in component buffers.
+	@param DirectionOffset number -- Byte offset in directions buffers.
+	@param CachedPositions buffer -- Player's shadow position buffer.
+	@param CachedOrientations buffer -- Player's shadow orientation buffer.
+	@param CachedVisuals buffer -- Player's shadow visual buffer.
+	@param CachedSizes buffer -- Player's shadow size buffer.
+	@param CachedDirections buffer -- Player's shadow directions buffer.
+	@return boolean -- True if any component byte differs.
+]=]
 function PlayerFunctions.HasEntityChanged(
 	Offset: number,
 	DirectionOffset: number,

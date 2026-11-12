@@ -1,19 +1,27 @@
+--!strict
 --!native
 --!optimize 2
 
 -- Services --
-const RunService = game:GetService("RunService") :: RunService
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const RunService = game:GetService("RunService")
 
 -- Static References --
 const CurrentCamera = workspace.CurrentCamera :: Camera
 
+-- Modules --
+const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const CameraHelper = require(script.Parent.CameraHelper)
+
 -- Configs --
-const FIXED_POSITION = Vector3.new(0, 1000, -5000) :: Vector3
+const FIXED_POSITION = SystemsConfigs.CameraFixedPosition :: Vector3
+const DEFAULT_CAMERA_CFRAME = SystemsConfigs.DefaultCameraCFrame :: CFrame
+const DEFAULT_CAMERA_FOV = SystemsConfigs.DefaultCameraFOV :: number
 
 -- Tables --
 local CameraTable = {
-	CameraCFrame = CFrame.new(5, 5, 5),
-	CameraFOV = 70,
+	CameraCFrame = DEFAULT_CAMERA_CFRAME,
+	CameraFOV = DEFAULT_CAMERA_FOV,
 	CameraType = Enum.CameraType.Scriptable,
 	CameraSubject = nil :: Instance?,
 }
@@ -24,13 +32,6 @@ local CameraUp = Vector3.new(0, 1, 0) :: Vector3
 local CameraLook = Vector3.new(0, 0, 1) :: Vector3
 
 local CameraStore = {}
-
-local function VectorsToRotation(LookVector: Vector3, UpVector: Vector3, RightVector: Vector3): CFrame
-	const Vz = -LookVector.Unit :: Vector3
-	const Vy = UpVector.Unit :: Vector3
-	const Vx = RightVector.Unit :: Vector3
-	return CFrame.fromMatrix(Vector3.zero, Vx, Vy, Vz)
-end
 
 -- ============================================================================
 -- 1. CAMERA SYNC - UPDATES CAMERA STATE EACH FRAME
@@ -44,26 +45,46 @@ RunService.RenderStepped:Connect(function()
 	CameraUp = CameraCFrame.UpVector
 	CameraLook = CameraCFrame.LookVector
 
-	const TargetRotation = VectorsToRotation(CameraLook, CameraUp, CameraRight)
+	const TargetRotation = CameraHelper.VectorsToRotation(CameraLook, CameraUp, CameraRight)
 	CurrentCamera.CFrame = CFrame.new(FIXED_POSITION) * TargetRotation
 end)
 
+--[=[
+	Returns the shared camera configuration and state table.
+	@return table -- Camera state dictionary containing CameraCFrame and CameraFOV.
+]=]
 function CameraStore.GetCameraTable()
 	return CameraTable
 end
 
+--[=[
+	Returns the latest cached camera world position.
+	@return Vector3 -- Current camera world position.
+]=]
 function CameraStore.GetCameraPosition(): Vector3
 	return CameraPosition
 end
 
+--[=[
+	Returns the current camera RightVector basis vector.
+	@return Vector3 -- Current camera right direction.
+]=]
 function CameraStore.GetCameraRight(): Vector3
 	return CameraRight
 end
 
+--[=[
+	Returns the current camera UpVector basis vector.
+	@return Vector3 -- Current camera up direction.
+]=]
 function CameraStore.GetCameraUp(): Vector3
 	return CameraUp
 end
 
+--[=[
+	Returns the current camera LookVector basis vector.
+	@return Vector3 -- Current camera look direction.
+]=]
 function CameraStore.GetCameraLook(): Vector3
 	return CameraLook
 end

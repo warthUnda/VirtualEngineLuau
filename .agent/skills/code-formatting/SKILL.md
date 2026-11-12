@@ -14,6 +14,7 @@ project. Match these conventions when adding or refactoring render code.
 Every performance-critical script starts with two directives:
 
 ```lua
+--!strict
 --!native
 --!optimize 2
 ```
@@ -222,9 +223,8 @@ mechanics (a `buffer.readf32`, a simple `for`) are left uncommented.
 
 ## Tests
 
-- for every feature you code or system, create tests only if:
-- it looks like it would be needed
-- do not bloat tests for useless things like 1 + 1 = 2
+- for every feature you code or system, create a test:
+- think about if its needed however too
 
 ## local functions
 
@@ -241,3 +241,19 @@ mechanics (a `buffer.readf32`, a simple `for`) are left uncommented.
 
 - use Core as a library, controller as executer, scene for objects etc
 - for getting a better idea, look into some systems to see how its done and copy the way we do it
+
+## params
+- every function that will be used outside of the system its in, add @param and document its parameters
+- if you change it, update it
+
+## documentation
+- for every system, make a .md file that is documentation for a specific system
+- use terms and classification at the top of the documentation with highly descriptive writing and terminology to make the user understand whats happening immediately
+
+- afterwards, keep it short and describe how its mechanisms work
+- update it once you change it
+
+## read me
+- if the read me is outdated, empty or just a 10 line template messsage
+- look at the project and describe it
+- make it short and at the start of the read me use terms and classifications so people would understand it 

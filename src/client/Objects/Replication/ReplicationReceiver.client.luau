@@ -1,8 +1,9 @@
+--!strict
 --!native
 --!optimize 2
 
 -- Services --
-const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- Static References --
 -- The render controller runs inside an Actor, and every Actor owns an isolated Luau VM with its
@@ -14,11 +15,10 @@ if not SelfActor then
 	return
 end
 
-const CoreEvents = ReplicatedStorage:WaitForChild("CoreEvents") :: Folder
-const ReplicateEvent = CoreEvents:WaitForChild("ReplicateEvent") :: RemoteEvent
-
 -- Modules --
-const ObjectStorage = require(SelfActor:WaitForChild("ObjectStorage"))
+const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
+const ObjectStorage = (require :: any)(SelfActor:WaitForChild("ObjectStorage")) :: ECSMain.ECSStorage
 const ECSData = ObjectStorage.ECSData
 const PositionData = ObjectStorage.PositionData
 const OrientationData = ObjectStorage.OrientationData
@@ -27,8 +27,13 @@ const SizeData = ObjectStorage.SizeData
 const DirectionsData = ObjectStorage.DirectionsData
 
 -- Configs --
-const COMPONENT_STRIDE = 12 :: number -- position, orientation, visual and size store 3 x f32 per entity
-const DIRECTION_STRIDE = 36 :: number -- look + up + right, 3 x f32 each
+const CORE_EVENTS_FOLDER_NAME = SystemsConfigs.CoreEventsFolderName :: string
+const REPLICATE_REMOTE_EVENT_NAME = SystemsConfigs.ReplicateRemoteEventName :: string
+const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
+const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+
+const CoreEvents = ReplicatedStorage:WaitForChild(CORE_EVENTS_FOLDER_NAME) :: Folder
+const ReplicateEvent = CoreEvents:WaitForChild(REPLICATE_REMOTE_EVENT_NAME) :: RemoteEvent
 
 -- Buffers
 const LocalPositionBuffer = PositionData.GetData() :: buffer
@@ -109,7 +114,13 @@ ReplicateEvent.OnClientEvent:Connect(
 			buffer.copy(LocalOrientationBuffer, WriteOffset, OrientationBuffer, ReadOffset, COMPONENT_STRIDE)
 			buffer.copy(LocalVisualBuffer, WriteOffset, VisualBuffer, ReadOffset, COMPONENT_STRIDE)
 			buffer.copy(LocalSizeBuffer, WriteOffset, SizeBuffer, ReadOffset, COMPONENT_STRIDE)
-			buffer.copy(LocalDirectionsBuffer, DirectionWriteOffset, DirectionsBuffer, DirectionReadOffset, DIRECTION_STRIDE)
+			buffer.copy(
+				LocalDirectionsBuffer,
+				DirectionWriteOffset,
+				DirectionsBuffer,
+				DirectionReadOffset,
+				DIRECTION_STRIDE
+			)
 		end
 	end
 )

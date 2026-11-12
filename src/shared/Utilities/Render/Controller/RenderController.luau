@@ -1,22 +1,23 @@
+--!strict
 --!native
 --!optimize 2
 
 -- Services --
-const Players = game:GetService("Players") :: Players
-const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
-const AssetService = game:GetService("AssetService") :: AssetService
+const Players = game:GetService("Players")
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const AssetService = game:GetService("AssetService")
 
 -- Static References --
 const Player = Players.LocalPlayer :: Player
 const PlayerGui = Player:WaitForChild("PlayerGui") :: PlayerGui
-const PlayerScripts = Player:WaitForChild("PlayerScripts") :: PlayerScripts
+const PlayerScripts = Player:WaitForChild("PlayerScripts")
 
 const Camera = workspace.CurrentCamera :: Camera
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
-const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper)
 const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath)
+const RenderControllerHelper = require(script.Parent.RenderControllerHelper)
 
 const CameraStore = require(
 	ReplicatedStorage:WaitForChild("Shared")
@@ -50,8 +51,6 @@ const VisualData = ECSStorage.VisualData
 -- Configs --
 const WIDTH = SystemsConfigs.RenderWidth :: number
 const HEIGHT = SystemsConfigs.RenderHeight :: number
-const HALF_WIDTH = WIDTH * 0.5 :: number
-const HALF_HEIGHT = HEIGHT * 0.5 :: number
 const IMAGE_SIZE = Vector2.new(WIDTH, HEIGHT) :: Vector2
 const TOTAL_PIXELS = WIDTH * HEIGHT :: number
 const SUN_DIRECTION = SystemsConfigs.SunDirection :: Vector3
@@ -61,8 +60,6 @@ const DIFFUSE_LIGHT = 1 - AMBIENT_LIGHT :: number
 const ACTOR_COUNT = SystemsConfigs.ActorCount :: number
 const WORKER_BUFFER_MULTIPLIER = SystemsConfigs.WorkerBufferMultiplier :: number
 const WORKER_BUFFER_CAPACITY = TOTAL_PIXELS * WORKER_BUFFER_MULTIPLIER :: number
-const RENDER_BUFFER_LAYOUT_SIZE = BufferHelper.RenderBufferLayoutSize :: number
-const MIN_TRIANGLE_AREA = SystemsConfigs.MinTriangleArea :: number
 const SCRIPTABLE_CAMERA_PARK_POSITION = SystemsConfigs.ScriptableCameraParkPosition :: Vector3
 const DEFAULT_CAMERA_VIEW = SystemsConfigs.DefaultCameraView :: string
 
@@ -94,124 +91,6 @@ local ClipBufferB = buffer.create(12 * 12) :: buffer
 
 local Renderer = {}
 
-local function ReadDirectionVec(Offset: number): vector
-	return vector.create(
-		buffer.readf32(ECSDirectionsBuffer, Offset),
-		buffer.readf32(ECSDirectionsBuffer, Offset + 4),
-		buffer.readf32(ECSDirectionsBuffer, Offset + 8)
-	)
-end
-
-local function PackShadedColor(R: number, G: number, B: number, Illumination: number): number
-	return bit32.bor(
-		math.floor(R * Illumination),
-		bit32.lshift(math.floor(G * Illumination), 8),
-		bit32.lshift(math.floor(B * Illumination), 16),
-		0xFF000000
-	)
-end
-
-local function SubmitFaceQuad(
-	V0ByteOffset: number,
-	V1ByteOffset: number,
-	V2ByteOffset: number,
-	V3ByteOffset: number,
-	PackedColor: number,
-	FocalLength: number,
-	GuardBandX: number,
-	GuardBandY: number
-)
-	const ClippedVertexCount = RenderMath.ClipAndProjectQuad(
-		ScreenVertices,
-		V0ByteOffset,
-		V1ByteOffset,
-		V2ByteOffset,
-		V3ByteOffset,
-		ProjectedVertices,
-		ClipBufferA,
-		ClipBufferB,
-		FocalLength,
-		GuardBandX,
-		GuardBandY,
-		HALF_WIDTH,
-		HALF_HEIGHT
-	) :: number
-
-	if ClippedVertexCount < 3 then
-		return
-	end
-
-	const X0 = buffer.readf32(ProjectedVertices, 0) :: number
-	const Y0 = buffer.readf32(ProjectedVertices, 4) :: number
-	const InvZ0 = buffer.readf32(ProjectedVertices, 8) :: number
-
-	for ClippedTriangleIndex = 2, ClippedVertexCount - 1 do
-		const V1Offset = (ClippedTriangleIndex - 1) * 12 :: number
-		const V2Offset = V1Offset + 12 :: number
-
-		const X1 = buffer.readf32(ProjectedVertices, V1Offset) :: number
-		const Y1 = buffer.readf32(ProjectedVertices, V1Offset + 4) :: number
-		const InvZ1 = buffer.readf32(ProjectedVertices, V1Offset + 8) :: number
-
-		const X2 = buffer.readf32(ProjectedVertices, V2Offset) :: number
-		const Y2 = buffer.readf32(ProjectedVertices, V2Offset + 4) :: number
-		const InvZ2 = buffer.readf32(ProjectedVertices, V2Offset + 8) :: number
-
-		const Area = (X2 - X0) * (Y1 - Y0) - (Y2 - Y0) * (X1 - X0) :: number
-		if Area <= MIN_TRIANGLE_AREA then
-			continue
-		end
-
-		const MinX = math.max(0, math.min(X0, X1, X2)) :: number
-		const MaxX = math.min(WIDTH - 1, math.max(X0, X1, X2)) :: number
-		const MinY = math.max(0, math.min(Y0, Y1, Y2)) :: number
-		const MaxY = math.min(HEIGHT - 1, math.max(Y0, Y1, Y2)) :: number
-
-		if MinX > MaxX or MinY > MaxY then
-			continue
-		end
-
-		const SpanY = MaxY - MinY + 1 :: number
-		const TriangleCost = Area * 0.5 + SpanY * 6 + 24 :: number
-
-		local SmallestScore = WorkerScores[1] :: number
-		local BestWorkerIdx = 1 :: number
-
-		for WorkerIdx = 2, ACTOR_COUNT do
-			const CandidateScore = WorkerScores[WorkerIdx] :: number
-			if CandidateScore < SmallestScore then
-				SmallestScore = CandidateScore
-				BestWorkerIdx = WorkerIdx
-			end
-		end
-
-		const RBOffset = WorkerOffsets[BestWorkerIdx] :: number
-		if RBOffset + RENDER_BUFFER_LAYOUT_SIZE > WORKER_BUFFER_CAPACITY then
-			continue
-		end
-
-		WorkerScores[BestWorkerIdx] = SmallestScore + TriangleCost
-		WorkerOffsets[BestWorkerIdx] = RBOffset + RENDER_BUFFER_LAYOUT_SIZE
-
-		const RenderBuffer = BufferTable[BestWorkerIdx] :: buffer
-		const InvArea = 1 / Area :: number
-
-		buffer.writei16(RenderBuffer, RBOffset, X0)
-		buffer.writei16(RenderBuffer, RBOffset + 2, Y0)
-		buffer.writef32(RenderBuffer, RBOffset + 4, InvZ0 * InvArea)
-
-		buffer.writei16(RenderBuffer, RBOffset + 8, X1)
-		buffer.writei16(RenderBuffer, RBOffset + 10, Y1)
-		buffer.writef32(RenderBuffer, RBOffset + 12, InvZ1 * InvArea)
-
-		buffer.writei16(RenderBuffer, RBOffset + 16, X2)
-		buffer.writei16(RenderBuffer, RBOffset + 18, Y2)
-		buffer.writef32(RenderBuffer, RBOffset + 20, InvZ2 * InvArea)
-
-		buffer.writeu32(RenderBuffer, RBOffset + 24, PackedColor)
-	end
-end
-
 -- ============================================================================
 -- 1. INITIALIZATION & WORKER MESSAGE LISTENER
 -- ============================================================================
@@ -224,7 +103,7 @@ function Renderer.Init()
 
 	const ImageLabel = PlayerGui:WaitForChild("ScreenGui"):WaitForChild("ImageLabel") :: ImageLabel
 	const SelfActor = PlayerScripts:WaitForChild("Controller") :: Actor
-	WorkerActors = PlayerScripts:WaitForChild("WorkerFolder"):GetChildren() :: { Actor }
+	WorkerActors = (PlayerScripts:WaitForChild("WorkerFolder"):GetChildren() :: any) :: { Actor }
 
 	-- Create Information Data for workers
 	for i = 1, ACTOR_COUNT do
@@ -262,9 +141,9 @@ function Renderer.Init()
 				buffer.copy(FinalZ, 0, ZBuffer, 0, TOTAL_PIXELS * 4)
 			else
 				for i = 0, (TOTAL_PIXELS - 1) * 4, 4 do -- Overwrites the FinalZ and FinalPixel buffers
-					const IncomingInvZ = buffer.readf32(ZBuffer, i) :: number
-					if IncomingInvZ > buffer.readf32(FinalZ, i) then
-						buffer.writef32(FinalZ, i, IncomingInvZ)
+					const IncomingInverseZ = buffer.readf32(ZBuffer, i) :: number
+					if IncomingInverseZ > buffer.readf32(FinalZ, i) then
+						buffer.writef32(FinalZ, i, IncomingInverseZ)
 						buffer.writeu32(FinalPixel, i, buffer.readu32(PixelBuffer, i))
 					end
 				end
@@ -349,67 +228,172 @@ function Renderer.DrawFrame()
 
 		-- Back (+Look, bit 0) or Front (-Look, bit 1)
 		if bit32.btest(FaceMask, 3) then
-			const DotL = vector.dot(ReadDirectionVec(DirectionOffset), SUN_VEC) :: number
+			const LookSunDot = vector.dot(
+				RenderControllerHelper.ReadDirectionVec(ECSDirectionsBuffer, DirectionOffset),
+				SUN_VEC
+			) :: number
 			if bit32.btest(FaceMask, 1) then
-				const Color = PackShadedColor(
+				const Color = RenderControllerHelper.PackShadedColor(
 					PartColorR,
 					PartColorG,
 					PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, DotL)
+					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, LookSunDot)
 				)
-				SubmitFaceQuad(0, 36, 24, 12, Color, FocalLength, GuardBandX, GuardBandY)
+				RenderControllerHelper.SubmitFaceQuad(
+					ScreenVertices,
+					ProjectedVertices,
+					ClipBufferA,
+					ClipBufferB,
+					WorkerScores,
+					WorkerOffsets,
+					BufferTable,
+					0,
+					36,
+					24,
+					12,
+					Color,
+					FocalLength,
+					GuardBandX,
+					GuardBandY
+				)
 			else
-				const Color = PackShadedColor(
+				const Color = RenderControllerHelper.PackShadedColor(
 					PartColorR,
 					PartColorG,
 					PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, -DotL)
+					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, -LookSunDot)
 				)
-				SubmitFaceQuad(48, 60, 72, 84, Color, FocalLength, GuardBandX, GuardBandY)
+				RenderControllerHelper.SubmitFaceQuad(
+					ScreenVertices,
+					ProjectedVertices,
+					ClipBufferA,
+					ClipBufferB,
+					WorkerScores,
+					WorkerOffsets,
+					BufferTable,
+					48,
+					60,
+					72,
+					84,
+					Color,
+					FocalLength,
+					GuardBandX,
+					GuardBandY
+				)
 			end
 		end
 
 		-- Bottom (-Up, bit 2) or Top (+Up, bit 3)
 		if bit32.btest(FaceMask, 12) then
-			const DotU = vector.dot(ReadDirectionVec(DirectionOffset + 12), SUN_VEC) :: number
+			const UpSunDot = vector.dot(
+				RenderControllerHelper.ReadDirectionVec(ECSDirectionsBuffer, DirectionOffset + 12),
+				SUN_VEC
+			) :: number
 			if bit32.btest(FaceMask, 4) then
-				const Color = PackShadedColor(
+				const Color = RenderControllerHelper.PackShadedColor(
 					PartColorR,
 					PartColorG,
 					PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, -DotU)
+					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, -UpSunDot)
 				)
-				SubmitFaceQuad(0, 12, 60, 48, Color, FocalLength, GuardBandX, GuardBandY)
+				RenderControllerHelper.SubmitFaceQuad(
+					ScreenVertices,
+					ProjectedVertices,
+					ClipBufferA,
+					ClipBufferB,
+					WorkerScores,
+					WorkerOffsets,
+					BufferTable,
+					0,
+					12,
+					60,
+					48,
+					Color,
+					FocalLength,
+					GuardBandX,
+					GuardBandY
+				)
 			else
-				const Color = PackShadedColor(
+				const Color = RenderControllerHelper.PackShadedColor(
 					PartColorR,
 					PartColorG,
 					PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, DotU)
+					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, UpSunDot)
 				)
-				SubmitFaceQuad(24, 36, 84, 72, Color, FocalLength, GuardBandX, GuardBandY)
+				RenderControllerHelper.SubmitFaceQuad(
+					ScreenVertices,
+					ProjectedVertices,
+					ClipBufferA,
+					ClipBufferB,
+					WorkerScores,
+					WorkerOffsets,
+					BufferTable,
+					24,
+					36,
+					84,
+					72,
+					Color,
+					FocalLength,
+					GuardBandX,
+					GuardBandY
+				)
 			end
 		end
 
 		-- Left (-Right, bit 4) or Right (+Right, bit 5)
 		if bit32.btest(FaceMask, 48) then
-			const DotR = vector.dot(ReadDirectionVec(DirectionOffset + 24), SUN_VEC) :: number
+			const RightSunDot = vector.dot(
+				RenderControllerHelper.ReadDirectionVec(ECSDirectionsBuffer, DirectionOffset + 24),
+				SUN_VEC
+			) :: number
 			if bit32.btest(FaceMask, 16) then
-				const Color = PackShadedColor(
+				const Color = RenderControllerHelper.PackShadedColor(
 					PartColorR,
 					PartColorG,
 					PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, -DotR)
+					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, -RightSunDot)
 				)
-				SubmitFaceQuad(0, 48, 84, 36, Color, FocalLength, GuardBandX, GuardBandY)
+				RenderControllerHelper.SubmitFaceQuad(
+					ScreenVertices,
+					ProjectedVertices,
+					ClipBufferA,
+					ClipBufferB,
+					WorkerScores,
+					WorkerOffsets,
+					BufferTable,
+					0,
+					48,
+					84,
+					36,
+					Color,
+					FocalLength,
+					GuardBandX,
+					GuardBandY
+				)
 			else
-				const Color = PackShadedColor(
+				const Color = RenderControllerHelper.PackShadedColor(
 					PartColorR,
 					PartColorG,
 					PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, DotR)
+					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, RightSunDot)
 				)
-				SubmitFaceQuad(12, 24, 72, 60, Color, FocalLength, GuardBandX, GuardBandY)
+				RenderControllerHelper.SubmitFaceQuad(
+					ScreenVertices,
+					ProjectedVertices,
+					ClipBufferA,
+					ClipBufferB,
+					WorkerScores,
+					WorkerOffsets,
+					BufferTable,
+					12,
+					24,
+					72,
+					60,
+					Color,
+					FocalLength,
+					GuardBandX,
+					GuardBandY
+				)
 			end
 		end
 	end

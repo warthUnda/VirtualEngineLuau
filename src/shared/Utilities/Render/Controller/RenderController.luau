@@ -19,6 +19,7 @@ const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForC
 const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
 const VerticeFile = require(ReplicatedStorage.Shared.Utilities.Render.Core.VerticeFile)
 const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath)
+const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper)
 const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Texture.TextureTable)
 const RenderControllerHelper = require(script.Parent.RenderControllerHelper)
 
@@ -143,22 +144,28 @@ function Renderer.Init()
 
 	SelfActor:BindToMessage(
 		"Return Render Calculations",
-		function(PixelBuffer: buffer, ZBuffer: buffer, FrameId: number, DirtyMinY: number, DirtyMaxY: number)
+		function(DirtyPixelSlice: buffer, DirtyZSlice: buffer, FrameId: number, DirtyMinY: number, DirtyMaxY: number)
 			if FrameId ~= CurrentFrame then -- ignore stale frames
 				return
 			end
 
 			if Received == 0 then
-				buffer.copy(FinalPixel, 0, PixelBuffer, 0, TOTAL_PIXELS * 4)
-				buffer.copy(FinalZ, 0, ZBuffer, 0, TOTAL_PIXELS * 4)
+				BufferHelper.ClearBuffers(TOTAL_PIXELS, FinalPixel, FinalZ)
+				if DirtyMinY <= DirtyMaxY then
+					const DestOffset = DirtyMinY * WIDTH * 4 :: number
+					const SliceBytes = (DirtyMaxY - DirtyMinY + 1) * WIDTH * 4 :: number
+					buffer.copy(FinalPixel, DestOffset, DirtyPixelSlice, 0, SliceBytes)
+					buffer.copy(FinalZ, DestOffset, DirtyZSlice, 0, SliceBytes)
+				end
 			elseif DirtyMinY <= DirtyMaxY then
-				const StartOffset = DirtyMinY * WIDTH * 4 :: number
-				const EndOffset = ((DirtyMaxY + 1) * WIDTH - 1) * 4 :: number
-				for i = StartOffset, EndOffset, 4 do -- Overwrites only the worker's dirty scanline rows
-					const IncomingInverseZ = buffer.readf32(ZBuffer, i) :: number
-					if IncomingInverseZ > buffer.readf32(FinalZ, i) then
-						buffer.writef32(FinalZ, i, IncomingInverseZ)
-						buffer.writeu32(FinalPixel, i, buffer.readu32(PixelBuffer, i))
+				const DestBaseOffset = DirtyMinY * WIDTH * 4 :: number
+				const SliceBytes = (DirtyMaxY - DirtyMinY + 1) * WIDTH * 4 :: number
+				for SliceOffset = 0, SliceBytes - 4, 4 do
+					const IncomingInverseZ = buffer.readf32(DirtyZSlice, SliceOffset) :: number
+					const DestOffset = DestBaseOffset + SliceOffset :: number
+					if IncomingInverseZ > buffer.readf32(FinalZ, DestOffset) then
+						buffer.writef32(FinalZ, DestOffset, IncomingInverseZ)
+						buffer.writeu32(FinalPixel, DestOffset, buffer.readu32(DirtyPixelSlice, SliceOffset))
 					end
 				end
 			end

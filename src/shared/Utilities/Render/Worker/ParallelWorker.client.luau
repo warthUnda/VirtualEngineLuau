@@ -30,8 +30,10 @@ local TextureWidth = TEXTURE_SIZE :: number
 local TextureHeight = TEXTURE_SIZE :: number
 
 -- Buffers
+const EmptyPayload = buffer.create(0) :: buffer
 const PixelBuffer = buffer.create(TOTAL_PIXELS * 4) :: buffer
 const ZBuffer = buffer.create(TOTAL_PIXELS * 4) :: buffer
+const ROW_STRIDE = WIDTH * 4 :: number
 
 BufferHelper.ClearBuffers(TOTAL_PIXELS, PixelBuffer, ZBuffer)
 
@@ -73,5 +75,15 @@ SelfActor:BindToMessageParallel("Execute Rendering", function(RenderBuffer: buff
 		)
 	end
 
-	ControllerActor:SendMessage("Return Render Calculations", PixelBuffer, ZBuffer, FrameId, DirtyMinY, DirtyMaxY)
+	if DirtyMinY <= DirtyMaxY then
+		const DirtyStartOffset = DirtyMinY * ROW_STRIDE :: number
+		const DirtyByteCount = (DirtyMaxY - DirtyMinY + 1) * ROW_STRIDE :: number
+		const DirtyPixelSlice = buffer.create(DirtyByteCount) :: buffer
+		const DirtyZSlice = buffer.create(DirtyByteCount) :: buffer
+		buffer.copy(DirtyPixelSlice, 0, PixelBuffer, DirtyStartOffset, DirtyByteCount)
+		buffer.copy(DirtyZSlice, 0, ZBuffer, DirtyStartOffset, DirtyByteCount)
+		ControllerActor:SendMessage("Return Render Calculations", DirtyPixelSlice, DirtyZSlice, FrameId, DirtyMinY, DirtyMaxY)
+	else
+		ControllerActor:SendMessage("Return Render Calculations", EmptyPayload, EmptyPayload, FrameId, DirtyMinY, DirtyMaxY)
+	end
 end)

@@ -10,6 +10,8 @@ const ServerScriptService = game:GetService("ServerScriptService")
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const Storage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
+
+-- Storage Tables
 const PositionData = Storage.PositionData
 const OrientationData = Storage.OrientationData
 const VisualData = Storage.VisualData
@@ -20,6 +22,10 @@ const PropertiesData = Storage.PropertiesData
 -- Configs --
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
+const DEFAULT_SPAWN = SystemsConfigs.PlayerDefaultSpawnPosition :: Vector3
+const PLAYER_EYE_OFFSET = SystemsConfigs.CameraPlayerEyeOffset :: number
+const DEFAULT_CAMERA_FOV = SystemsConfigs.DefaultCameraFOV :: number
+const OBSERVER_PAYLOAD_BYTES = 56 :: number
 
 -- Buffers
 const PositionBuffer = PositionData.GetData() :: buffer
@@ -35,7 +41,22 @@ const PROPERTIES_BUFFER_SIZE = buffer.len(PropertiesBuffer) :: number
 const MAX_ENTITIES = COMPONENT_BUFFER_SIZE // COMPONENT_STRIDE :: number
 
 export type PlayerDeltaState = {
-	Character: Model?,
+	CharacterSeeded: boolean,
+	ClientSynced: boolean,
+	OriginX: number,
+	OriginY: number,
+	OriginZ: number,
+	LookX: number,
+	LookY: number,
+	LookZ: number,
+	UpX: number,
+	UpY: number,
+	UpZ: number,
+	RightX: number,
+	RightY: number,
+	RightZ: number,
+	ExtraBackPadding: number,
+	FovDegrees: number,
 	LastEntityCount: number,
 	VisibleFlags: buffer,
 	Positions: buffer,
@@ -66,21 +87,65 @@ end
 Players.PlayerRemoving:Connect(PlayerFunctions.RemovePlayerState)
 
 --[=[
-	Retrieves or instantiates the cached replication shadow buffers for a player.
+	Seeds a player's observer transform once from their initial character model if available.
+	@param State PlayerDeltaState -- Target player delta tracking state.
+	@param Character Model? -- Optional player character model.
+]=]
+function PlayerFunctions.TrySeedObserverFromCharacter(State: PlayerDeltaState, Character: Model?)
+	if State.CharacterSeeded or State.ClientSynced or not Character or not Character.Parent then
+		return
+	end
+
+	const AnchorCandidate = Character:FindFirstChild("Head")
+		or Character:FindFirstChild("HumanoidRootPart")
+		or Character.PrimaryPart
+		or Character:FindFirstChildWhichIsA("BasePart")
+
+	local SeedCFrame: CFrame
+	if AnchorCandidate and AnchorCandidate:IsA("BasePart") then
+		SeedCFrame = AnchorCandidate.CFrame
+	else
+		SeedCFrame = Character:GetPivot()
+	end
+
+	const Pos = SeedCFrame.Position :: Vector3
+	const Look = SeedCFrame.LookVector :: Vector3
+	const Up = SeedCFrame.UpVector :: Vector3
+	const Right = SeedCFrame.RightVector :: Vector3
+
+	State.CharacterSeeded = true
+	State.OriginX, State.OriginY, State.OriginZ = Pos.X, Pos.Y, Pos.Z
+	State.LookX, State.LookY, State.LookZ = Look.X, Look.Y, Look.Z
+	State.UpX, State.UpY, State.UpZ = Up.X, Up.Y, Up.Z
+	State.RightX, State.RightY, State.RightZ = Right.X, Right.Y, Right.Z
+end
+
+--[=[
+	Retrieves or instantiates the cached replication shadow buffers and standalone observer state for a player.
 	@param PlayerObject Player -- Target replicating player.
-	@param Character Model? -- Current player character model.
 	@param EntityCount number -- Current total world entity count.
 	@return PlayerDeltaState -- Player's delta tracking state.
 ]=]
-function PlayerFunctions.GetOrCreatePlayerState(
-	PlayerObject: Player,
-	Character: Model?,
-	EntityCount: number
-): PlayerDeltaState
+function PlayerFunctions.GetOrCreatePlayerState(PlayerObject: Player, EntityCount: number): PlayerDeltaState
 	local State = PlayerStates[PlayerObject] :: PlayerDeltaState?
 	if not State then
 		const NewState: PlayerDeltaState = {
-			Character = Character,
+			CharacterSeeded = false,
+			ClientSynced = false,
+			OriginX = DEFAULT_SPAWN.X,
+			OriginY = DEFAULT_SPAWN.Y + PLAYER_EYE_OFFSET,
+			OriginZ = DEFAULT_SPAWN.Z,
+			LookX = 0,
+			LookY = 0,
+			LookZ = -1,
+			UpX = 0,
+			UpY = 1,
+			UpZ = 0,
+			RightX = 1,
+			RightY = 0,
+			RightZ = 0,
+			ExtraBackPadding = 0,
+			FovDegrees = DEFAULT_CAMERA_FOV,
 			LastEntityCount = EntityCount,
 			VisibleFlags = buffer.create(MAX_ENTITIES),
 			Positions = buffer.create(COMPONENT_BUFFER_SIZE),
@@ -90,19 +155,86 @@ function PlayerFunctions.GetOrCreatePlayerState(
 			Directions = buffer.create(DIRECTION_BUFFER_SIZE),
 			Properties = buffer.create(PROPERTIES_BUFFER_SIZE),
 		}
+		PlayerFunctions.TrySeedObserverFromCharacter(NewState, PlayerObject.Character)
 		PlayerStates[PlayerObject] = NewState
 		return NewState
 	end
 
-	if State.Character ~= Character then
-		State.Character = Character
-		buffer.fill(State.VisibleFlags, 0, 0)
-	elseif EntityCount < State.LastEntityCount then
+	if not State.CharacterSeeded and not State.ClientSynced then
+		PlayerFunctions.TrySeedObserverFromCharacter(State, PlayerObject.Character)
+	end
+
+	if EntityCount < State.LastEntityCount then
 		buffer.fill(State.VisibleFlags, EntityCount, 0, State.LastEntityCount - EntityCount)
 	end
 
 	State.LastEntityCount = EntityCount
 	return State
+end
+
+--[=[
+	Ingests a 56-byte client virtual observer buffer into the player's server replication state.
+	@param PlayerObject Player -- Replicating player who sent the payload.
+	@param PayloadBuffer buffer -- 56-byte observer payload buffer.
+	@param EntityCount number -- Current server ECS entity count.
+]=]
+function PlayerFunctions.UpdateObserverFromBuffer(PlayerObject: Player, PayloadBuffer: buffer, EntityCount: number)
+	if typeof(PlayerObject) == "Instance" and not PlayerObject:IsDescendantOf(Players) then
+		return
+	end
+
+	if typeof(PayloadBuffer) ~= "buffer" or buffer.len(PayloadBuffer) < OBSERVER_PAYLOAD_BYTES then
+		return
+	end
+
+	const OriginX = buffer.readf32(PayloadBuffer, 0) :: number
+	const OriginY = buffer.readf32(PayloadBuffer, 4) :: number
+	const OriginZ = buffer.readf32(PayloadBuffer, 8) :: number
+	const LookX = buffer.readf32(PayloadBuffer, 12) :: number
+	const LookY = buffer.readf32(PayloadBuffer, 16) :: number
+	const LookZ = buffer.readf32(PayloadBuffer, 20) :: number
+	const UpX = buffer.readf32(PayloadBuffer, 24) :: number
+	const UpY = buffer.readf32(PayloadBuffer, 28) :: number
+	const UpZ = buffer.readf32(PayloadBuffer, 32) :: number
+	const RightX = buffer.readf32(PayloadBuffer, 36) :: number
+	const RightY = buffer.readf32(PayloadBuffer, 40) :: number
+	const RightZ = buffer.readf32(PayloadBuffer, 44) :: number
+	const ExtraBackPadding = buffer.readf32(PayloadBuffer, 48) :: number
+	const FovDegrees = buffer.readf32(PayloadBuffer, 52) :: number
+
+	-- Reject NaNs or degenerate basis vectors
+	const SumCheck = OriginX
+		+ OriginY
+		+ OriginZ
+		+ LookX
+		+ LookY
+		+ LookZ
+		+ UpX
+		+ UpY
+		+ UpZ
+		+ RightX
+		+ RightY
+		+ RightZ
+		+ ExtraBackPadding
+		+ FovDegrees :: number
+	if SumCheck ~= SumCheck or math.abs(SumCheck) == math.huge then
+		return
+	end
+
+	const LookLenSq = LookX * LookX + LookY * LookY + LookZ * LookZ :: number
+	if LookLenSq < 0.5 or LookLenSq > 1.5 then
+		return
+	end
+
+	const State = PlayerFunctions.GetOrCreatePlayerState(PlayerObject, EntityCount)
+	State.CharacterSeeded = true
+	State.ClientSynced = true
+	State.OriginX, State.OriginY, State.OriginZ = OriginX, OriginY, OriginZ
+	State.LookX, State.LookY, State.LookZ = LookX, LookY, LookZ
+	State.UpX, State.UpY, State.UpZ = UpX, UpY, UpZ
+	State.RightX, State.RightY, State.RightZ = RightX, RightY, RightZ
+	State.ExtraBackPadding = math.clamp(ExtraBackPadding, 0, 200)
+	State.FovDegrees = math.clamp(FovDegrees, 10, 120)
 end
 
 --[=[
@@ -157,14 +289,36 @@ function PlayerFunctions.HasEntityChanged(
 
 	if
 		buffer.readu32(DirectionsBuffer, DirectionOffset) ~= buffer.readu32(CachedDirections, DirectionOffset)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 4) ~= buffer.readu32(CachedDirections, DirectionOffset + 4)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 8) ~= buffer.readu32(CachedDirections, DirectionOffset + 8)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 12) ~= buffer.readu32(CachedDirections, DirectionOffset + 12)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 16) ~= buffer.readu32(CachedDirections, DirectionOffset + 16)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 20) ~= buffer.readu32(CachedDirections, DirectionOffset + 20)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 24) ~= buffer.readu32(CachedDirections, DirectionOffset + 24)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 28) ~= buffer.readu32(CachedDirections, DirectionOffset + 28)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 32) ~= buffer.readu32(CachedDirections, DirectionOffset + 32)
+		or buffer.readu32(DirectionsBuffer, DirectionOffset + 4) ~= buffer.readu32(
+			CachedDirections,
+			DirectionOffset + 4
+		)
+		or buffer.readu32(DirectionsBuffer, DirectionOffset + 8) ~= buffer.readu32(
+			CachedDirections,
+			DirectionOffset + 8
+		)
+		or buffer.readu32(DirectionsBuffer, DirectionOffset + 12) ~= buffer.readu32(
+			CachedDirections,
+			DirectionOffset + 12
+		)
+		or buffer.readu32(DirectionsBuffer, DirectionOffset + 16) ~= buffer.readu32(
+			CachedDirections,
+			DirectionOffset + 16
+		)
+		or buffer.readu32(DirectionsBuffer, DirectionOffset + 20) ~= buffer.readu32(
+			CachedDirections,
+			DirectionOffset + 20
+		)
+		or buffer.readu32(DirectionsBuffer, DirectionOffset + 24) ~= buffer.readu32(
+			CachedDirections,
+			DirectionOffset + 24
+		)
+		or buffer.readu32(DirectionsBuffer, DirectionOffset + 28) ~= buffer.readu32(
+			CachedDirections,
+			DirectionOffset + 28
+		)
+		or buffer.readu32(DirectionsBuffer, DirectionOffset + 32)
+			~= buffer.readu32(CachedDirections, DirectionOffset + 32)
 	then
 		return true
 	end

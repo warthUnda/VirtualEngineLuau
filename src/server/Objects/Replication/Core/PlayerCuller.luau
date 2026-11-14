@@ -9,13 +9,6 @@ const ServerScriptService = game:GetService("ServerScriptService")
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const Storage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
-const PositionData = Storage.PositionData
-const OrientationData = Storage.OrientationData
-const VisualData = Storage.VisualData
-const SizeData = Storage.SizeData
-const DirectionsData = Storage.DirectionsData
-const PropertiesData = Storage.PropertiesData
-const ECSData = Storage.ECSData
 const PlayerFunctions = require(script.Parent.PlayerFunctions)
 const ViewCulling = require(
 	ReplicatedStorage:WaitForChild("Shared")
@@ -25,10 +18,20 @@ const ViewCulling = require(
 		:WaitForChild("ViewCulling")
 )
 
+-- Storage tables (ECS)
+const PositionData = Storage.PositionData
+const OrientationData = Storage.OrientationData
+const VisualData = Storage.VisualData
+const SizeData = Storage.SizeData
+const DirectionsData = Storage.DirectionsData
+const PropertiesData = Storage.PropertiesData
+const ECSData = Storage.ECSData
+
 -- Configs --
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
 const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
+const MAX_ENTITIES_PER_PACKET = math.max(1, SystemsConfigs.MaxEntitiesPerReplicationPacket or 256) :: number
 
 -- Buffers
 const PositionBuffer = PositionData.GetData() :: buffer
@@ -73,14 +76,15 @@ PlayerCuller.RemovePlayerState = PlayerFunctions.RemovePlayerState
 	@param PlayerObject Player -- Target replicating player.
 	@return (buffer?, buffer?, buffer?, buffer?, buffer?, ECSTable?) -- DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, Counts.
 ]=]
-function PlayerCuller.CullObjects(PlayerObject: Player): (buffer?, buffer?, buffer?, buffer?, buffer?, buffer?, ECSTable?)
-	const Head = ViewCulling.GetObserverHead(PlayerObject) :: BasePart?
-	if not Head then
+function PlayerCuller.CullObjects(
+	PlayerObject: Player
+): (buffer?, buffer?, buffer?, buffer?, buffer?, buffer?, ECSTable?)
+	const EntityCount = math.min(ECSData.GetCounts().EntityECSCount, MAX_ENTITIES) :: number
+	if EntityCount <= 0 then
 		return nil, nil, nil, nil, nil, nil, nil
 	end
 
-	const EntityCount = math.min(ECSData.GetCounts().EntityECSCount, MAX_ENTITIES) :: number
-	const State = PlayerFunctions.GetOrCreatePlayerState(PlayerObject, PlayerObject.Character, EntityCount)
+	const State = PlayerFunctions.GetOrCreatePlayerState(PlayerObject, EntityCount)
 
 	const VisibleFlags = State.VisibleFlags :: buffer
 	const CachedPositions = State.Positions :: buffer
@@ -90,28 +94,43 @@ function PlayerCuller.CullObjects(PlayerObject: Player): (buffer?, buffer?, buff
 	const CachedDirections = State.Directions :: buffer
 	const CachedProperties = State.Properties :: buffer
 
-	ViewCulling.UpdateDynamicView(Head)
+	ViewCulling.UpdateObserverFromVectors(
+		State.OriginX,
+		State.OriginY,
+		State.OriginZ,
+		State.LookX,
+		State.LookY,
+		State.LookZ,
+		State.UpX,
+		State.UpY,
+		State.UpZ,
+		State.RightX,
+		State.RightY,
+		State.RightZ,
+		State.ExtraBackPadding,
+		State.FovDegrees
+	)
 
 	local WriteOffset = 0 :: number
 	local DirectionWriteOffset = 0 :: number
 	local PropertiesWriteOffset = 0 :: number
+	local PackedCount = 0 :: number
 
 	for i = 1, EntityCount do
 		const FlagOffset = i - 1 :: number
 		const IsStatic = (buffer.readu8(StaticBuffer, FlagOffset) == 1) :: boolean
 
 		if not IsStatic and ViewCulling.IsEntityCulled(i, PositionBuffer, SizeBuffer) then
-			buffer.writeu8(VisibleFlags, FlagOffset, 0)
 			continue
 		end
 
 		const ReadOffset = FlagOffset * COMPONENT_STRIDE :: number
 		const DirectionReadOffset = FlagOffset * DIRECTION_STRIDE :: number
 		const PropertiesReadOffset = FlagOffset * PROPERTIES_STRIDE :: number
-		const WasVisible = buffer.readu8(VisibleFlags, FlagOffset) :: number
+		const HasReplicated = buffer.readu8(VisibleFlags, FlagOffset) :: number
 
 		if
-			WasVisible == 1
+			HasReplicated == 1
 			and not PlayerFunctions.HasEntityChanged(
 				ReadOffset,
 				DirectionReadOffset,
@@ -147,6 +166,12 @@ function PlayerCuller.CullObjects(PlayerObject: Player): (buffer?, buffer?, buff
 		WriteOffset += COMPONENT_STRIDE
 		DirectionWriteOffset += DIRECTION_STRIDE
 		PropertiesWriteOffset += PROPERTIES_STRIDE
+		PackedCount += 1
+
+		if PackedCount >= MAX_ENTITIES_PER_PACKET then
+			warn("ENTITY PACKETS HAVE OVERFLOWN THE LIMIT, CURRENT ENTITY NUMBER", MAX_ENTITIES_PER_PACKET)
+			break
+		end
 	end
 
 	if WriteOffset == 0 then

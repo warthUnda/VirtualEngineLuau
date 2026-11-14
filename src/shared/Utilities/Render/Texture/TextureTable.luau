@@ -16,9 +16,18 @@ local NextDynamicId = 1 :: number
 
 local TextureTable = {}
 
+export type TextureEntry = {
+	Id: number,
+	Url: string,
+	Name: string,
+}
+
 -- ============================================================================
 -- 1. TEXTURE TRANSLATOR, DEDUPLICATED URL REGISTRY & 64x64 BUFFER CACHE
 -- ============================================================================
+
+-- Public hashmap acting as the texture registry folder: numeric ECS TextureId -> { Id, Url, Name }
+TextureTable.Entries = {} :: { [number]: TextureEntry }
 
 -- Translator table: numeric ECS TextureId -> texture name
 TextureTable.IdToName = {} :: { [number]: string }
@@ -55,6 +64,7 @@ end
 	Clears all dynamic entries from TextureTable before scanning Workspace decals.
 ]=]
 function TextureTable.ResetEntries()
+	table.clear(TextureTable.Entries)
 	table.clear(TextureTable.IdToName)
 	table.clear(TextureTable.NameToId)
 	table.clear(TextureTable.IdToUrl)
@@ -95,6 +105,11 @@ function TextureTable.RegisterUrl(RawUrl: string, TextureName: string?, DecodeNo
 	end
 	TextureTable.IdToUrl[AssignedId] = NormalizedUrl
 	TextureTable.UrlToId[NormalizedUrl] = AssignedId
+	TextureTable.Entries[AssignedId] = {
+		Id = AssignedId,
+		Url = NormalizedUrl,
+		Name = ResolvedName,
+	}
 
 	if DecodeNow ~= false then
 		const DecodedBuffer = TextureTable.DecodeRawUrl(NormalizedUrl)
@@ -129,12 +144,20 @@ function TextureTable.RegisterEntryWithId(TextureId: number, RawUrl: string, Tex
 		const SharedBuffer = TextureTable.CachedBuffers[ExistingUrlId]
 		TextureTable.IdToUrl[TextureId] = NormalizedUrl
 		TextureTable.CachedBuffers[TextureId] = SharedBuffer
+		const ResolvedSharedName = if TextureName and TextureName ~= ""
+			then TextureName
+			else (TextureTable.IdToName[TextureId] or ("Decal_" .. tostring(TextureId)))
 		if TextureName and TextureName ~= "" then
 			TextureTable.IdToName[TextureId] = TextureName
 			if not TextureTable.NameToId[TextureName] then
 				TextureTable.NameToId[TextureName] = TextureId
 			end
 		end
+		TextureTable.Entries[TextureId] = {
+			Id = TextureId,
+			Url = NormalizedUrl,
+			Name = ResolvedSharedName,
+		}
 		return SharedBuffer, true
 	end
 
@@ -148,6 +171,11 @@ function TextureTable.RegisterEntryWithId(TextureId: number, RawUrl: string, Tex
 	end
 	TextureTable.IdToUrl[TextureId] = NormalizedUrl
 	TextureTable.UrlToId[NormalizedUrl] = TextureId
+	TextureTable.Entries[TextureId] = {
+		Id = TextureId,
+		Url = NormalizedUrl,
+		Name = ResolvedName,
+	}
 
 	if TextureId >= NextDynamicId then
 		NextDynamicId = TextureId + 1
@@ -160,6 +188,21 @@ function TextureTable.RegisterEntryWithId(TextureId: number, RawUrl: string, Tex
 	end
 
 	return nil, false
+end
+
+--[=[
+	Returns a sorted array of all currently registered TextureEntry records from TextureTable.Entries.
+	@return { TextureEntry } -- Sorted list of registered texture entries.
+]=]
+function TextureTable.ExportEntries(): { TextureEntry }
+	const Exported = {} :: { TextureEntry }
+	for _, Entry: TextureEntry in pairs(TextureTable.Entries) do
+		table.insert(Exported, Entry)
+	end
+	table.sort(Exported, function(A: TextureEntry, B: TextureEntry): boolean
+		return A.Id < B.Id
+	end)
+	return Exported
 end
 
 --[=[

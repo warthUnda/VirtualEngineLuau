@@ -22,6 +22,12 @@ return function()
 			:WaitForChild("Controller")
 			:WaitForChild("PhysicsControllerHelper")
 	)
+	const PhysicsController = require(
+		SharedFolder:WaitForChild("Utilities")
+			:WaitForChild("Physics")
+			:WaitForChild("Controller")
+			:WaitForChild("PhysicsController")
+	)
 
 	const MAX_WISH_SCALE = SystemsConfigs.PlayerMaxWishScale :: number
 
@@ -43,6 +49,19 @@ return function()
 			expect(UnitZ).to.equal(0)
 			expect(Scale).to.equal(0)
 			expect(Jump).to.equal(false)
+		end)
+
+		it("should seed player spawn from a Humanoid-less Model once and survive Model deletion", function()
+			const TempModel = Instance.new("Model")
+			TempModel:PivotTo(CFrame.new(42, 18, -24))
+
+			PhysicsController.BindCharacter(TempModel)
+			TempModel:Destroy()
+
+			const SeededPos = PhysicsController.GetPlayerPosition()
+			expect(SeededPos.X).to.be.near(42, 1e-3)
+			expect(SeededPos.Y).to.be.near(18.5, 1e-3)
+			expect(SeededPos.Z).to.be.near(-24, 1e-3)
 		end)
 	end)
 end

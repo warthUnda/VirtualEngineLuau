@@ -3,6 +3,7 @@
 --!optimize 2
 
 -- Services --
+const Players = game:GetService("Players")
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const ServerScriptService = game:GetService("ServerScriptService")
 
@@ -31,13 +32,9 @@ const TEXTURE_REGISTRY_FOLDER_NAME = SystemsConfigs.TextureRegistryFolderName ::
 
 -- Tables --
 local StaticFolder = Workspace:FindFirstChild(STATIC_FOLDER_NAME) :: Folder?
-local TextureRegistryFolder = ReplicatedStorage:FindFirstChild(TEXTURE_REGISTRY_FOLDER_NAME) :: Folder?
-if not TextureRegistryFolder then
-	const NewFolder = Instance.new("Folder")
-	NewFolder.Name = TEXTURE_REGISTRY_FOLDER_NAME
-	NewFolder.Parent = ReplicatedStorage
-	TextureRegistryFolder = NewFolder
-end
+const TextureRegistryFolder = Instance.new("Folder")
+NewFolder.Name = TEXTURE_REGISTRY_FOLDER_NAME
+NewFolder.Parent = ReplicatedStorage
 
 local ECSBuilderHelper = {}
 
@@ -46,13 +43,42 @@ local ECSBuilderHelper = {}
 -- ============================================================================
 
 --[=[
+	Checks whether an instance belongs to any connected player's character model.
+	@param TargetInstance Instance -- Instance to test.
+	@return boolean -- True if owned by a player character.
+]=]
+function ECSBuilderHelper.IsPlayerCharacterInstance(TargetInstance: Instance): boolean
+	for _, PlayerObject: Player in ipairs(Players:GetPlayers()) do
+		const Character = PlayerObject.Character
+		if Character and (TargetInstance == Character or TargetInstance:IsDescendantOf(Character)) then
+			return true
+		end
+	end
+
+	if Players:GetPlayerFromCharacter(TargetInstance) then
+		return true
+	end
+
+	const AncestorModel = TargetInstance:FindFirstAncestorWhichIsA("Model")
+	if AncestorModel and Players:GetPlayerFromCharacter(AncestorModel) then
+		return true
+	end
+
+	return false
+end
+
+--[=[
 	Registers a Workspace Decal's Texture URL into TextureTable (ignoring duplicate URLs), caches its 64x64 buffer, and replicates the entry.
 	@param DecalInstance Decal -- Source Roblox Decal instance.
 	@return number -- Assigned (or existing) TextureTable ID (0 if URL is empty).
 ]=]
 function ECSBuilderHelper.RegisterDecal(DecalInstance: Decal): number
+	if ECSBuilderHelper.IsPlayerCharacterInstance(DecalInstance) then
+		return 0 -- RETURNS NIL AKA NO TEXTURE
+	end
+
 	const TextureId: number, IsNew: boolean = TextureTable.RegisterUrl(DecalInstance.Texture, DecalInstance.Name, false)
-	if TextureId == 0 then
+	if TextureId == 0 then -- this means that the texture is NIL
 		return 0
 	end
 
@@ -98,7 +124,7 @@ end
 	@param Part BasePart -- Source Roblox BasePart instance.
 ]=]
 function ECSBuilderHelper.PopulatePart(Part: BasePart)
-	if Part:IsA("Terrain") then
+	if Part:IsA("Terrain") or ECSBuilderHelper.IsPlayerCharacterInstance(Part) then
 		return
 	end
 
@@ -168,24 +194,21 @@ function ECSBuilderHelper.PopulatePart(Part: BasePart)
 	end
 
 	local ShapeId = VerticeFile.ShapeToId.Cube :: number
-	const ShapeIdAttr = Part:GetAttribute("ShapeId")
-	if typeof(ShapeIdAttr) == "number" then
-		ShapeId = math.clamp(math.floor(ShapeIdAttr), 0, 7)
-	else
-		const ShapeNameAttr = Part:GetAttribute("Shape")
-		if typeof(ShapeNameAttr) == "string" then
-			ShapeId = VerticeFile.GetShapeId(ShapeNameAttr)
-		elseif Part:IsA("WedgePart") or Part:IsA("CornerWedgePart") then
+
+	if Part:IsA("Part") then
+		const PartShape = Part.Shape
+
+		if PartShape == Enum.PartType.Block then -- in most cases, its a cube
+			ShapeId = VerticeFile.ShapeToId.Cube
+		end
+
+		-- Other shapes like spheres or cylinders (rare)
+		if PartShape == Enum.PartType.Ball then
+			ShapeId = VerticeFile.ShapeToId.Sphere
+		elseif PartShape == Enum.PartType.Cylinder then
+			ShapeId = VerticeFile.ShapeToId.Cylinder
+		elseif PartShape == Enum.PartType.Wedge or PartShape == Enum.PartType.CornerWedge then
 			ShapeId = VerticeFile.ShapeToId.Triangle
-		elseif Part:IsA("Part") then
-			const PartShape = Part.Shape
-			if PartShape == Enum.PartType.Ball then
-				ShapeId = VerticeFile.ShapeToId.Sphere
-			elseif PartShape == Enum.PartType.Cylinder then
-				ShapeId = VerticeFile.ShapeToId.Cylinder
-			elseif PartShape == Enum.PartType.Wedge or PartShape == Enum.PartType.CornerWedge then
-				ShapeId = VerticeFile.ShapeToId.Triangle
-			end
 		end
 	end
 

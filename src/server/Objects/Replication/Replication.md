@@ -10,9 +10,9 @@
 
 ## Architectural Mechanisms
 
-### 1. Spatial Interest Management (`PlayerCuller.luau`)
-- Evaluates world entities relative to each connected player's camera position and view direction.
-- Entities outside the player's view distance or view-cone angle are culled from network packet serialization, keeping network overhead minimal.
+### 1. Spatial Interest Management (`PlayerCuller.luau` & `PlayerFunctions.luau`)
+- Evaluates world entities relative to each connected player's standalone virtual observer state (`Origin`, `Look`, `Up`, `Right`, `FovDegrees`), seeded at most once from an initial character (or `PlayerDefaultSpawnPosition`) and continuously updated via compact 56-byte binary `ObserverStateEvent` (`UnreliableRemoteEvent`) buffers so replication remains active after `Character` / `Humanoid` deletion.
+- Entities outside the player's view distance or view-cone angle are skipped from network packet serialization while preserving their replicated state flag (`VisibleFlags`), so unchanged entities are never re-transmitted when re-entering the frustum.
 
 ### 2. Binary Delta Serialization (`ReplicatorExecuter.server.luau`)
 - Packs dynamic entity transforms into compact contiguous memory buffers (`DeltaPositions`, `DeltaOrientations`, `DeltaVisuals`).

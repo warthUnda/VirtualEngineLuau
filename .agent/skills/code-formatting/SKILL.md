@@ -28,12 +28,13 @@ State and setup are declared in labeled groups, in this order:
 
 1. `-- Services --` — `game:GetService(...)` lookups.
 2. `-- Static References --` — player, GUI, camera, actor refs.
-3. `-- Modules --` — `require(...)` calls.
-4. `-- Configs --` — constants derived from config.
-5. `-- Tables --` — table and buffer declarations.
-6. `-- Buffers` — buffer declarations (note: this header omits the trailing `--`).
-7. Local helper functions.
-8. Major runtime blocks separated by banner comments (see below).
+3. `-- Libraries --` — anything with functions, libraries or helpers from a modulescript.
+4. `-- Storage --` — things with storage, like ECS or tables or buffers from a modulescript.
+5. `-- Configs --` — constants derived from config.
+6. `-- Tables --` — table and buffer declarations.
+7. `-- Buffers` — buffer declarations (note: this header omits the trailing `--`).
+8. Local helper functions.
+9. Major runtime blocks separated by banner comments (see below).
 
 ## Formatting & Layout
 
@@ -247,6 +248,10 @@ mechanics (a `buffer.readf32`, a simple `for`) are left uncommented.
 - every function that will be used outside of the system its in, add @param and document its parameters
 - if you change it, update it
 
+- for public ends that the consumer would regularly use, do not let them do whatever they want with the params
+- ensure conformity, do not use ? unless there are multiple options and force the user to bend to whatever you want
+- if the user does not comply you should just leave them and let the compiler hit them like a dumptruck
+
 ## documentation
 - for every system, make a .md file that is documentation for a specific system
 - use terms and classification at the top of the documentation with highly descriptive writing and terminology to make the user understand whats happening immediately
@@ -258,3 +263,22 @@ mechanics (a `buffer.readf32`, a simple `for`) are left uncommented.
 - if the read me is outdated, empty or just a 10 line template messsage
 - look at the project and describe it
 - make it short and at the start of the read me use terms and classifications so people would understand it 
+
+## defensive programming
+- do not use defensive programming unless managing volatile state like a player that could have a certain part deleted due to ingame death
+
+## if statements
+- do not nest deeper than 2 recursions
+- if if statements in a block are getting bigger than 5 lines and its not a performance critical system or a part that would not make it matter use a dispatch table thats clean and clear
+
+- always use guard clauses unless its a one line thing or something that would make it clearer like
+- if shouldexecute == true then execute()
+
+## line management
+- if exceeding 300 lines, use different helpers that are specific until it is under 300 lines
+- however, unless its necessary do not do this
+- examples include libraries or services
+
+## modules
+- if you are requiring modules for storage purposes etc
+- if its about functions or libraries, include it in the

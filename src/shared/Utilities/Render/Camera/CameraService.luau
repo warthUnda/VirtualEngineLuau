@@ -84,6 +84,7 @@ local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- > Player Objects < --
 local player = Players.LocalPlayer :: Player
@@ -93,7 +94,9 @@ local mouse = player:GetMouse()
 local TWEEN_INFO = TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 local currentCamPosition = Vector3.zero
 local cameraRotation = Vector2.zero
-local currentCharacter = player.Character or player.CharacterAdded:Wait()
+local currentCharacter: Model? = player.Character
+local hasSeededCharacter = (currentCharacter ~= nil) :: boolean
+local customHost: BasePart? = nil
 local offset = Vector3.zero
 local updateShake = 0
 local delta = Vector3.zero
@@ -103,8 +106,27 @@ local _wobbleAngle = 0
 local neckCache: CFrame? = nil
 
 -- > MUNCHMALS INTERVENTION < --
+local SharedFolder = ReplicatedStorage:WaitForChild("Shared")
+local SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
+local PhysicsController = require(
+	SharedFolder:WaitForChild("Utilities"):WaitForChild("Physics"):WaitForChild("Controller"):WaitForChild("PhysicsController")
+)
 local CameraStore = require(script.Parent.CameraStore)
 local CamTable = CameraStore.GetCameraTable()
+local PLAYER_EYE_OFFSET = SystemsConfigs.CameraPlayerEyeOffset :: number
+
+local function resolveCharacterRoot(characterModel: Model?): BasePart?
+	if not characterModel or not characterModel.Parent then
+		return nil
+	end
+	local rootCandidate = characterModel:FindFirstChild("HumanoidRootPart")
+		or characterModel.PrimaryPart
+		or characterModel:FindFirstChildWhichIsA("BasePart")
+	if rootCandidate and rootCandidate:IsA("BasePart") then
+		return rootCandidate
+	end
+	return nil
+end
 
 --> Built-in camera views
 local cameraSettings: { [string]: { [string]: any } } = {
@@ -214,7 +236,7 @@ local CameraService = {
 	Wobble = 0 :: number,
 	TiltFactor = CFrame.fromEulerAnglesYXZ(0, 0, 0) :: CFrame,
 	Angle = 60 :: number,
-	Host = currentCharacter:WaitForChild("HumanoidRootPart") :: BasePart,
+	Host = resolveCharacterRoot(currentCharacter) :: BasePart?,
 	xLock = false :: boolean,
 	yLock = false :: boolean,
 	atX = 0 :: number,
@@ -350,7 +372,7 @@ local CameraService = {
 
 --> @hideBodyParts: helper function setting up CharacterVisibility
 local function hideBodyParts(__type: string?)
-	if currentCharacter then
+	if currentCharacter and currentCharacter.Parent then
 		--> Set-up the rotation for shift-locking
 		local hum = currentCharacter:FindFirstChildWhichIsA("Humanoid")
 		if hum then
@@ -390,8 +412,6 @@ local function hideBodyParts(__type: string?)
 				end
 			end
 		end
-	else
-		warn("[CameraService] Cannot find a host that is a Character model.")
 	end
 end
 
@@ -410,18 +430,25 @@ end
 
 --> @raycastWorld: correct zooms to avoid clipping parts
 local function raycastWorld(origin: Vector3, direction: Vector3): Vector3
+	if direction.Magnitude <= 1e-5 then
+		return origin
+	end
 	--> Set params w/blacklist
 	local params = RaycastParams.new()
 	params.IgnoreWater = true
-	if
-		CameraService.Host.Parent
-		and CameraService.Host.Parent ~= workspace
-		and CameraService.Host.Parent:IsA("Model")
-	then
-		params.FilterDescendantsInstances = { currentCharacter, CameraService.Host.Parent } :: { Instance }
-	else
-		params.FilterDescendantsInstances = { currentCharacter, CameraService.Host } :: { Instance }
+	local filterInstances = {} :: { Instance }
+	if currentCharacter and currentCharacter.Parent then
+		table.insert(filterInstances, currentCharacter)
 	end
+	local activeHost = CameraService.Host
+	if activeHost and activeHost.Parent then
+		if activeHost.Parent ~= workspace and activeHost.Parent:IsA("Model") then
+			table.insert(filterInstances, activeHost.Parent)
+		else
+			table.insert(filterInstances, activeHost)
+		end
+	end
+	params.FilterDescendantsInstances = filterInstances
 	local _pos = (currentCamPosition + offset) -- no Offset property applied yet
 	--> Allow clipping through transluscent parts
 	local landRay = workspace:Raycast(origin, direction, params)
@@ -443,6 +470,19 @@ local arrowKeyAngle = 0
 local pastCamRot = CFrame.Angles(0, 0, 0)
 function updateCamera(deltaTime: number)
 	local self = CameraService
+	if currentCharacter and not currentCharacter.Parent then
+		currentCharacter = nil
+		waistCache = nil
+		neckCache = nil
+		if not customHost then
+			self.Host = nil
+		end
+	end
+	if customHost and not customHost.Parent then
+		customHost = nil
+		self.Host = nil
+	end
+
 	--> Console has different inputs + logic. This helps set up CONSOLE camera movement
 	if UserInputService.GamepadEnabled then
 		cameraRotation -= differenceVector
@@ -455,8 +495,11 @@ function updateCamera(deltaTime: number)
 		self.yLock and self.atY or math.clamp(cameraRotation.Y, math.rad(-self.Angle), math.rad(self.Angle))
 	)
 
-	currentCamPosition = self.Host.Position
-		+ Vector3.new(0, self.Host.Parent and self.Host.Parent == currentCharacter and 2.5 or 0, 0)
+	if customHost and customHost.Parent then
+		currentCamPosition = customHost.Position
+	else
+		currentCamPosition = PhysicsController.GetPlayerPosition() + Vector3.new(0, PLAYER_EYE_OFFSET, 0)
+	end
 
 	--> rotate camera via arrow keys on PC
 	if UserInputService:IsKeyDown(Enum.KeyCode.Right) then
@@ -474,7 +517,13 @@ function updateCamera(deltaTime: number)
 	local yCFOffset = CFrame.fromEulerAnglesYXZ(0, 0, 0)
 
 	--> Dynamic wobble based on character's movement
-	if self.Wobble and self.Wobble > 0 and self.Host.Parent and self.Host.Parent == currentCharacter then
+	if
+		self.Wobble
+		and self.Wobble > 0
+		and not customHost
+		and currentCharacter
+		and currentCharacter.Parent
+	then
 		pcall(function()
 			local charAny = currentCharacter :: any
 			local yOff = charAny.Humanoid.RigType == Enum.HumanoidRigType.R15
@@ -510,14 +559,20 @@ function updateCamera(deltaTime: number)
 	if self.Zoom > 0 and self.Smoothness > 0 then
 		--> @damper: Increases damping factor for vertical motion
 		local function damper()
-			local hum = currentCharacter:FindFirstChildWhichIsA("Humanoid")
-			local humState: Enum.HumanoidStateType? = nil
+			local hum = if currentCharacter and currentCharacter.Parent
+				then currentCharacter:FindFirstChildWhichIsA("Humanoid")
+				else nil
+			local isAirborne: boolean
 
 			if hum then
-				humState = hum:GetState()
+				local humState = hum:GetState()
+				isAirborne = (humState == Enum.HumanoidStateType.Jumping)
+					or (humState == Enum.HumanoidStateType.Freefall)
+			else
+				isAirborne = not PhysicsController.IsPlayerGrounded()
 			end
 
-			if (humState == Enum.HumanoidStateType.Jumping) or (humState == Enum.HumanoidStateType.Freefall) then
+			if isAirborne then
 				lapsed = 0
 				return desiredTime * 3.33
 			end
@@ -541,13 +596,14 @@ function updateCamera(deltaTime: number)
 			* yCFOffset
 
 	--> Extraneous character alignment features if needed
-	if self.Host.Parent == currentCharacter then
+	if not customHost and currentCharacter and currentCharacter.Parent then
 		workspace.Retargeting = Enum.AnimatorRetargetingMode.Disabled
-		local humanoid = currentCharacter:FindFirstChildWhichIsA("Humanoid")
-		local root = currentCharacter:FindFirstChild("HumanoidRootPart") :: BasePart?
+		local activeChar = currentCharacter :: Model
+		local humanoid = activeChar:FindFirstChildWhichIsA("Humanoid")
+		local root = activeChar:FindFirstChild("HumanoidRootPart") :: BasePart?
 		if humanoid and humanoid.Health > 0 and root then
-			local upperTorso = currentCharacter:FindFirstChild("UpperTorso")
-			local head = currentCharacter:FindFirstChild("Head")
+			local upperTorso = activeChar:FindFirstChild("UpperTorso")
+			local head = activeChar:FindFirstChild("Head")
 			local waist = if humanoid.RigType == Enum.HumanoidRigType.R15 and upperTorso
 				then upperTorso:FindFirstChildWhichIsA("Motor6D")
 				else nil
@@ -636,16 +692,20 @@ function CameraService:SetCameraView(__type: string)
 	if __type == "Default" then
 		--> Resets it back to non-scriptable, Roblox default camera
 		svc.LockMouse = false
-		local defaultHum = currentCharacter:WaitForChild("Humanoid") :: Humanoid
+		local defaultHum = if currentCharacter and currentCharacter.Parent
+			then currentCharacter:FindFirstChildWhichIsA("Humanoid")
+			else nil
 		CamTable.CameraSubject = defaultHum
 		UserInputService.MouseBehavior = Enum.MouseBehavior.Default
 		CamTable.CameraType = Enum.CameraType.Custom
 		workspace.Retargeting = Enum.AnimatorRetargetingMode.Default
-		defaultHum.AutoRotate = true
+		if defaultHum then
+			defaultHum.AutoRotate = true
+		end
 	elseif cameraSettings[__type] then
 		--> Add in settings
 		workspace.Retargeting = Enum.AnimatorRetargetingMode.Disabled
-		if svc.Host.Parent and svc.Host.Parent == currentCharacter then
+		if not customHost and currentCharacter and currentCharacter.Parent then
 			hideBodyParts(if svc.CharacterVisibility ~= "None" then svc.CharacterVisibility else nil)
 		end
 		UserInputService.MouseBehavior = svc.LockMouse and __type ~= "Default" and Enum.MouseBehavior.LockCenter
@@ -855,7 +915,8 @@ function CameraService:SetCameraHost(newHost: BasePart?)
 		not newHost or typeof(newHost) == "Instance" and newHost:IsA("BasePart"),
 		"[CameraService] :SetCameraHost() only accepts a BasePart parameter, or none at all. "
 	)
-	self.Host = (newHost or currentCharacter:FindFirstChild("HumanoidRootPart")) :: BasePart
+	customHost = newHost
+	self.Host = newHost or resolveCharacterRoot(currentCharacter)
 end
 
 --- Changes a live camera property. Optionally persists the change into the current view's defaults.
@@ -974,16 +1035,18 @@ function CameraService:SetVerticalRange(angle: number)
 	self.Angle = math.clamp(math.abs(angle), 0, 89)
 end
 
---> Have camera reset focus to new character.
-player.CharacterAdded:Connect(function(char)
-	if
-		not CameraService.Host
-		or (not CameraService.Host:IsDescendantOf(workspace))
-		or (tostring(CameraService.Host.Parent) == player.Name)
-	then
+--> Seed initial character at most once if it had not spawned at module load.
+if not hasSeededCharacter then
+	player.CharacterAdded:Once(function(char)
+		hasSeededCharacter = true
 		currentCharacter = char
-		CameraService:SetCameraHost()
-	end
-end)
+		if not customHost then
+			CameraService.Host = resolveCharacterRoot(char)
+			if CameraService.CameraView ~= "Default" then
+				hideBodyParts(if CameraService.CharacterVisibility ~= "None" then CameraService.CharacterVisibility else nil)
+			end
+		end
+	end)
+end
 
 return CameraService

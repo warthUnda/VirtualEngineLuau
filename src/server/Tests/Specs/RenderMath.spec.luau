@@ -194,6 +194,7 @@ return function()
 
 		it("should translate texture IDs and deduplicate URLs in TextureTable", function()
 			-- Snapshot live Workspace decal entries so this unit test does not disturb runtime state
+			const SavedEntries = table.clone(TextureTable.Entries)
 			const SavedIdToName = table.clone(TextureTable.IdToName)
 			const SavedNameToId = table.clone(TextureTable.NameToId)
 			const SavedIdToUrl = table.clone(TextureTable.IdToUrl)
@@ -222,9 +223,16 @@ return function()
 			expect(SecondCreated).to.equal(true)
 			expect(TextureTable.TranslateIdToName(1)).to.equal("TestDecalA")
 			expect(TextureTable.TranslateNameToId("TestDecalB")).to.equal(2)
+			expect(TextureTable.Entries[1].Url).to.equal("rbxassetid://111111")
+			expect(TextureTable.Entries[1].Name).to.equal("TestDecalA")
+			expect(TextureTable.Entries[2].Url).to.equal("rbxassetid://222222")
+			expect(TextureTable.Entries[2].Name).to.equal("TestDecalB")
 
 			-- Restore previous entries so runtime Workspace decals remain intact
 			TextureTable.ResetEntries()
+			for Id: number, Entry in pairs(SavedEntries) do
+				TextureTable.Entries[Id] = Entry
+			end
 			for Id: number, Name: string in pairs(SavedIdToName) do
 				TextureTable.IdToName[Id] = Name
 			end

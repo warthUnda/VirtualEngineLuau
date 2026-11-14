@@ -64,6 +64,8 @@ local PendingMaxScale = 0 :: number
 local PendingJumpRequested = false :: boolean
 
 local HostRootPart: BasePart? = nil
+local CharacterSeeded = false :: boolean
+local CharacterAddedConnection: RBXScriptConnection? = nil
 local ECSDataModule: any = nil
 
 -- Buffers
@@ -87,13 +89,16 @@ local PhysicsController = {}
 -- 1. PUBLIC CONTROLLER API - INITIALIZATION, DIRECT ACTIONS & SIMULATION
 -- ============================================================================
 
-function PhysicsController.BindCharacter(Character: Model)
+function PhysicsController.BindPlrCharacter(Character: Model)
 	const RootPart, StartX, StartY, StartZ = PhysicsControllerHelper.ConfigureCharacterInstance(Character)
-	if not RootPart or not StartX or not StartY or not StartZ then
-		return
+	HostRootPart = RootPart
+	CharacterSeeded = true
+
+	if CharacterAddedConnection then
+		CharacterAddedConnection:Disconnect()
+		CharacterAddedConnection = nil
 	end
 
-	HostRootPart = RootPart
 	SpawnPosX, SpawnPosY, SpawnPosZ = StartX, StartY, StartZ
 	PlayerPosX, PlayerPosY, PlayerPosZ = StartX, StartY, StartZ
 	PlayerVelX, PlayerVelY, PlayerVelZ = 0, 0, 0
@@ -123,14 +128,19 @@ function PhysicsController.InitializePhysics()
 	end
 
 	const LocalPlayer = Players.LocalPlayer :: Player?
-	if not LocalPlayer then
+	if not LocalPlayer or CharacterSeeded then
 		return
 	end
 
 	if LocalPlayer.Character then
-		task.spawn(PhysicsController.BindCharacter, LocalPlayer.Character)
+		PhysicsController.BindCharacter(LocalPlayer.Character)
+	else
+		CharacterAddedConnection = LocalPlayer.CharacterAdded:Once(function(Character: Model)
+			if not CharacterSeeded then
+				PhysicsController.BindCharacter(Character)
+			end
+		end)
 	end
-	LocalPlayer.CharacterAdded:Connect(PhysicsController.BindCharacter)
 end
 
 function PhysicsController.AddPlayerMovement(
@@ -167,10 +177,6 @@ function PhysicsController.AddObjectMovement(
 	Magnitude: number,
 	IsImpulse: boolean?
 )
-	if not Initialized then
-		PhysicsController.InitializePhysics()
-	end
-
 	if EntityId < 1 or EntityId > MAX_ENTITIES then
 		return
 	end
@@ -234,11 +240,8 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 		PendingWishZ = 0
 		PendingMaxScale = 0
 		PendingJumpRequested = false
-		ActiveForceCount = PhysicsControllerHelper.ClearAccumulatedForces(
-			ActiveForceCount,
-			ActiveForceSlots,
-			ObjectForceBuffer
-		)
+		ActiveForceCount =
+			PhysicsControllerHelper.ClearAccumulatedForces(ActiveForceCount, ActiveForceSlots, ObjectForceBuffer)
 		return
 	end
 
@@ -248,29 +251,16 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 		PendingWishZ = 0
 		PendingMaxScale = 0
 		PendingJumpRequested = false
-		ActiveForceCount = PhysicsControllerHelper.ClearAccumulatedForces(
-			ActiveForceCount,
-			ActiveForceSlots,
-			ObjectForceBuffer
-		)
+		ActiveForceCount =
+			PhysicsControllerHelper.ClearAccumulatedForces(ActiveForceCount, ActiveForceSlots, ObjectForceBuffer)
 		return
 	end
 
 	PendingWishX, PendingWishZ, PendingMaxScale, PendingJumpRequested =
-		PhysicsControllerHelper.SampleKeyboardInput(
-			PendingWishX,
-			PendingWishZ,
-			PendingMaxScale,
-			PendingJumpRequested
-		)
+		PhysicsControllerHelper.SampleKeyboardInput(PendingWishX, PendingWishZ, PendingMaxScale, PendingJumpRequested)
 
 	const WishX: number, WishZ: number, WishScale: number, JumpRequested: boolean =
-		PhysicsControllerHelper.FlushPlayerIntent(
-			PendingWishX,
-			PendingWishZ,
-			PendingMaxScale,
-			PendingJumpRequested
-		)
+		PhysicsControllerHelper.FlushPlayerIntent(PendingWishX, PendingWishZ, PendingMaxScale, PendingJumpRequested)
 	PendingWishX = 0
 	PendingWishZ = 0
 	PendingMaxScale = 0
@@ -348,11 +338,8 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 		end
 	end
 
-	ActiveForceCount = PhysicsControllerHelper.ClearAccumulatedForces(
-		ActiveForceCount,
-		ActiveForceSlots,
-		ObjectForceBuffer
-	)
+	ActiveForceCount =
+		PhysicsControllerHelper.ClearAccumulatedForces(ActiveForceCount, ActiveForceSlots, ObjectForceBuffer)
 
 	if IS_CLIENT then
 		if PlayerPosY < VOID_RESET_Y then
@@ -361,8 +348,12 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 			PlayerGrounded = false
 		end
 
-		if HostRootPart and HostRootPart.Parent then
-			HostRootPart.CFrame = HostRootPart.CFrame.Rotation + Vector3.new(PlayerPosX, PlayerPosY, PlayerPosZ)
+		if HostRootPart then
+			if HostRootPart.Parent then
+				HostRootPart.CFrame = HostRootPart.CFrame.Rotation + Vector3.new(PlayerPosX, PlayerPosY, PlayerPosZ)
+			else
+				HostRootPart = nil
+			end
 		end
 	end
 end
@@ -469,8 +460,12 @@ end
 
 function PhysicsController.SetPlayerPosition(NewPosition: Vector3)
 	PlayerPosX, PlayerPosY, PlayerPosZ = NewPosition.X, NewPosition.Y, NewPosition.Z
-	if HostRootPart and HostRootPart.Parent then
-		HostRootPart.CFrame = HostRootPart.CFrame.Rotation + NewPosition
+	if HostRootPart then
+		if HostRootPart.Parent then
+			HostRootPart.CFrame = HostRootPart.CFrame.Rotation + NewPosition
+		else
+			HostRootPart = nil
+		end
 	end
 end
 

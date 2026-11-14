@@ -6,9 +6,7 @@
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- Static References --
-const PhysicsFolder = ReplicatedStorage:WaitForChild("Shared")
-	:WaitForChild("Utilities")
-	:WaitForChild("Physics")
+const PhysicsFolder = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities"):WaitForChild("Physics")
 
 -- Modules --
 const PhysicsController = require(PhysicsFolder:WaitForChild("Controller"):WaitForChild("PhysicsController"))
@@ -30,7 +28,7 @@ local PhysicsLibrary = {}
 ]=]
 function PhysicsLibrary.SimulateInstance(
 	EntityId: number,
-	Angle: (Vector3 | number)?,
+	Angle: number,
 	Impulse: number?,
 	Speed: number?,
 	CustomMass: number?

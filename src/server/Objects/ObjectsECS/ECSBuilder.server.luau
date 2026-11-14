@@ -3,11 +3,11 @@
 --!optimize 2
 
 -- Services --
+const Players = game:GetService("Players")
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- Static References --
 const Workspace = workspace :: Workspace
-const StaticFolder = Workspace:WaitForChild("Static")
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
@@ -40,4 +40,13 @@ Workspace.DescendantAdded:Connect(function(Descendant: Instance)
 end)
 
 task.wait(WORKSPACE_CLEANUP_DELAY) -- shall be used for later
-Workspace:ClearAllChildren()
+-- Stop character auto-respawns before clearing Workspace so destroying characters never loops into void deaths
+Players.CharacterAutoLoads = false
+
+for _, Child: Instance in ipairs(Workspace:GetChildren()) do
+	if Child:IsA("Terrain") or Child:IsA("Camera") then
+		continue
+	end
+
+	Child:Destroy()
+end

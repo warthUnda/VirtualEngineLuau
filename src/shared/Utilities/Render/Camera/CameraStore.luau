@@ -6,9 +6,6 @@
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const RunService = game:GetService("RunService")
 
--- Static References --
-const CurrentCamera = workspace.CurrentCamera :: Camera
-
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const CameraHelper = require(script.Parent.CameraHelper)
@@ -46,7 +43,13 @@ RunService.RenderStepped:Connect(function()
 	CameraLook = CameraCFrame.LookVector
 
 	const TargetRotation = CameraHelper.VectorsToRotation(CameraLook, CameraUp, CameraRight)
-	CurrentCamera.CFrame = CFrame.new(FIXED_POSITION) * TargetRotation
+	const ActiveCamera = workspace.CurrentCamera
+	if ActiveCamera then
+		if ActiveCamera.CameraType ~= Enum.CameraType.Scriptable then
+			ActiveCamera.CameraType = Enum.CameraType.Scriptable
+		end
+		ActiveCamera.CFrame = CFrame.new(FIXED_POSITION) * TargetRotation
+	end
 end)
 
 --[=[

@@ -31,10 +31,41 @@ const MAX_BVH_NODES = MAX_ENTITIES * 2 :: number
 const MAX_NODE_BYTES = MAX_BVH_NODES * NODE_STRIDE :: number
 const SAFE_BALANCED_DEPTH = math.max(16, STACK_CAPACITY - 16) :: number
 
+-- Types --
+type BoundsFieldSpec = {
+	Key: string,
+	Offset: number,
+	Update: (number, number) -> number,
+}
+
+-- Helpers --
+local function UpdateMin(Current: number, Candidate: number): number
+	return if Candidate < Current then Candidate else Current
+end
+
+local function UpdateMax(Current: number, Candidate: number): number
+	return if Candidate > Current then Candidate else Current
+end
+
 -- Tables --
 local DefaultServerStorage: ECSMain.ECSStorage? = nil
 local DefaultClientStorage: ECSMain.ECSStorage? = nil
 local DefaultRenderStorage: ECSMain.ECSStorage? = nil
+
+const BOUNDS_DISPATCH = {
+	{ Key = "MinX", Offset = 0, Update = UpdateMin },
+	{ Key = "MinY", Offset = 4, Update = UpdateMin },
+	{ Key = "MinZ", Offset = 8, Update = UpdateMin },
+	{ Key = "MaxX", Offset = 12, Update = UpdateMax },
+	{ Key = "MaxY", Offset = 16, Update = UpdateMax },
+	{ Key = "MaxZ", Offset = 20, Update = UpdateMax },
+	{ Key = "CenterMinX", Offset = 24, Update = UpdateMin },
+	{ Key = "CenterMinY", Offset = 28, Update = UpdateMin },
+	{ Key = "CenterMinZ", Offset = 32, Update = UpdateMin },
+	{ Key = "CenterMaxX", Offset = 24, Update = UpdateMax },
+	{ Key = "CenterMaxY", Offset = 28, Update = UpdateMax },
+	{ Key = "CenterMaxZ", Offset = 32, Update = UpdateMax },
+} :: { BoundsFieldSpec }
 
 local BVHHelper = {}
 
@@ -82,20 +113,22 @@ function BVHHelper.ResolveStorage(ProvidedStorage: ECSMain.ECSStorage?): ECSMain
 		const ActorStorage = if SelfActor then SelfActor:FindFirstChild("ObjectStorage") else nil
 		if ActorStorage and ActorStorage:IsA("ModuleScript") then
 			DefaultClientStorage = (require :: any)(ActorStorage) :: ECSMain.ECSStorage
-		else
-			const LocalPlayer = Players.LocalPlayer :: Player?
-			const PlayerScripts = if LocalPlayer then LocalPlayer:FindFirstChild("PlayerScripts") else nil
-			const ControllerActor = if PlayerScripts then PlayerScripts:FindFirstChild("Controller") else nil
-			const ControllerStorage = if ControllerActor then ControllerActor:FindFirstChild("ObjectStorage") else nil
-			if ControllerStorage and ControllerStorage:IsA("ModuleScript") then
-				DefaultClientStorage = (require :: any)(ControllerStorage) :: ECSMain.ECSStorage
-			elseif PlayerScripts then
-				const ClientFolder = PlayerScripts:FindFirstChild("Client")
-				const ObjectsFolder = if ClientFolder then ClientFolder:FindFirstChild("Objects") else nil
-				const ObjStorage = if ObjectsFolder then ObjectsFolder:FindFirstChild("ObjectStorage") else nil
-				if ObjStorage and ObjStorage:IsA("ModuleScript") then
-					DefaultClientStorage = (require :: any)(ObjStorage) :: ECSMain.ECSStorage
-				end
+			return
+		end
+
+		const LocalPlayer = Players.LocalPlayer :: Player?
+		const PlayerScripts = if LocalPlayer then LocalPlayer:FindFirstChild("PlayerScripts") else nil
+		const ControllerActor = if PlayerScripts then PlayerScripts:FindFirstChild("Controller") else nil
+		const ControllerStorage = if ControllerActor then ControllerActor:FindFirstChild("ObjectStorage") else nil
+
+		if ControllerStorage and ControllerStorage:IsA("ModuleScript") then
+			DefaultClientStorage = (require :: any)(ControllerStorage) :: ECSMain.ECSStorage
+		elseif PlayerScripts then
+			const ClientFolder = PlayerScripts:FindFirstChild("Client")
+			const ObjectsFolder = if ClientFolder then ClientFolder:FindFirstChild("Objects") else nil
+			const ObjStorage = if ObjectsFolder then ObjectsFolder:FindFirstChild("ObjectStorage") else nil
+			if ObjStorage and ObjStorage:IsA("ModuleScript") then
+				DefaultClientStorage = (require :: any)(ObjStorage) :: ECSMain.ECSStorage
 			end
 		end
 	end
@@ -191,8 +224,10 @@ function BVHHelper.NeedsRebuild(
 				or buffer.readf32(SizeBuffer, CompOffset + 4) ~= buffer.readf32(CachedStateBuffer, StateOffset + 4)
 				or buffer.readf32(SizeBuffer, CompOffset + 8) ~= buffer.readf32(CachedStateBuffer, StateOffset + 8)
 				or buffer.readf32(DirectionsBuffer, DirOffset) ~= buffer.readf32(CachedStateBuffer, StateOffset + 12)
-				or buffer.readf32(DirectionsBuffer, DirOffset + 16)
-					~= buffer.readf32(CachedStateBuffer, StateOffset + 16)
+				or buffer.readf32(DirectionsBuffer, DirOffset + 16) ~= buffer.readf32(
+					CachedStateBuffer,
+					StateOffset + 16
+				)
 				or buffer.readf32(DirectionsBuffer, DirOffset + 32)
 					~= buffer.readf32(CachedStateBuffer, StateOffset + 20)
 			then
@@ -232,46 +267,37 @@ function BVHHelper.BuildSubtree(
 	const NodeOffset = AllocatedNodeBytes :: number
 	local NextAllocatedBytes = AllocatedNodeBytes + NODE_STRIDE :: number
 
-	local MinX: number, MinY: number, MinZ: number = math.huge, math.huge, math.huge
-	local MaxX: number, MaxY: number, MaxZ: number = -math.huge, -math.huge, -math.huge
-	local CenterMinX: number, CenterMinY: number, CenterMinZ: number = math.huge, math.huge, math.huge
-	local CenterMaxX: number, CenterMaxY: number, CenterMaxZ: number = -math.huge, -math.huge, -math.huge
+	const Extents = {
+		MinX = math.huge,
+		MinY = math.huge,
+		MinZ = math.huge,
+		MaxX = -math.huge,
+		MaxY = -math.huge,
+		MaxZ = -math.huge,
+		CenterMinX = math.huge,
+		CenterMinY = math.huge,
+		CenterMinZ = math.huge,
+		CenterMaxX = -math.huge,
+		CenterMaxY = -math.huge,
+		CenterMaxZ = -math.huge,
+	} :: { [string]: number }
 
 	for i = StartIdx, EndIdx do
 		const EntityId = buffer.readu32(ItemIndicesBuffer, (i - 1) * 4) :: number
 		const BoundsOffset = (EntityId - 1) * ITEM_BOUNDS_STRIDE :: number
 
-		const BoundMinX = buffer.readf32(ItemBoundsBuffer, BoundsOffset) :: number
-		const BoundMinY = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 4) :: number
-		const BoundMinZ = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 8) :: number
-		const BoundMaxX = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 12) :: number
-		const BoundMaxY = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 16) :: number
-		const BoundMaxZ = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 20) :: number
-		const CenterX = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 24) :: number
-		const CenterY = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 28) :: number
-		const CenterZ = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 32) :: number
-
-		if BoundMinX < MinX then MinX = BoundMinX end
-		if BoundMinY < MinY then MinY = BoundMinY end
-		if BoundMinZ < MinZ then MinZ = BoundMinZ end
-		if BoundMaxX > MaxX then MaxX = BoundMaxX end
-		if BoundMaxY > MaxY then MaxY = BoundMaxY end
-		if BoundMaxZ > MaxZ then MaxZ = BoundMaxZ end
-
-		if CenterX < CenterMinX then CenterMinX = CenterX end
-		if CenterY < CenterMinY then CenterMinY = CenterY end
-		if CenterZ < CenterMinZ then CenterMinZ = CenterZ end
-		if CenterX > CenterMaxX then CenterMaxX = CenterX end
-		if CenterY > CenterMaxY then CenterMaxY = CenterY end
-		if CenterZ > CenterMaxZ then CenterMaxZ = CenterZ end
+		for _, Spec: BoundsFieldSpec in ipairs(BOUNDS_DISPATCH) do
+			const Value = buffer.readf32(ItemBoundsBuffer, BoundsOffset + Spec.Offset) :: number
+			Extents[Spec.Key] = Spec.Update(Extents[Spec.Key], Value)
+		end
 	end
 
-	buffer.writef32(NodeBuffer, NodeOffset, MinX)
-	buffer.writef32(NodeBuffer, NodeOffset + 4, MinY)
-	buffer.writef32(NodeBuffer, NodeOffset + 8, MinZ)
-	buffer.writef32(NodeBuffer, NodeOffset + 16, MaxX)
-	buffer.writef32(NodeBuffer, NodeOffset + 20, MaxY)
-	buffer.writef32(NodeBuffer, NodeOffset + 24, MaxZ)
+	buffer.writef32(NodeBuffer, NodeOffset, Extents.MinX)
+	buffer.writef32(NodeBuffer, NodeOffset + 4, Extents.MinY)
+	buffer.writef32(NodeBuffer, NodeOffset + 8, Extents.MinZ)
+	buffer.writef32(NodeBuffer, NodeOffset + 16, Extents.MaxX)
+	buffer.writef32(NodeBuffer, NodeOffset + 20, Extents.MaxY)
+	buffer.writef32(NodeBuffer, NodeOffset + 24, Extents.MaxZ)
 
 	if StartIdx >= EndIdx or NextAllocatedBytes + (NODE_STRIDE * 2) > MAX_NODE_BYTES then
 		const LeafEntityId = buffer.readu32(ItemIndicesBuffer, (StartIdx - 1) * 4) :: number
@@ -280,22 +306,22 @@ function BVHHelper.BuildSubtree(
 		return NodeOffset, NextAllocatedBytes
 	end
 
-	const ExtentX = CenterMaxX - CenterMinX :: number
-	const ExtentY = CenterMaxY - CenterMinY :: number
-	const ExtentZ = CenterMaxZ - CenterMinZ :: number
+	const ExtentX = Extents.CenterMaxX - Extents.CenterMinX :: number
+	const ExtentY = Extents.CenterMaxY - Extents.CenterMinY :: number
+	const ExtentZ = Extents.CenterMaxZ - Extents.CenterMinZ :: number
 
 	local AxisOffset = 24 :: number
-	local SplitPosition = (CenterMinX + CenterMaxX) * 0.5 :: number
+	local SplitPosition = (Extents.CenterMinX + Extents.CenterMaxX) * 0.5 :: number
 	local MaxExtent = ExtentX :: number
 
 	if ExtentY > MaxExtent then
 		AxisOffset = 28
-		SplitPosition = (CenterMinY + CenterMaxY) * 0.5
+		SplitPosition = (Extents.CenterMinY + Extents.CenterMaxY) * 0.5
 		MaxExtent = ExtentY
 	end
 	if ExtentZ > MaxExtent then
 		AxisOffset = 32
-		SplitPosition = (CenterMinZ + CenterMaxZ) * 0.5
+		SplitPosition = (Extents.CenterMinZ + Extents.CenterMaxZ) * 0.5
 		MaxExtent = ExtentZ
 	end
 
@@ -360,12 +386,7 @@ end
 	@param IgnoreFilter any -- Ignore filter (nil, number, OOP object, or table).
 	@return boolean -- True if entity/object should be skipped.
 ]=]
-function BVHHelper.IsIgnored(
-	EntityId: number,
-	DynObject: any,
-	IgnoredId: number,
-	IgnoreFilter: any
-): boolean
+function BVHHelper.IsIgnored(EntityId: number, DynObject: any, IgnoredId: number, IgnoreFilter: any): boolean
 	if EntityId > 0 and EntityId == IgnoredId then
 		return true
 	end

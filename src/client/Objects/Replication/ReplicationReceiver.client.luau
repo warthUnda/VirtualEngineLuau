@@ -10,15 +10,14 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- own copy of each required ModuleScript. The receiver therefore has to live in that same Actor,
 -- otherwise it fills the PlayerScripts copy of the ECS that nothing ever reads and the controller
 -- keeps seeing an entity count of 0. It is cloned into the controller Actor by RenderBootstrap.
-const SelfActor = script:GetActor() :: Actor?
-if not SelfActor then
-	return
-end
+const SelfActor = script:GetActor() :: Actor
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
 const ObjectStorage = (require :: any)(SelfActor:WaitForChild("ObjectStorage")) :: ECSMain.ECSStorage
+
+-- table data
 const ECSData = ObjectStorage.ECSData
 const PositionData = ObjectStorage.PositionData
 const OrientationData = ObjectStorage.OrientationData
@@ -34,6 +33,7 @@ const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
 const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 
+-- Remote events
 const CoreEvents = ReplicatedStorage:WaitForChild(CORE_EVENTS_FOLDER_NAME) :: Folder
 const ReplicateEvent = CoreEvents:WaitForChild(REPLICATE_REMOTE_EVENT_NAME) :: RemoteEvent
 
@@ -82,11 +82,8 @@ ReplicateEvent.OnClientEvent:Connect(
 		PropertiesOrCounts: any,
 		MaybeCounts: ECSTable?
 	)
-		const PropertiesBuffer = if typeof(PropertiesOrCounts) == "buffer" then PropertiesOrCounts :: buffer else nil
-		const ECSDataTable = (if PropertiesBuffer then MaybeCounts else PropertiesOrCounts) :: ECSTable
-		if not ECSDataTable then
-			return
-		end
+		const PropertiesBuffer = PropertiesOrCounts :: buffer
+		const ECSDataTable = PropertiesOrCounts :: ECSTable
 
 		const DeltaCount = math.min(ECSDataTable.EntityECSCount, MAX_ENTITIES) :: number
 		if DeltaCount <= 0 then

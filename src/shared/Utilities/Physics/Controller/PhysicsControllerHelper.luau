@@ -73,13 +73,13 @@ function PhysicsControllerHelper.ResolveObjectStorage(): Instance?
 end
 
 --[=[
-	Configures a Roblox character model for virtualized kinematic physics simulation.
+	Extracts an initial spawn position and optional root BasePart from a character model without requiring a Humanoid.
 	@param Character Model -- Character model instance.
-	@return (BasePart?, number?, number?, number?) -- RootPart, InitialX, InitialY, InitialZ.
+	@return (BasePart?, number, number, number) -- Optional RootPart, InitialX, InitialY, InitialZ.
 ]=]
 function PhysicsControllerHelper.ConfigureCharacterInstance(
 	Character: Model
-): (BasePart?, number?, number?, number?)
+): (BasePart?, number, number, number)
 	const Humanoid = Character:FindFirstChildWhichIsA("Humanoid") :: Humanoid?
 	if Humanoid then
 		Humanoid.PlatformStand = true
@@ -92,17 +92,20 @@ function PhysicsControllerHelper.ConfigureCharacterInstance(
 	end
 
 	const RootPartCandidate = Character:FindFirstChild("HumanoidRootPart")
-		or Character:WaitForChild("HumanoidRootPart", 5)
-	if not RootPartCandidate or not RootPartCandidate:IsA("BasePart") then
-		return nil, nil, nil, nil
+		or Character.PrimaryPart
+		or Character:FindFirstChildWhichIsA("BasePart")
+
+	if RootPartCandidate and RootPartCandidate:IsA("BasePart") then
+		const RootPart = RootPartCandidate :: BasePart
+		RootPart.Anchored = true
+		RootPart.CanCollide = false
+
+		const StartPos = RootPart.Position :: Vector3
+		return RootPart, StartPos.X, StartPos.Y + 0.5, StartPos.Z
 	end
-	const RootPart = RootPartCandidate :: BasePart
 
-	RootPart.Anchored = true
-	RootPart.CanCollide = false
-
-	const StartPos = RootPart.Position :: Vector3
-	return RootPart, StartPos.X, StartPos.Y + 0.5, StartPos.Z
+	const PivotPos = Character:GetPivot().Position :: Vector3
+	return nil, PivotPos.X, PivotPos.Y + 0.5, PivotPos.Z
 end
 
 --[=[

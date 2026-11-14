@@ -57,6 +57,14 @@ const CleanerHelper = require(
 		:WaitForChild("CleanerHelper")
 )
 
+const PhysicsController = require(
+	ReplicatedStorage:WaitForChild("Shared")
+		:WaitForChild("Utilities")
+		:WaitForChild("Physics")
+		:WaitForChild("Controller")
+		:WaitForChild("PhysicsController")
+)
+
 -- Configs --
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
@@ -89,11 +97,10 @@ const ObjectIdByRenderSlot = buffer.create((MAX_ENTITIES + 1) * 4) :: buffer
 -- ============================================================================
 
 while true do
-	const Head = ViewCulling.GetObserverHead(LocalPlayer) :: BasePart?
 	const ObjectEntityCount = math.min(ObjectCounts.EntityECSCount, MAX_ENTITIES) :: number
 
-	if Head and ObjectEntityCount > 0 then
-		ViewCulling.UpdateDynamicView(Head)
+	if ObjectEntityCount > 0 then
+		ViewCulling.UpdateClientView(PhysicsController.GetPlayerPosition())
 
 		for i = 1, ObjectEntityCount do
 			const ObjectSlotOffset = i * 4 :: number

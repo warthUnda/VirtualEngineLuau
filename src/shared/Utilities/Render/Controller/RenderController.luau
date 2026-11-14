@@ -12,8 +12,6 @@ const Player = Players.LocalPlayer :: Player
 const PlayerGui = Player:WaitForChild("PlayerGui") :: PlayerGui
 const PlayerScripts = Player:WaitForChild("PlayerScripts")
 
-const Camera = workspace.CurrentCamera :: Camera
-
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
@@ -74,11 +72,16 @@ const ECS_PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
 const TEXTURE_STUDS_PER_TILE = SystemsConfigs.TextureStudsPerTile :: number
 const INV_TEXTURE_STUDS_PER_TILE = if TEXTURE_STUDS_PER_TILE > 0 then 1 / TEXTURE_STUDS_PER_TILE else 0 :: number
-const TEXTURE_REGISTRY_FOLDER_NAME = SystemsConfigs.TextureRegistryFolderName :: string
+const CORE_EVENTS_FOLDER_NAME = SystemsConfigs.CoreEventsFolderName :: string
+const TEXTURE_SYNC_REMOTE_EVENT_NAME = SystemsConfigs.TextureSyncRemoteEventName :: string
+const FRAME_IN_FLIGHT_TIMEOUT = 0.25 :: number
 
 local Initialized = false :: boolean
 local Received = 0 :: number
+local ExpectedWorkers = 0 :: number
 local CurrentFrame = 0 :: number
+local FrameInFlight = false :: boolean
+local LastDispatchClock = 0 :: number
 local PendingTextureSyncFrames = 0 :: number
 local LoadedTextureBuffers: { [number]: buffer }? = nil
 
@@ -114,7 +117,9 @@ function Renderer.Init()
 		return
 	end
 
-	const ImageLabel = PlayerGui:WaitForChild("ScreenGui"):WaitForChild("ImageLabel") :: ImageLabel
+	const ScreenGui = PlayerGui:WaitForChild("ScreenGui") :: ScreenGui
+	ScreenGui.ResetOnSpawn = false
+	const ImageLabel = ScreenGui:WaitForChild("ImageLabel") :: ImageLabel
 	const SelfActor = PlayerScripts:WaitForChild("Controller") :: Actor
 	WorkerActors = (PlayerScripts:WaitForChild("WorkerFolder"):GetChildren() :: any) :: { Actor }
 
@@ -134,12 +139,15 @@ function Renderer.Init()
 
 	-- Wait for the camera to initialize
 	task.spawn(function()
-		-- Switch camera to scriptable so default controls don't override it
-		Camera.CameraType = Enum.CameraType.Scriptable
+		const ActiveCamera = workspace.CurrentCamera
+		if ActiveCamera then
+			-- Switch camera to scriptable so default controls don't override it
+			ActiveCamera.CameraType = Enum.CameraType.Scriptable
 
-		-- Set position: Y = -50000 (underground) or 50000 (sky)
-		-- Looking straight ahead or down
-		Camera.CFrame = CFrame.new(SCRIPTABLE_CAMERA_PARK_POSITION)
+			-- Set position: Y = -50000 (underground) or 50000 (sky)
+			-- Looking straight ahead or down
+			ActiveCamera.CFrame = CFrame.new(SCRIPTABLE_CAMERA_PARK_POSITION)
+		end
 	end)
 
 	SelfActor:BindToMessage(
@@ -173,55 +181,51 @@ function Renderer.Init()
 			Received += 1
 
 			-- If all workers have returned their data, write it to the image
-			if Received == ACTOR_COUNT then
+			if Received >= ExpectedWorkers then
 				EditableImage:WritePixelsBuffer(Vector2.zero, IMAGE_SIZE, FinalPixel)
 				Received = 0
+				FrameInFlight = false
 			end
 		end
 	)
 
-	-- Decode replicated Decal URLs from TextureRegistry into 64x64 buffers inside TextureTable and push them to workers
-	local function DecodeRegistryEntry(Entry: Instance)
-		if not Entry:IsA("StringValue") then
+	-- Sync TextureTable entries from the server's public TextureTable hashmap and decode into 64x64 buffers
+	const CoreEvents = ReplicatedStorage:WaitForChild(CORE_EVENTS_FOLDER_NAME) :: Folder
+	const TextureSyncEvent = CoreEvents:WaitForChild(TEXTURE_SYNC_REMOTE_EVENT_NAME) :: RemoteEvent
+
+	local function ApplySyncedTextures(Entries: any)
+		if typeof(Entries) ~= "table" then
 			return
 		end
 
-		const TextureId = tonumber(Entry.Name) :: number?
-		if not TextureId then
-			return
-		end
-
-		const RawUrl = Entry.Value :: string
-		const TextureNameAttr = Entry:GetAttribute("TextureName")
-		const TextureName = if typeof(TextureNameAttr) == "string" then TextureNameAttr else nil
-
-		task.spawn(function()
-			const _Buf: buffer, Updated: boolean = TextureTable.RegisterEntryWithId(TextureId, RawUrl, TextureName)
-			if Updated or not LoadedTextureBuffers then
-				LoadedTextureBuffers = TextureTable.GetAllCachedBuffers()
-				PendingTextureSyncFrames = 3
+		for _, Entry: any in ipairs(Entries :: { TextureTable.TextureEntry }) do
+			if typeof(Entry) ~= "table" then
+				continue
 			end
-		end)
-	end
 
-	local function HookTextureRegistry(RegistryFolder: Instance)
-		for _, Entry: Instance in ipairs(RegistryFolder:GetChildren()) do
-			DecodeRegistryEntry(Entry)
-		end
-
-		RegistryFolder.ChildAdded:Connect(DecodeRegistryEntry)
-	end
-
-	const ExistingRegistry = ReplicatedStorage:FindFirstChild(TEXTURE_REGISTRY_FOLDER_NAME)
-	if ExistingRegistry then
-		HookTextureRegistry(ExistingRegistry)
-	else
-		ReplicatedStorage.ChildAdded:Connect(function(Child: Instance)
-			if Child.Name == TEXTURE_REGISTRY_FOLDER_NAME then
-				HookTextureRegistry(Child)
+			const TextureId = Entry.Id :: number?
+			const RawUrl = Entry.Url :: string?
+			const TextureName = Entry.Name :: string?
+			if typeof(TextureId) ~= "number" or typeof(RawUrl) ~= "string" then
+				continue
 			end
-		end)
+
+			task.spawn(function()
+				const _Buf: buffer?, Updated: boolean = TextureTable.RegisterEntryWithId(
+					TextureId,
+					RawUrl,
+					if typeof(TextureName) == "string" then TextureName else nil
+				)
+				if Updated or not LoadedTextureBuffers then
+					LoadedTextureBuffers = TextureTable.GetAllCachedBuffers()
+					PendingTextureSyncFrames = 3
+				end
+			end)
+		end
 	end
+
+	TextureSyncEvent.OnClientEvent:Connect(ApplySyncedTextures)
+	TextureSyncEvent:FireServer()
 
 	LoadedTextureBuffers = TextureTable.GetAllCachedBuffers()
 	PendingTextureSyncFrames = 3
@@ -236,6 +240,11 @@ end
 function Renderer.DrawFrame()
 	if not Initialized then
 		Renderer.Init()
+	end
+
+	const NowClock = os.clock() :: number
+	if FrameInFlight and (NowClock - LastDispatchClock) < FRAME_IN_FLIGHT_TIMEOUT then
+		return
 	end
 
 	-- Tables
@@ -261,6 +270,13 @@ function Renderer.DrawFrame()
 	-- Pre loop Updates --
 	CurrentFrame += 1
 	Received = 0
+	ExpectedWorkers = #WorkerActors
+	if ExpectedWorkers > 0 then
+		FrameInFlight = true
+		LastDispatchClock = NowClock
+	else
+		FrameInFlight = false
+	end
 
 	if PendingTextureSyncFrames > 0 and LoadedTextureBuffers then
 		PendingTextureSyncFrames -= 1
@@ -411,7 +427,16 @@ function Renderer.DrawFrame()
 	-- Sends the information to all workers
 	for i, TargetActor: Actor in ipairs(WorkerActors) do
 		const ByteCount = WorkerOffsets[i] :: number
-		const PayloadBuffer = if ByteCount > 0 then BufferTable[i] else EmptyPayload
+		local PayloadBuffer = EmptyPayload :: buffer
+		if ByteCount > 0 then
+			if ByteCount < WORKER_BUFFER_CAPACITY then
+				const CompactSlice = buffer.create(ByteCount) :: buffer
+				buffer.copy(CompactSlice, 0, BufferTable[i], 0, ByteCount)
+				PayloadBuffer = CompactSlice
+			else
+				PayloadBuffer = BufferTable[i]
+			end
+		end
 
 		TargetActor:SendMessage(
 			"Execute Rendering",

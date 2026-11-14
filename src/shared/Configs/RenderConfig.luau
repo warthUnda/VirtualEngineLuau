@@ -32,9 +32,6 @@ RenderConfig.TextureSize = 64 :: number
 RenderConfig.TextureStudsPerTile = 0 :: number
 -- World-space studs covered by one texture tile on part faces (set <= 0 to stretch 1x1 across each face instead of repeating).
 
-RenderConfig.TextureRegistryFolderName = "TextureRegistry" :: string
--- Name of the ReplicatedStorage folder where ECSBuilder publishes discovered Decal URLs for client 64x64 decoding.
-
 -- Lighting & Clear Color --
 
 RenderConfig.ClearColorR = 15 :: number
@@ -109,6 +106,9 @@ RenderConfig.DefaultCameraView = "FirstPerson" :: string
 
 RenderConfig.CameraMaxVerticalAngle = 60 :: number
 -- Default maximum vertical look angle in degrees (up/down pitch clamp) in CameraService.
+
+RenderConfig.CameraPlayerEyeOffset = 2.5 :: number
+-- Vertical eye-height offset in studs above the simulated player physics body when no BasePart camera host is used.
 
 RenderConfig.CleanerTickInterval = 0 :: number
 -- Yield duration in seconds between client RendererCleaner culling passes.

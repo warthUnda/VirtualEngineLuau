@@ -32,8 +32,11 @@ ECSConfig.DynamicObjectsMaxCount = 1023 :: number
 
 -- Server ECS Builder & Replication --
 
-ECSConfig.ReplicationTickInterval = 0 :: number
+ECSConfig.ReplicationTickInterval = 0.05 :: number
 -- Yield duration in seconds between server replication delta broadcast passes.
+
+ECSConfig.MaxEntitiesPerReplicationPacket = 256 :: number
+-- Maximum number of entities packed into a single ReplicateEvent packet per player per tick to prevent network queue buildup.
 
 ECSConfig.StaticObjectsFolderName = "Static" :: string
 -- Name of the Workspace folder whose descendant BaseParts are flagged as static entities in the server ECS.
@@ -46,5 +49,14 @@ ECSConfig.CoreEventsFolderName = "CoreEvents" :: string
 
 ECSConfig.ReplicateRemoteEventName = "ReplicateEvent" :: string
 -- Name of the RemoteEvent used to replicate ECS component delta buffers from server to client.
+
+ECSConfig.ObserverRemoteEventName = "ObserverStateEvent" :: string
+-- Name of the UnreliableRemoteEvent used to sync virtual client observer transforms to the server culler without a Character.
+
+ECSConfig.ObserverSyncInterval = 0.05 :: number
+-- Minimum interval in seconds between client-to-server virtual observer transform sync packets.
+
+ECSConfig.TextureSyncRemoteEventName = "TextureSyncEvent" :: string
+-- Name of the RemoteEvent used to replicate TextureTable's public texture hashmap from server to client.
 
 return ECSConfig

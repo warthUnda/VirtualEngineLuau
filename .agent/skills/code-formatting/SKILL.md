@@ -4,7 +4,7 @@ description: Code style and conventions guide derived from RenderController.clie
 ---
 # Render Code Style Guide
 
-Reference file: `src/shared/Utilities/Render/Controller/RenderController.client.luau`
+Reference file: `src/shared/Utilities/Render/Controller/RenderController.luau`
 
 This is the canonical example of how rendering-pipeline code is written in this
 project. Match these conventions when adding or refactoring render code.
@@ -116,7 +116,7 @@ local function ReadProjectedVertex(VertexIndex: number): Vector3
 Anonymous callbacks are typed the same way:
 
 ```lua
-SelfActor:BindToMessage("Return Render Calculations", function(PixelBuffer: buffer, ZBuffer: buffer, FrameId: number)
+SelfActor:BindToMessage("Return Render Calculations", function(PixelBuffer: buffer, BandIndex: number, DirtyMinY: number, DirtyMaxY: number, FrameId: number)
 ```
 
 ### Loop variables
@@ -223,11 +223,6 @@ mechanics (a `buffer.readf32`, a simple `for`) are left uncommented.
 - you will see multiple files, put them into whatever category you are doing
 - do not add types to module script references via require()
 
-## Tests
-
-- for every feature you code or system, create a test:
-- think about if its needed however too
-
 ## local functions
 
 - inside a system, if there is a local function put it into a new file thats right next to the main file, it should be a .luau file
@@ -280,5 +275,35 @@ mechanics (a `buffer.readf32`, a simple `for`) are left uncommented.
 - examples include libraries or services
 
 ## modules
-- if you are requiring modules for storage purposes etc
-- if its about functions or libraries, include it in the
+- When requiring modules for data/storage (`Storage`, `ObjectStorage`, `ECSStorage`), place them under `-- Storage --`.
+- When requiring modules for functions, math, or libraries (`RenderMath`, `BVH`, `PhysicsMath`), place them under `-- Modules --` (or `-- Libraries --`).
+- Never annotate `require(...)` results with `:: ModuleScript` so Luau preserves exported function and type signatures.
+
+## linting
+- Every time you write or modify Luau code, run linting / static verification (`selene` / `luau-lsp` when available, plus symbol/reference and JSON checks) before finishing.
+- **Red File / Red Squiggle Rule:** If a file turns red in the IDE with `1` or `2` (or more) red squiggles/problems, treat it as an **actual code/logic issue** (such as an undefined symbol, nil-indexed field, or broken call signature), **never** dismiss it as a "petty type error." Investigate and fix the root cause immediately.
+- Ensure strict `--!strict` compliance: zero unused variables, zero dead imports, zero nil-indexed fields, and exact parameter count/type matching across module boundaries.
+
+## Architecture & Performance Guardrails
+
+### 1. Contiguous Buffer Strides & Canonical Layouts
+- Derive all ECS buffer byte sizes in `ECSConfig.luau` directly from `ECSMaxEntities * Stride` (never hardcoded round numbers).
+- Canonical strides:
+  - `PositionData` / `SizeData`: `12` bytes (`3 × f32`: `X, Y, Z`).
+  - `DirectionsData`: `36` bytes (`Look` at `0..11`, `Up` at `12..23`, `Right` at `24..35` where `Right = Look × Up`). `OrientationData` aliases `Look` (`0..11`).
+  - `VisualData`: `4` bytes (`u32` packed RGBA).
+  - `PropertiesData`: `4` bytes (`u32` bitfield: `CanCollide`, `IsVisible`, `Anchored`, `HasDynamicId`, `TextureId`, `ShapeId`, `DynamicId`).
+
+### 2. O(1) Swap-and-Pop Deletion Contract
+- `ECSData.DeleteEntity(EntityId)` moves `LastEntityId -> EntityId` in $O(1)$ time.
+- Any subsystem indexing per-entity state (`DynamicObjectsList`, `PhysicsController`, `ReplicationReceiver`, `RendererCleaner`) must register a listener via `ECSData.SetSwapPopCallback` (or bidirectional slot maps) so moved tail entities never leave ghost slots or stale IDs.
+
+### 3. Roblox Actor VM Boundaries & Storage Resolution
+- `script:GetActor()` returns `nil` for shared `ModuleScript`s in `ReplicatedStorage`, even when `require`d from inside an `Actor` (`Controller` or `ParallelWorker`).
+- Never rely on `script:GetActor()` inside `ReplicatedStorage` modules to detect the `Controller` Actor. Resolve `PlayerScripts.Controller.ObjectStorage` first for live client systems, and allow an optional `ProvidedStorage` override for isolated unit tests.
+- When sending triangle command batches across Actor VMs (`TargetActor:SendMessage`), copy only the active `ByteCount` (`CompactSlice = buffer.create(ByteCount)`) rather than serializing oversized capacity buffers.
+
+### 4. Zero-Allocation Hot Paths (Render, BVH, Physics, Replication)
+- Never allocate Lua tables (`{}`), closures, `RaycastParams.new()`, or `Instance` queries (`workspace:Raycast`) inside per-frame, per-substep, BVH build/traversal, or rasterizer loops.
+- Use `BVH.Raycast` and `BVH.QueryAABBScalar` (with pre-allocated `u32` candidate buffers and once-per-substep `BVH.EnsureFresh`) for all spatial queries.
+- Do **not** use function dispatch tables inside hot loops (`BVH`, `RenderMath`, `MathModule`, `PhysicsMath`); use inline scalar locals and guard clauses.

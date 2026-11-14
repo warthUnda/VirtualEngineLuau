@@ -22,11 +22,23 @@
       "StarterPlayerScripts": {
         "Client": {
           "$path": "src/client"
+        },
+        "PlayerScriptsLoader": {
+          "$path": "src/character/PlayerScriptsLoader.client.luau"
+        },
+        "RbxCharacterSounds": {
+          "$path": "src/character/RbxCharacterSounds.client.luau"
+        },
+        "PlayerModule": {
+          "$path": "src/character/PlayerModule.luau"
         }
       },
       "StarterCharacterScripts": {
-        "CharacterScripts": {
-          "$path": "src/character"
+        "Animate": {
+          "$path": "src/character/Animate.client.luau"
+        },
+        "Health": {
+          "$path": "src/character/Health.server.luau"
         }
       }
     },

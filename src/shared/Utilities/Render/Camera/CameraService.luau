@@ -113,6 +113,7 @@ const PhysicsController = require(
 )
 const CameraStore = require(script.Parent.CameraStore)
 const CameraHelper = require(script.Parent.CameraHelper)
+const MOUSE_UNLOCK_KEY = SystemsConfigs.CameraMouseUnlockKey :: Enum.KeyCode
 const CamTable = CameraStore.GetCameraTable()
 const PLAYER_EYE_OFFSET = SystemsConfigs.CameraPlayerEyeOffset :: number
 
@@ -644,7 +645,20 @@ function CameraService:SetCameraView(__type: string)
 		end
 
 		--> Set up the input connections
-		table.insert(connectionList, UserInputService.InputBegan:Connect(OnInputChange))
+		table.insert(
+			connectionList,
+			UserInputService.InputBegan:Connect(function(input: InputObject, gpe: boolean)
+				if not gpe and input.KeyCode == MOUSE_UNLOCK_KEY then
+					svc.LockMouse = not svc.LockMouse
+					UserInputService.MouseBehavior = if svc.LockMouse
+						then Enum.MouseBehavior.LockCenter
+						else Enum.MouseBehavior.Default
+					UserInputService.MouseIconEnabled = not svc.LockMouse or __type ~= "FirstPerson"
+					return
+				end
+				OnInputChange(input, gpe)
+			end)
+		)
 		table.insert(connectionList, UserInputService.InputChanged:Connect(OnInputChange))
 		table.insert(connectionList, UserInputService.InputEnded:Connect(OnInputChange))
 		--> Set up the actual system to run

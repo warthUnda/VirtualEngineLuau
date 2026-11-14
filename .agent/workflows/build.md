@@ -10,7 +10,7 @@ description: Builds the project using Rojo and reports success or failure.
    wally install
    ```
    If `wally` is not found, suggest `rokit add UpliftGames/wally` (see `rokit.toml`).
-3. **Build the project**: Run the following from the project root (`c:\Users\Startklar\Documents\Development\Roblox\MapGeneration`):
+3. **Build the project**: Run the following from the project root (`C:\Users\Startklar\Documents\Development\Roblox\CustomRenderer`):
    ```
    rojo build -o "RobloxProjects.rbxlx"
    ```

@@ -6,10 +6,10 @@ local RenderConfig = {}
 
 -- Display & Worker Settings --
 
-RenderConfig.RenderWidth = 300 :: number
+RenderConfig.RenderWidth = 250 :: number
 -- Horizontal pixel resolution of the renderer's EditableImage and frame buffers.
 
-RenderConfig.RenderHeight = 300 :: number
+RenderConfig.RenderHeight = 200 :: number
 -- Vertical pixel resolution of the renderer's EditableImage and frame buffers.
 
 RenderConfig.RenderTotalPixels = RenderConfig.RenderWidth * RenderConfig.RenderHeight :: number
@@ -109,6 +109,9 @@ RenderConfig.CameraMaxVerticalAngle = 60 :: number
 
 RenderConfig.CameraPlayerEyeOffset = 2.5 :: number
 -- Vertical eye-height offset in studs above the simulated player physics body when no BasePart camera host is used.
+
+RenderConfig.CameraMouseUnlockKey = Enum.KeyCode.LeftAlt :: Enum.KeyCode
+-- Keyboard keybind (UserInputService) that toggles mouse center lock on/off for the active camera view.
 
 RenderConfig.CleanerTickInterval = 0 :: number
 -- Yield duration in seconds between client RendererCleaner culling passes.

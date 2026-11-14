@@ -17,6 +17,7 @@ const Camera = workspace.CurrentCamera :: Camera
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath)
+const TextureHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.TextureHelper)
 const RenderControllerHelper = require(script.Parent.RenderControllerHelper)
 
 const CameraStore = require(
@@ -65,10 +66,16 @@ const DEFAULT_CAMERA_VIEW = SystemsConfigs.DefaultCameraView :: string
 
 const ECS_COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const ECS_DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+const TEXTURE_STUDS_PER_TILE = SystemsConfigs.TextureStudsPerTile :: number
+const INV_TEXTURE_STUDS_PER_TILE = if TEXTURE_STUDS_PER_TILE > 0 then 1 / TEXTURE_STUDS_PER_TILE else 0 :: number
 
 local Initialized = false :: boolean
 local Received = 0 :: number
 local CurrentFrame = 0 :: number
+local PendingTextureSyncFrames = 0 :: number
+local LoadedTextureBuffer: buffer? = nil
+local LoadedTextureWidth = 0 :: number
+local LoadedTextureHeight = 0 :: number
 
 -- Tables --
 local WorkerActors = {} :: { Actor }
@@ -85,9 +92,9 @@ const ECSSizeBuffer = SizeData.GetData() :: buffer
 const ECSDirectionsBuffer = DirectionsData.GetData() :: buffer
 const ECSVisualBuffer = VisualData.GetData() :: buffer
 local ScreenVertices = buffer.create(8 * 12) :: buffer
-local ProjectedVertices = buffer.create(12 * 12) :: buffer
-local ClipBufferA = buffer.create(12 * 12) :: buffer
-local ClipBufferB = buffer.create(12 * 12) :: buffer
+local ProjectedVertices = buffer.create(12 * 20) :: buffer
+local ClipBufferA = buffer.create(12 * 20) :: buffer
+local ClipBufferB = buffer.create(12 * 20) :: buffer
 
 local Renderer = {}
 
@@ -159,6 +166,15 @@ function Renderer.Init()
 		end
 	)
 
+	-- Load the Roblox template texture asynchronously and push it to all worker actors
+	task.spawn(function()
+		const TextureBuffer: buffer, TexWidth: number, TexHeight: number = TextureHelper.LoadRobloxTemplateTexture()
+		LoadedTextureBuffer = TextureBuffer
+		LoadedTextureWidth = TexWidth
+		LoadedTextureHeight = TexHeight
+		PendingTextureSyncFrames = 3
+	end)
+
 	Initialized = true
 end
 
@@ -195,6 +211,13 @@ function Renderer.DrawFrame()
 	CurrentFrame += 1
 	Received = 0
 
+	if PendingTextureSyncFrames > 0 and LoadedTextureBuffer then
+		PendingTextureSyncFrames -= 1
+		for _, TargetActor: Actor in ipairs(WorkerActors) do
+			TargetActor:SendMessage("Set Texture", LoadedTextureBuffer :: buffer, LoadedTextureWidth, LoadedTextureHeight)
+		end
+	end
+
 	for i = 1, ACTOR_COUNT do
 		WorkerScores[i] = 0
 		WorkerOffsets[i] = 0
@@ -222,9 +245,19 @@ function Renderer.DrawFrame()
 			continue
 		end
 
-		const PartColorR = buffer.readu8(ECSVisualBuffer, ComponentOffset) :: number
-		const PartColorG = buffer.readu8(ECSVisualBuffer, ComponentOffset + 1) :: number
-		const PartColorB = buffer.readu8(ECSVisualBuffer, ComponentOffset + 2) :: number
+		-- Use neutral white base color so the blood texture's crimson/clot palette renders accurately on every part
+		const PartColorR = 255 :: number
+		const PartColorG = 255 :: number
+		const PartColorB = 255 :: number
+
+		local TileScaleX = 1 :: number
+		local TileScaleY = 1 :: number
+		local TileScaleZ = 1 :: number
+		if INV_TEXTURE_STUDS_PER_TILE > 0 then
+			TileScaleX = math.clamp(math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset) * INV_TEXTURE_STUDS_PER_TILE + 0.5), 1, 8)
+			TileScaleY = math.clamp(math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset + 4) * INV_TEXTURE_STUDS_PER_TILE + 0.5), 1, 8)
+			TileScaleZ = math.clamp(math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset + 8) * INV_TEXTURE_STUDS_PER_TILE + 0.5), 1, 8)
+		end
 
 		-- Back (+Look, bit 0) or Front (-Look, bit 1)
 		if bit32.btest(FaceMask, 3) then
@@ -251,6 +284,8 @@ function Renderer.DrawFrame()
 					36,
 					24,
 					12,
+					TileScaleX,
+					TileScaleY,
 					Color,
 					FocalLength,
 					GuardBandX,
@@ -275,6 +310,8 @@ function Renderer.DrawFrame()
 					60,
 					72,
 					84,
+					TileScaleX,
+					TileScaleY,
 					Color,
 					FocalLength,
 					GuardBandX,
@@ -308,6 +345,8 @@ function Renderer.DrawFrame()
 					12,
 					60,
 					48,
+					TileScaleZ,
+					TileScaleX,
 					Color,
 					FocalLength,
 					GuardBandX,
@@ -332,6 +371,8 @@ function Renderer.DrawFrame()
 					36,
 					84,
 					72,
+					TileScaleZ,
+					TileScaleX,
 					Color,
 					FocalLength,
 					GuardBandX,
@@ -365,6 +406,8 @@ function Renderer.DrawFrame()
 					48,
 					84,
 					36,
+					TileScaleY,
+					TileScaleZ,
 					Color,
 					FocalLength,
 					GuardBandX,
@@ -389,6 +432,8 @@ function Renderer.DrawFrame()
 					24,
 					72,
 					60,
+					TileScaleZ,
+					TileScaleY,
 					Color,
 					FocalLength,
 					GuardBandX,

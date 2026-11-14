@@ -29,11 +29,20 @@ SystemsConfigs.RenderTotalPixels = SystemsConfigs.RenderWidth * SystemsConfigs.R
 SystemsConfigs.ActorCount = 3 :: number
 -- Number of parallel worker Actors spawned to rasterize triangles across frames.
 
-SystemsConfigs.WorkerBufferMultiplier = 2 :: number
+SystemsConfigs.WorkerBufferMultiplier = 4 :: number
 -- Per-pixel byte multiplier used to allocate each worker's triangle command buffer.
 
-SystemsConfigs.RenderBufferLayoutSize = 28 :: number
--- Byte stride of a single serialized triangle in the worker render buffer (three 8-byte vertices and one 4-byte packed RGBA color).
+SystemsConfigs.RenderBufferLayoutSize = 52 :: number
+-- Byte stride of a single serialized textured triangle in the worker render buffer (three 16-byte vertices and one 4-byte packed RGBA color).
+
+SystemsConfigs.TextureSize = 64 :: number
+-- Power-of-two width and height in texels for the software renderer's cached texture buffer.
+
+SystemsConfigs.TextureStudsPerTile = 8 :: number
+-- World-space studs covered by one texture tile on part faces (set <= 0 to stretch 1x1 across each face).
+
+SystemsConfigs.DefaultTextureUri = "" :: string
+-- Optional Roblox asset URI override for textures; leave empty to use the procedural blood texture.
 
 SystemsConfigs.ClearColorR = 15 :: number
 -- Red channel (0-255) of the background clear color filled into the pixel buffer each frame.

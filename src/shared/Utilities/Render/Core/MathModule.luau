@@ -80,6 +80,35 @@ function MathModule.ProjectVertex(
 end
 
 --[=[
+	Projects a 3D camera-space vertex and its texture coordinates into a 20-byte projected vertex slot.
+	@param ProjectedVertices buffer -- Buffer to receive projected vertex data.
+	@param Offset number -- Byte offset in output buffer (20-byte stride).
+	@param Vertex vector -- Camera-space 3D vertex.
+	@param TexCoordU number -- Horizontal texture coordinate.
+	@param TexCoordV number -- Vertical texture coordinate.
+	@param FocalLength number -- Camera focal length scalar.
+	@param HalfWidth number -- Half screen width in pixels.
+	@param HalfHeight number -- Half screen height in pixels.
+]=]
+function MathModule.ProjectVertexUV(
+	ProjectedVertices: buffer,
+	Offset: number,
+	Vertex: vector,
+	TexCoordU: number,
+	TexCoordV: number,
+	FocalLength: number,
+	HalfWidth: number,
+	HalfHeight: number
+)
+	const InverseZ = 1 / Vertex.z :: number
+	buffer.writef32(ProjectedVertices, Offset, math.floor(Vertex.x * InverseZ * FocalLength + HalfWidth))
+	buffer.writef32(ProjectedVertices, Offset + 4, math.floor(-Vertex.y * InverseZ * FocalLength + HalfHeight))
+	buffer.writef32(ProjectedVertices, Offset + 8, InverseZ)
+	buffer.writef32(ProjectedVertices, Offset + 12, TexCoordU)
+	buffer.writef32(ProjectedVertices, Offset + 16, TexCoordV)
+end
+
+--[=[
 	Clips an input polygon against an arbitrary half-space plane using Sutherland-Hodgman.
 	@param Input buffer -- Buffer of input 3D vector vertices.
 	@param InputCount number -- Number of input vertices.
@@ -131,6 +160,72 @@ function MathModule.ClipPolygon(
 	return OutputCount
 end
 
+--[=[
+	Clips a UV-attributed polygon (20-byte stride: X, Y, Z, U, V) against an arbitrary half-space plane using Sutherland-Hodgman.
+	@param Input buffer -- Buffer of input 20-byte vertices (Vec3 + UV).
+	@param InputCount number -- Number of input vertices.
+	@param Output buffer -- Buffer to receive clipped 20-byte vertices.
+	@param PlaneNormal vector -- Inward-pointing clipping plane normal.
+	@param PlaneOffset number -- Plane distance constant.
+	@return number -- Number of output vertices after clipping.
+]=]
+function MathModule.ClipPolygonUV(
+	Input: buffer,
+	InputCount: number,
+	Output: buffer,
+	PlaneNormal: vector,
+	PlaneOffset: number
+): number
+	if InputCount == 0 then
+		return 0
+	end
+
+	local OutputCount = 0 :: number
+	const LastOffset = (InputCount - 1) * 20 :: number
+	local PreviousVertex = BufferHelper.ReadVec3(Input, LastOffset)
+	local PreviousU = buffer.readf32(Input, LastOffset + 12) :: number
+	local PreviousV = buffer.readf32(Input, LastOffset + 16) :: number
+	local PreviousDistance = vector.dot(PreviousVertex, PlaneNormal) + PlaneOffset :: number
+
+	for i = 1, InputCount do
+		const ReadBaseOffset = (i - 1) * 20 :: number
+		const CurrentVertex = BufferHelper.ReadVec3(Input, ReadBaseOffset)
+		const CurrentU = buffer.readf32(Input, ReadBaseOffset + 12) :: number
+		const CurrentV = buffer.readf32(Input, ReadBaseOffset + 16) :: number
+		const CurrentDistance = vector.dot(CurrentVertex, PlaneNormal) + PlaneOffset :: number
+		const PreviousInside = (PreviousDistance >= 0) :: boolean
+		const CurrentInside = (CurrentDistance >= 0) :: boolean
+
+		if PreviousInside ~= CurrentInside then
+			const IntersectionFactor = PreviousDistance / (PreviousDistance - CurrentDistance) :: number
+			const WriteBaseOffset = OutputCount * 20 :: number
+			BufferHelper.WriteVec3(
+				Output,
+				WriteBaseOffset,
+				PreviousVertex + (CurrentVertex - PreviousVertex) * IntersectionFactor
+			)
+			buffer.writef32(Output, WriteBaseOffset + 12, PreviousU + (CurrentU - PreviousU) * IntersectionFactor)
+			buffer.writef32(Output, WriteBaseOffset + 16, PreviousV + (CurrentV - PreviousV) * IntersectionFactor)
+			OutputCount += 1
+		end
+
+		if CurrentInside then
+			const WriteBaseOffset = OutputCount * 20 :: number
+			BufferHelper.WriteVec3(Output, WriteBaseOffset, CurrentVertex)
+			buffer.writef32(Output, WriteBaseOffset + 12, CurrentU)
+			buffer.writef32(Output, WriteBaseOffset + 16, CurrentV)
+			OutputCount += 1
+		end
+
+		PreviousVertex = CurrentVertex
+		PreviousU = CurrentU
+		PreviousV = CurrentV
+		PreviousDistance = CurrentDistance
+	end
+
+	return OutputCount
+end
+
 -- ============================================================================
 -- 2. FUNCTIONS - EXACT SPAN RASTERIZATION MATH
 -- ============================================================================
@@ -171,17 +266,26 @@ function MathModule.ClipSpanEdge(
 end
 
 --[=[
-	Rasterizes a 2D screen-space triangle into the color pixel and Z depth buffers.
+	Rasterizes a 2D screen-space triangle with perspective-correct texture mapping into the color pixel and Z depth buffers.
 	@param Vertex0X number -- Screen vertex 0 X.
 	@param Vertex0Y number -- Screen vertex 0 Y.
 	@param ScaledInverseZ0 number -- Pre-scaled 1/Z depth for vertex 0.
+	@param ScaledUOverZ0 number -- Pre-scaled U/Z coordinate for vertex 0.
+	@param ScaledVOverZ0 number -- Pre-scaled V/Z coordinate for vertex 0.
 	@param Vertex1X number -- Screen vertex 1 X.
 	@param Vertex1Y number -- Screen vertex 1 Y.
 	@param ScaledInverseZ1 number -- Pre-scaled 1/Z depth for vertex 1.
+	@param ScaledUOverZ1 number -- Pre-scaled U/Z coordinate for vertex 1.
+	@param ScaledVOverZ1 number -- Pre-scaled V/Z coordinate for vertex 1.
 	@param Vertex2X number -- Screen vertex 2 X.
 	@param Vertex2Y number -- Screen vertex 2 Y.
 	@param ScaledInverseZ2 number -- Pre-scaled 1/Z depth for vertex 2.
-	@param PackedColor number -- Packed 32-bit RGBA color.
+	@param ScaledUOverZ2 number -- Pre-scaled U/Z coordinate for vertex 2.
+	@param ScaledVOverZ2 number -- Pre-scaled V/Z coordinate for vertex 2.
+	@param PackedColor number -- Packed 32-bit RGBA shade/tint color.
+	@param TextureBuffer buffer -- Source RGBA texture buffer (power-of-two dimensions).
+	@param TextureWidth number -- Texture width in texels.
+	@param TextureHeight number -- Texture height in texels.
 	@param WIDTH number -- Target framebuffer width.
 	@param HEIGHT number -- Target framebuffer height.
 	@param RowStride number -- Byte stride per horizontal scanline row.
@@ -193,13 +297,22 @@ function MathModule.RasterizeTriangleSpan(
 	Vertex0X: number,
 	Vertex0Y: number,
 	ScaledInverseZ0: number,
+	ScaledUOverZ0: number,
+	ScaledVOverZ0: number,
 	Vertex1X: number,
 	Vertex1Y: number,
 	ScaledInverseZ1: number,
+	ScaledUOverZ1: number,
+	ScaledVOverZ1: number,
 	Vertex2X: number,
 	Vertex2Y: number,
 	ScaledInverseZ2: number,
+	ScaledUOverZ2: number,
+	ScaledVOverZ2: number,
 	PackedColor: number,
+	TextureBuffer: buffer,
+	TextureWidth: number,
+	TextureHeight: number,
 	WIDTH: number,
 	HEIGHT: number,
 	RowStride: number,
@@ -223,17 +336,41 @@ function MathModule.RasterizeTriangleSpan(
 	const Edge2StepY = Vertex0X - Vertex1X :: number
 
 	const ScaledInverseZVector = vector.create(ScaledInverseZ0, ScaledInverseZ1, ScaledInverseZ2)
+	const ScaledUOverZVector = vector.create(ScaledUOverZ0, ScaledUOverZ1, ScaledUOverZ2)
+	const ScaledVOverZVector = vector.create(ScaledVOverZ0, ScaledVOverZ1, ScaledVOverZ2)
 	const EdgeStepVectorX = vector.create(Edge0StepX, Edge1StepX, Edge2StepX)
 	const EdgeStepVectorY = vector.create(Edge0StepY, Edge1StepY, Edge2StepY)
 
 	const InverseZStepX = vector.dot(EdgeStepVectorX, ScaledInverseZVector) :: number
 	const InverseZStepY = vector.dot(EdgeStepVectorY, ScaledInverseZVector) :: number
+	const UOverZStepX = vector.dot(EdgeStepVectorX, ScaledUOverZVector) :: number
+	const UOverZStepY = vector.dot(EdgeStepVectorY, ScaledUOverZVector) :: number
+	const VOverZStepX = vector.dot(EdgeStepVectorX, ScaledVOverZVector) :: number
+	const VOverZStepY = vector.dot(EdgeStepVectorY, ScaledVOverZVector) :: number
 
 	const InitialEdgeWeight0 = (MinX - Vertex1X) * Edge0StepX + (MinY - Vertex1Y) * Edge0StepY :: number
 	const InitialEdgeWeight1 = (MinX - Vertex2X) * Edge1StepX + (MinY - Vertex2Y) * Edge1StepY :: number
 	const InitialEdgeWeight2 = (MinX - Vertex0X) * Edge2StepX + (MinY - Vertex0Y) * Edge2StepY :: number
 	local RowEdgeWeights = vector.create(InitialEdgeWeight0, InitialEdgeWeight1, InitialEdgeWeight2)
 	local RowInverseZ = vector.dot(RowEdgeWeights, ScaledInverseZVector) :: number
+	local RowUOverZ = vector.dot(RowEdgeWeights, ScaledUOverZVector) :: number
+	local RowVOverZ = vector.dot(RowEdgeWeights, ScaledVOverZVector) :: number
+
+	const TextureWidthMask = TextureWidth - 1 :: number
+	const TextureHeightMask = TextureHeight - 1 :: number
+
+	local ShadeRed = bit32.band(PackedColor, 0xFF) :: number
+	local ShadeGreen = bit32.band(bit32.rshift(PackedColor, 8), 0xFF) :: number
+	local ShadeBlue = bit32.band(bit32.rshift(PackedColor, 16), 0xFF) :: number
+	if ShadeRed > 0 then
+		ShadeRed += 1
+	end
+	if ShadeGreen > 0 then
+		ShadeGreen += 1
+	end
+	if ShadeBlue > 0 then
+		ShadeBlue += 1
+	end
 
 	const MaxSpanOffsetX = MaxX - MinX :: number
 	local RowOffset = (MinY * WIDTH + MinX) * 4 :: number
@@ -254,20 +391,40 @@ function MathModule.RasterizeTriangleSpan(
 			local BufferOffset = RowOffset + SpanStartOffsetX * 4 :: number
 			const EndOffset = RowOffset + SpanEndOffsetX * 4 :: number
 			local InterpolatedInverseZ = RowInverseZ + SpanStartOffsetX * InverseZStepX :: number
+			local InterpolatedUOverZ = RowUOverZ + SpanStartOffsetX * UOverZStepX :: number
+			local InterpolatedVOverZ = RowVOverZ + SpanStartOffsetX * VOverZStepX :: number
 
 			while BufferOffset <= EndOffset do
 				if InterpolatedInverseZ > buffer.readf32(ZBuffer, BufferOffset) then
 					buffer.writef32(ZBuffer, BufferOffset, InterpolatedInverseZ)
-					buffer.writeu32(PixelBuffer, BufferOffset, PackedColor)
+
+					const DepthZ = 1 / InterpolatedInverseZ :: number
+					const TexelX = bit32.band(math.floor(InterpolatedUOverZ * DepthZ * TextureWidth), TextureWidthMask) :: number
+					const TexelY = bit32.band(math.floor(InterpolatedVOverZ * DepthZ * TextureHeight), TextureHeightMask) :: number
+					const TexelColor = buffer.readu32(TextureBuffer, (TexelY * TextureWidth + TexelX) * 4) :: number
+
+					const OutRed = bit32.rshift(bit32.band(TexelColor, 0xFF) * ShadeRed, 8) :: number
+					const OutGreen = bit32.rshift(bit32.band(bit32.rshift(TexelColor, 8), 0xFF) * ShadeGreen, 8) :: number
+					const OutBlue = bit32.rshift(bit32.band(bit32.rshift(TexelColor, 16), 0xFF) * ShadeBlue, 8) :: number
+
+					buffer.writeu32(
+						PixelBuffer,
+						BufferOffset,
+						bit32.bor(OutRed, bit32.lshift(OutGreen, 8), bit32.lshift(OutBlue, 16), 0xFF000000)
+					)
 				end
 
 				InterpolatedInverseZ += InverseZStepX
+				InterpolatedUOverZ += UOverZStepX
+				InterpolatedVOverZ += VOverZStepX
 				BufferOffset += 4
 			end
 		end
 
 		RowEdgeWeights += EdgeStepVectorY
 		RowInverseZ += InverseZStepY
+		RowUOverZ += UOverZStepY
+		RowVOverZ += VOverZStepY
 		RowOffset += RowStride
 	end
 

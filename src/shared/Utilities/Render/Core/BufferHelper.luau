@@ -72,18 +72,24 @@ function BufferHelper.EnsureClearTemplate(ByteLength: number): buffer
 end
 
 --[=[
-	Packs 3 projected triangle vertices and a 32-bit packed color into the worker render queue buffer.
+	Packs 3 projected textured triangle vertices and a 32-bit packed color into the worker render queue buffer.
 	@param TargetBuffer buffer -- Destination render command buffer.
 	@param MemoryOffset number -- Current byte offset in render command buffer.
 	@param Vertex0X number -- Screen vertex 0 X coordinate.
 	@param Vertex0Y number -- Screen vertex 0 Y coordinate.
 	@param ScaledInverseZ0 number -- Pre-scaled 1/Z depth for vertex 0.
+	@param ScaledUOverZ0 number -- Pre-scaled U/Z coordinate for vertex 0.
+	@param ScaledVOverZ0 number -- Pre-scaled V/Z coordinate for vertex 0.
 	@param Vertex1X number -- Screen vertex 1 X coordinate.
 	@param Vertex1Y number -- Screen vertex 1 Y coordinate.
 	@param ScaledInverseZ1 number -- Pre-scaled 1/Z depth for vertex 1.
+	@param ScaledUOverZ1 number -- Pre-scaled U/Z coordinate for vertex 1.
+	@param ScaledVOverZ1 number -- Pre-scaled V/Z coordinate for vertex 1.
 	@param Vertex2X number -- Screen vertex 2 X coordinate.
 	@param Vertex2Y number -- Screen vertex 2 Y coordinate.
 	@param ScaledInverseZ2 number -- Pre-scaled 1/Z depth for vertex 2.
+	@param ScaledUOverZ2 number -- Pre-scaled U/Z coordinate for vertex 2.
+	@param ScaledVOverZ2 number -- Pre-scaled V/Z coordinate for vertex 2.
 	@param PackedColor number -- Packed 32-bit RGBA color.
 	@return number -- Next byte offset in render command buffer.
 ]=]
@@ -93,28 +99,40 @@ function BufferHelper.CreateRenderBuffer(
 	Vertex0X: number,
 	Vertex0Y: number,
 	ScaledInverseZ0: number,
+	ScaledUOverZ0: number,
+	ScaledVOverZ0: number,
 	Vertex1X: number,
 	Vertex1Y: number,
 	ScaledInverseZ1: number,
+	ScaledUOverZ1: number,
+	ScaledVOverZ1: number,
 	Vertex2X: number,
 	Vertex2Y: number,
 	ScaledInverseZ2: number,
+	ScaledUOverZ2: number,
+	ScaledVOverZ2: number,
 	PackedColor: number
 ): number
-	-- Three 8-byte vertices and one 4-byte packed RGBA u32 color (28 bytes total, zero padding).
+	-- Three 16-byte vertices (X, Y, InvZ, U/Z, V/Z) and one 4-byte packed RGBA u32 color (52 bytes total).
 	buffer.writei16(TargetBuffer, MemoryOffset, Vertex0X)
 	buffer.writei16(TargetBuffer, MemoryOffset + 2, Vertex0Y)
 	buffer.writef32(TargetBuffer, MemoryOffset + 4, ScaledInverseZ0)
+	buffer.writef32(TargetBuffer, MemoryOffset + 8, ScaledUOverZ0)
+	buffer.writef32(TargetBuffer, MemoryOffset + 12, ScaledVOverZ0)
 
-	buffer.writei16(TargetBuffer, MemoryOffset + 8, Vertex1X)
-	buffer.writei16(TargetBuffer, MemoryOffset + 10, Vertex1Y)
-	buffer.writef32(TargetBuffer, MemoryOffset + 12, ScaledInverseZ1)
+	buffer.writei16(TargetBuffer, MemoryOffset + 16, Vertex1X)
+	buffer.writei16(TargetBuffer, MemoryOffset + 18, Vertex1Y)
+	buffer.writef32(TargetBuffer, MemoryOffset + 20, ScaledInverseZ1)
+	buffer.writef32(TargetBuffer, MemoryOffset + 24, ScaledUOverZ1)
+	buffer.writef32(TargetBuffer, MemoryOffset + 28, ScaledVOverZ1)
 
-	buffer.writei16(TargetBuffer, MemoryOffset + 16, Vertex2X)
-	buffer.writei16(TargetBuffer, MemoryOffset + 18, Vertex2Y)
-	buffer.writef32(TargetBuffer, MemoryOffset + 20, ScaledInverseZ2)
+	buffer.writei16(TargetBuffer, MemoryOffset + 32, Vertex2X)
+	buffer.writei16(TargetBuffer, MemoryOffset + 34, Vertex2Y)
+	buffer.writef32(TargetBuffer, MemoryOffset + 36, ScaledInverseZ2)
+	buffer.writef32(TargetBuffer, MemoryOffset + 40, ScaledUOverZ2)
+	buffer.writef32(TargetBuffer, MemoryOffset + 44, ScaledVOverZ2)
 
-	buffer.writeu32(TargetBuffer, MemoryOffset + 24, PackedColor)
+	buffer.writeu32(TargetBuffer, MemoryOffset + 48, PackedColor)
 
 	return MemoryOffset + RENDER_BUFFER_LAYOUT_SIZE
 end

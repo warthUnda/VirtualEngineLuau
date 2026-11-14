@@ -14,6 +14,7 @@ const SelfActor = script.Parent :: Actor
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper)
 const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath)
+const TextureHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.TextureHelper)
 
 -- Configs --
 const WIDTH = SystemsConfigs.RenderWidth :: number
@@ -22,6 +23,7 @@ const TOTAL_PIXELS = WIDTH * HEIGHT :: number
 
 local DirtyMinY = 0 :: number
 local DirtyMaxY = -1 :: number
+local ActiveTextureBuffer: buffer, TextureWidth: number, TextureHeight: number = TextureHelper.GetDefaultTexture()
 
 -- Buffers
 const PixelBuffer = buffer.create(TOTAL_PIXELS * 4) :: buffer
@@ -35,6 +37,15 @@ task.desynchronize()
 -- 1. LISTENER - LISTENS TO RETURNING DATA AND COMPUTING IT
 -- ============================================================================
 
+SelfActor:BindToMessageParallel(
+	"Set Texture",
+	function(NewTextureBuffer: buffer, NewWidth: number, NewHeight: number)
+		ActiveTextureBuffer = NewTextureBuffer
+		TextureWidth = NewWidth
+		TextureHeight = NewHeight
+	end
+)
+
 SelfActor:BindToMessageParallel("Execute Rendering", function(RenderBuffer: buffer, ByteCount: number, FrameId: number)
 	if DirtyMinY <= DirtyMaxY then
 		BufferHelper.ClearDirtyRows(WIDTH, DirtyMinY, DirtyMaxY, TOTAL_PIXELS, PixelBuffer, ZBuffer)
@@ -46,6 +57,9 @@ SelfActor:BindToMessageParallel("Execute Rendering", function(RenderBuffer: buff
 		DirtyMinY, DirtyMaxY = RenderMath.DrawTriangleBatch(
 			RenderBuffer,
 			ByteCount,
+			ActiveTextureBuffer,
+			TextureWidth,
+			TextureHeight,
 			WIDTH,
 			HEIGHT,
 			PixelBuffer,

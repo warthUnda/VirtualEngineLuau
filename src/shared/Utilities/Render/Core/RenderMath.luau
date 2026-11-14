@@ -9,6 +9,7 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const BufferHelper = require(script.Parent.BufferHelper)
 const MathModule = require(script.Parent.MathModule)
+const TextureHelper = require(script.Parent.TextureHelper)
 
 -- Configs --
 const NEAR_CLIP = SystemsConfigs.RenderNearClip :: number
@@ -159,15 +160,17 @@ function RenderMath.GetProjectionParameters(FovY: number, WIDTH: number, HEIGHT:
 end
 
 --[=[
-	Clips a camera-space quad against frustum planes and projects vertices onto the screen.
+	Clips a camera-space quad against frustum planes and projects vertices with UVs onto the screen.
 	@param CameraVertices buffer -- Buffer containing camera-space vertices.
 	@param V0ByteOffset number -- Byte offset for quad vertex 0.
 	@param V1ByteOffset number -- Byte offset for quad vertex 1.
 	@param V2ByteOffset number -- Byte offset for quad vertex 2.
 	@param V3ByteOffset number -- Byte offset for quad vertex 3.
-	@param ProjectedVertices buffer -- Buffer to receive projected 2D vertices.
-	@param ClipBufferA buffer -- Temporary scratch buffer for polygon clipping.
-	@param ClipBufferB buffer -- Secondary scratch buffer for polygon clipping.
+	@param ScaleU number -- Horizontal UV tile scale for the quad.
+	@param ScaleV number -- Vertical UV tile scale for the quad.
+	@param ProjectedVertices buffer -- Buffer to receive projected 20-byte vertices (X, Y, InvZ, U, V).
+	@param ClipBufferA buffer -- Temporary scratch buffer for 20-byte polygon clipping.
+	@param ClipBufferB buffer -- Secondary scratch buffer for 20-byte polygon clipping.
 	@param FocalLength number -- Camera focal length.
 	@param GuardBandX number -- Horizontal guardband slope factor.
 	@param GuardBandY number -- Vertical guardband slope factor.
@@ -181,6 +184,8 @@ function RenderMath.ClipAndProjectQuad(
 	V1ByteOffset: number,
 	V2ByteOffset: number,
 	V3ByteOffset: number,
+	ScaleU: number,
+	ScaleV: number,
 	ProjectedVertices: buffer,
 	ClipBufferA: buffer,
 	ClipBufferB: buffer,
@@ -201,31 +206,44 @@ function RenderMath.ClipAndProjectQuad(
 		and MathModule.IsVertexInside(QuadVertex2, GuardBandX, GuardBandY)
 		and MathModule.IsVertexInside(QuadVertex3, GuardBandX, GuardBandY)
 	then
-		MathModule.ProjectVertex(ProjectedVertices, 0, QuadVertex0, FocalLength, HalfWidth, HalfHeight)
-		MathModule.ProjectVertex(ProjectedVertices, 12, QuadVertex1, FocalLength, HalfWidth, HalfHeight)
-		MathModule.ProjectVertex(ProjectedVertices, 24, QuadVertex2, FocalLength, HalfWidth, HalfHeight)
-		MathModule.ProjectVertex(ProjectedVertices, 36, QuadVertex3, FocalLength, HalfWidth, HalfHeight)
+		MathModule.ProjectVertexUV(ProjectedVertices, 0, QuadVertex0, 0, ScaleV, FocalLength, HalfWidth, HalfHeight)
+		MathModule.ProjectVertexUV(ProjectedVertices, 20, QuadVertex1, 0, 0, FocalLength, HalfWidth, HalfHeight)
+		MathModule.ProjectVertexUV(ProjectedVertices, 40, QuadVertex2, ScaleU, 0, FocalLength, HalfWidth, HalfHeight)
+		MathModule.ProjectVertexUV(ProjectedVertices, 60, QuadVertex3, ScaleU, ScaleV, FocalLength, HalfWidth, HalfHeight)
 		return 4
 	end
 
 	BufferHelper.WriteVec3(ClipBufferA, 0, QuadVertex0)
-	BufferHelper.WriteVec3(ClipBufferA, 12, QuadVertex1)
-	BufferHelper.WriteVec3(ClipBufferA, 24, QuadVertex2)
-	BufferHelper.WriteVec3(ClipBufferA, 36, QuadVertex3)
+	buffer.writef32(ClipBufferA, 12, 0)
+	buffer.writef32(ClipBufferA, 16, ScaleV)
 
-	local VertexCount = MathModule.ClipPolygon(ClipBufferA, 4, ClipBufferB, PLANE_NEAR, -NEAR_CLIP)
-	VertexCount = MathModule.ClipPolygon(ClipBufferB, VertexCount, ClipBufferA, PLANE_FAR, FAR_CLIP)
-	VertexCount = MathModule.ClipPolygon(ClipBufferA, VertexCount, ClipBufferB, vector.create(1, 0, GuardBandX), 0)
-	VertexCount = MathModule.ClipPolygon(ClipBufferB, VertexCount, ClipBufferA, vector.create(-1, 0, GuardBandX), 0)
-	VertexCount = MathModule.ClipPolygon(ClipBufferA, VertexCount, ClipBufferB, vector.create(0, 1, GuardBandY), 0)
-	VertexCount = MathModule.ClipPolygon(ClipBufferB, VertexCount, ClipBufferA, vector.create(0, -1, GuardBandY), 0)
+	BufferHelper.WriteVec3(ClipBufferA, 20, QuadVertex1)
+	buffer.writef32(ClipBufferA, 32, 0)
+	buffer.writef32(ClipBufferA, 36, 0)
+
+	BufferHelper.WriteVec3(ClipBufferA, 40, QuadVertex2)
+	buffer.writef32(ClipBufferA, 52, ScaleU)
+	buffer.writef32(ClipBufferA, 56, 0)
+
+	BufferHelper.WriteVec3(ClipBufferA, 60, QuadVertex3)
+	buffer.writef32(ClipBufferA, 72, ScaleU)
+	buffer.writef32(ClipBufferA, 76, ScaleV)
+
+	local VertexCount = MathModule.ClipPolygonUV(ClipBufferA, 4, ClipBufferB, PLANE_NEAR, -NEAR_CLIP)
+	VertexCount = MathModule.ClipPolygonUV(ClipBufferB, VertexCount, ClipBufferA, PLANE_FAR, FAR_CLIP)
+	VertexCount = MathModule.ClipPolygonUV(ClipBufferA, VertexCount, ClipBufferB, vector.create(1, 0, GuardBandX), 0)
+	VertexCount = MathModule.ClipPolygonUV(ClipBufferB, VertexCount, ClipBufferA, vector.create(-1, 0, GuardBandX), 0)
+	VertexCount = MathModule.ClipPolygonUV(ClipBufferA, VertexCount, ClipBufferB, vector.create(0, 1, GuardBandY), 0)
+	VertexCount = MathModule.ClipPolygonUV(ClipBufferB, VertexCount, ClipBufferA, vector.create(0, -1, GuardBandY), 0)
 
 	for i = 1, VertexCount do
-		const Offset = (i - 1) * 12 :: number
-		MathModule.ProjectVertex(
+		const Offset = (i - 1) * 20 :: number
+		MathModule.ProjectVertexUV(
 			ProjectedVertices,
 			Offset,
 			BufferHelper.ReadVec3(ClipBufferA, Offset),
+			buffer.readf32(ClipBufferA, Offset + 12),
+			buffer.readf32(ClipBufferA, Offset + 16),
 			FocalLength,
 			HalfWidth,
 			HalfHeight
@@ -345,17 +363,27 @@ function RenderMath.DrawTriangle(
 	PixelBuffer: buffer,
 	ZBuffer: buffer
 )
+	const DefaultTexture: buffer, TextureWidth: number, TextureHeight: number = TextureHelper.GetDefaultTexture()
 	MathModule.RasterizeTriangleSpan(
 		Vertex0X,
 		Vertex0Y,
 		ScaledInverseZ0,
+		0,
+		0,
 		Vertex1X,
 		Vertex1Y,
 		ScaledInverseZ1,
+		0,
+		0,
 		Vertex2X,
 		Vertex2Y,
 		ScaledInverseZ2,
+		0,
+		0,
 		PackedColor,
+		DefaultTexture,
+		TextureWidth,
+		TextureHeight,
 		WIDTH,
 		HEIGHT,
 		WIDTH * 4,
@@ -365,9 +393,12 @@ function RenderMath.DrawTriangle(
 end
 
 --[=[
-	Iterates and rasterizes a packed batch of triangles from a render command buffer.
+	Iterates and rasterizes a packed batch of textured triangles from a render command buffer.
 	@param RenderBuffer buffer -- Source render command queue buffer.
 	@param ByteCount number -- Total byte length of queued commands.
+	@param TextureBuffer buffer -- Source RGBA texture buffer.
+	@param TextureWidth number -- Texture width in texels.
+	@param TextureHeight number -- Texture height in texels.
 	@param WIDTH number -- Screen width in pixels.
 	@param HEIGHT number -- Screen height in pixels.
 	@param PixelBuffer buffer -- Destination color pixel buffer.
@@ -377,6 +408,9 @@ end
 function RenderMath.DrawTriangleBatch(
 	RenderBuffer: buffer,
 	ByteCount: number,
+	TextureBuffer: buffer,
+	TextureWidth: number,
+	TextureHeight: number,
 	WIDTH: number,
 	HEIGHT: number,
 	PixelBuffer: buffer,
@@ -392,13 +426,22 @@ function RenderMath.DrawTriangleBatch(
 			buffer.readi16(RenderBuffer, ReadOffset),
 			buffer.readi16(RenderBuffer, ReadOffset + 2),
 			buffer.readf32(RenderBuffer, ReadOffset + 4),
-			buffer.readi16(RenderBuffer, ReadOffset + 8),
-			buffer.readi16(RenderBuffer, ReadOffset + 10),
+			buffer.readf32(RenderBuffer, ReadOffset + 8),
 			buffer.readf32(RenderBuffer, ReadOffset + 12),
 			buffer.readi16(RenderBuffer, ReadOffset + 16),
 			buffer.readi16(RenderBuffer, ReadOffset + 18),
 			buffer.readf32(RenderBuffer, ReadOffset + 20),
-			buffer.readu32(RenderBuffer, ReadOffset + 24),
+			buffer.readf32(RenderBuffer, ReadOffset + 24),
+			buffer.readf32(RenderBuffer, ReadOffset + 28),
+			buffer.readi16(RenderBuffer, ReadOffset + 32),
+			buffer.readi16(RenderBuffer, ReadOffset + 34),
+			buffer.readf32(RenderBuffer, ReadOffset + 36),
+			buffer.readf32(RenderBuffer, ReadOffset + 40),
+			buffer.readf32(RenderBuffer, ReadOffset + 44),
+			buffer.readu32(RenderBuffer, ReadOffset + 48),
+			TextureBuffer,
+			TextureWidth,
+			TextureHeight,
 			WIDTH,
 			HEIGHT,
 			RowStride,

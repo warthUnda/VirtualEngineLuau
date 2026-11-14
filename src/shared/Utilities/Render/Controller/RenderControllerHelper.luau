@@ -77,6 +77,8 @@ end
 	@param V1ByteOffset number -- Byte offset for vertex 1.
 	@param V2ByteOffset number -- Byte offset for vertex 2.
 	@param V3ByteOffset number -- Byte offset for vertex 3.
+	@param ScaleU number -- Horizontal UV tile scale for the face quad.
+	@param ScaleV number -- Vertical UV tile scale for the face quad.
 	@param PackedColor number -- Shaded 32-bit RGBA color.
 	@param FocalLength number -- Camera focal length.
 	@param GuardBandX number -- Horizontal guardband slope factor.
@@ -94,6 +96,8 @@ function RenderControllerHelper.SubmitFaceQuad(
 	V1ByteOffset: number,
 	V2ByteOffset: number,
 	V3ByteOffset: number,
+	ScaleU: number,
+	ScaleV: number,
 	PackedColor: number,
 	FocalLength: number,
 	GuardBandX: number,
@@ -105,6 +109,8 @@ function RenderControllerHelper.SubmitFaceQuad(
 		V1ByteOffset,
 		V2ByteOffset,
 		V3ByteOffset,
+		ScaleU,
+		ScaleV,
 		ProjectedVertices,
 		ClipBufferA,
 		ClipBufferB,
@@ -122,18 +128,24 @@ function RenderControllerHelper.SubmitFaceQuad(
 	const Vertex0X = buffer.readf32(ProjectedVertices, 0) :: number
 	const Vertex0Y = buffer.readf32(ProjectedVertices, 4) :: number
 	const InverseZ0 = buffer.readf32(ProjectedVertices, 8) :: number
+	const TexCoordU0 = buffer.readf32(ProjectedVertices, 12) :: number
+	const TexCoordV0 = buffer.readf32(ProjectedVertices, 16) :: number
 
 	for ClippedTriangleIndex = 2, ClippedVertexCount - 1 do
-		const V1Offset = (ClippedTriangleIndex - 1) * 12 :: number
-		const V2Offset = V1Offset + 12 :: number
+		const V1Offset = (ClippedTriangleIndex - 1) * 20 :: number
+		const V2Offset = V1Offset + 20 :: number
 
 		const Vertex1X = buffer.readf32(ProjectedVertices, V1Offset) :: number
 		const Vertex1Y = buffer.readf32(ProjectedVertices, V1Offset + 4) :: number
 		const InverseZ1 = buffer.readf32(ProjectedVertices, V1Offset + 8) :: number
+		const TexCoordU1 = buffer.readf32(ProjectedVertices, V1Offset + 12) :: number
+		const TexCoordV1 = buffer.readf32(ProjectedVertices, V1Offset + 16) :: number
 
 		const Vertex2X = buffer.readf32(ProjectedVertices, V2Offset) :: number
 		const Vertex2Y = buffer.readf32(ProjectedVertices, V2Offset + 4) :: number
 		const InverseZ2 = buffer.readf32(ProjectedVertices, V2Offset + 8) :: number
+		const TexCoordU2 = buffer.readf32(ProjectedVertices, V2Offset + 12) :: number
+		const TexCoordV2 = buffer.readf32(ProjectedVertices, V2Offset + 16) :: number
 
 		const SignedDoubleTriangleArea = (Vertex2X - Vertex0X) * (Vertex1Y - Vertex0Y)
 			- (Vertex2Y - Vertex0Y) * (Vertex1X - Vertex0X) :: number
@@ -175,19 +187,29 @@ function RenderControllerHelper.SubmitFaceQuad(
 		const RenderBuffer = BufferTable[BestWorkerIdx] :: buffer
 		const InverseTriangleArea = 1 / SignedDoubleTriangleArea :: number
 
+		const ScaledInverseZ0 = InverseZ0 * InverseTriangleArea :: number
+		const ScaledInverseZ1 = InverseZ1 * InverseTriangleArea :: number
+		const ScaledInverseZ2 = InverseZ2 * InverseTriangleArea :: number
+
 		buffer.writei16(RenderBuffer, RenderBufferOffset, Vertex0X)
 		buffer.writei16(RenderBuffer, RenderBufferOffset + 2, Vertex0Y)
-		buffer.writef32(RenderBuffer, RenderBufferOffset + 4, InverseZ0 * InverseTriangleArea)
+		buffer.writef32(RenderBuffer, RenderBufferOffset + 4, ScaledInverseZ0)
+		buffer.writef32(RenderBuffer, RenderBufferOffset + 8, ScaledInverseZ0 * TexCoordU0)
+		buffer.writef32(RenderBuffer, RenderBufferOffset + 12, ScaledInverseZ0 * TexCoordV0)
 
-		buffer.writei16(RenderBuffer, RenderBufferOffset + 8, Vertex1X)
-		buffer.writei16(RenderBuffer, RenderBufferOffset + 10, Vertex1Y)
-		buffer.writef32(RenderBuffer, RenderBufferOffset + 12, InverseZ1 * InverseTriangleArea)
+		buffer.writei16(RenderBuffer, RenderBufferOffset + 16, Vertex1X)
+		buffer.writei16(RenderBuffer, RenderBufferOffset + 18, Vertex1Y)
+		buffer.writef32(RenderBuffer, RenderBufferOffset + 20, ScaledInverseZ1)
+		buffer.writef32(RenderBuffer, RenderBufferOffset + 24, ScaledInverseZ1 * TexCoordU1)
+		buffer.writef32(RenderBuffer, RenderBufferOffset + 28, ScaledInverseZ1 * TexCoordV1)
 
-		buffer.writei16(RenderBuffer, RenderBufferOffset + 16, Vertex2X)
-		buffer.writei16(RenderBuffer, RenderBufferOffset + 18, Vertex2Y)
-		buffer.writef32(RenderBuffer, RenderBufferOffset + 20, InverseZ2 * InverseTriangleArea)
+		buffer.writei16(RenderBuffer, RenderBufferOffset + 32, Vertex2X)
+		buffer.writei16(RenderBuffer, RenderBufferOffset + 34, Vertex2Y)
+		buffer.writef32(RenderBuffer, RenderBufferOffset + 36, ScaledInverseZ2)
+		buffer.writef32(RenderBuffer, RenderBufferOffset + 40, ScaledInverseZ2 * TexCoordU2)
+		buffer.writef32(RenderBuffer, RenderBufferOffset + 44, ScaledInverseZ2 * TexCoordV2)
 
-		buffer.writeu32(RenderBuffer, RenderBufferOffset + 24, PackedColor)
+		buffer.writeu32(RenderBuffer, RenderBufferOffset + 48, PackedColor)
 	end
 end
 

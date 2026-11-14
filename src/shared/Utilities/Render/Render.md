@@ -20,9 +20,14 @@
 - Triangles intersecting the near plane are sliced dynamically into quads or clipped triangles, eliminating near-plane projection artifacts.
 
 ### 3. Perspective Projection & Sub-Pixel Rasterization
-- **`MathModule.ProjectVertex`**: Converts 3D camera-space coordinates into 2D viewport pixel coordinates with reciprocal depth ($1/Z$).
+- **`MathModule.ProjectVertex` / `MathModule.ProjectVertexUV`**: Converts 3D camera-space coordinates into 2D viewport pixel coordinates with reciprocal depth ($1/Z$) and optional UV coordinates.
 - **`MathModule.EdgeFunction`**: Computes signed 2D barycentric half-plane determinants for triangle traversal and pixel coverage testing.
-- **Depth Buffering:** Rejects occluded fragments via 32-bit floating-point Z-buffer comparisons.
+- **Perspective-Correct Texture Mapping (`MathModule.RasterizeTriangleSpan`)**: Interpolates $1/Z$, $U/Z$, and $V/Z$ across horizontal spans, recovering true perspective-correct $(U, V)$ per visible fragment after the Z-test and modulating sampled texels from a power-of-two RGBA texture buffer (`TextureHelper`) by the face's shaded `PackedColor`.
+- **Depth Buffering:** Rejects occluded fragments via 32-bit floating-point Z-buffer comparisons before texture sampling.
+
+### 4. Texture Management (`TextureHelper`)
+- **`TextureHelper.LoadRobloxTemplateTexture`**: Asynchronously loads `SystemsConfigs.DefaultTextureUri` via `AssetService:CreateEditableImageAsync`, resamples it to `SystemsConfigs.TextureSize` (power-of-two for bitmask UV wrapping), and falls back to `TextureHelper.CreateProceduralTemplateTexture` (a classic Roblox stud template) if asset loading is unavailable.
+- **`RenderController.Init`**: Loads the template texture once and broadcasts it to all worker actors via `"Set Texture"` so zero texture data is transferred per frame.
 
 ### 4. Parallel Worker Distribution
 - Dispatches screen slices or render batches to multi-threaded Roblox `Actor` instances via `SendMessage`.

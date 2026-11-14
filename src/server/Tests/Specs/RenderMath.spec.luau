@@ -17,6 +17,7 @@ return function()
 
 	const MathModule = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("MathModule"))
 	const BufferHelper = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("BufferHelper"))
+	const TextureHelper = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("TextureHelper"))
 
 	describe("1. 2D Edge Functions & Geometric Tests", function()
 		it("should return correct signed determinant for 2D edge queries", function()
@@ -106,6 +107,91 @@ return function()
 			for i = 0, 12, 4 do
 				expect(buffer.readf32(ZBuf, i)).to.equal(0)
 			end
+		end)
+	end)
+
+	describe("5. Perspective-Correct Texture Mapping & UV Clipping", function()
+		it("should project UV coordinates alongside screen positions", function()
+			const OutBuffer = buffer.create(20)
+			const Vertex = vector.create(2, 4, 10)
+
+			MathModule.ProjectVertexUV(OutBuffer, 0, Vertex, 0.75, 0.25, 100, 160, 120)
+
+			expect(buffer.readf32(OutBuffer, 0)).to.equal(180)
+			expect(buffer.readf32(OutBuffer, 4)).to.equal(80)
+			expect(buffer.readf32(OutBuffer, 8)).to.be.near(0.1, 1e-4)
+			expect(buffer.readf32(OutBuffer, 12)).to.be.near(0.75, 1e-4)
+			expect(buffer.readf32(OutBuffer, 16)).to.be.near(0.25, 1e-4)
+		end)
+
+		it("should interpolate UVs when clipping a polygon against a plane", function()
+			const InputBuf = buffer.create(3 * 20)
+			const OutputBuf = buffer.create(6 * 20)
+
+			-- Vertex 0 at Z = 2, UV = (0, 0)
+			BufferHelper.WriteVec3(InputBuf, 0, vector.create(0, 0, 2))
+			buffer.writef32(InputBuf, 12, 0)
+			buffer.writef32(InputBuf, 16, 0)
+
+			-- Vertex 1 at Z = -2, UV = (1, 0)
+			BufferHelper.WriteVec3(InputBuf, 20, vector.create(2, 0, -2))
+			buffer.writef32(InputBuf, 32, 1)
+			buffer.writef32(InputBuf, 36, 0)
+
+			-- Vertex 2 at Z = -2, UV = (0, 1)
+			BufferHelper.WriteVec3(InputBuf, 40, vector.create(-2, 0, -2))
+			buffer.writef32(InputBuf, 52, 0)
+			buffer.writef32(InputBuf, 56, 1)
+
+			const ClippedCount = MathModule.ClipPolygonUV(InputBuf, 3, OutputBuf, vector.create(0, 0, 1), 0)
+			expect(ClippedCount).to.equal(3)
+			-- Output slot 0 is intersection of V2 -> V0: UV = (0, 0.5)
+			expect(buffer.readf32(OutputBuf, 16)).to.be.near(0.5, 1e-4)
+			-- Output slot 2 is intersection of V0 -> V1: UV = (0.5, 0)
+			expect(buffer.readf32(OutputBuf, 40 + 12)).to.be.near(0.5, 1e-4)
+		end)
+
+		it("should generate a procedural template texture and rasterize textured triangles", function()
+			const TexSize = 4 :: number
+			const TexBuf = TextureHelper.CreateProceduralTemplateTexture(TexSize)
+			expect(buffer.len(TexBuf)).to.equal(TexSize * TexSize * 4)
+
+			-- Fill a 2x2 solid red texture to verify tinting + sampling
+			const SolidTex = buffer.create(2 * 2 * 4)
+			for i = 0, 12, 4 do
+				buffer.writeu32(SolidTex, i, 0xFF0000FF) -- RGBA (255, 0, 0, 255)
+			end
+
+			const PixBuf = buffer.create(16 * 16 * 4)
+			const ZBuf = buffer.create(16 * 16 * 4)
+			BufferHelper.ClearBuffers(16 * 16, PixBuf, ZBuf)
+
+			-- Winding for positive area: (Vertex2X - Vertex0X)*(Vertex1Y - Vertex0Y) - (Vertex2Y - Vertex0Y)*(Vertex1X - Vertex0X) > 0
+			-- V0=(2,2), V1=(2,10), V2=(10,2) -> (8)*(8) - (0)*(0) = 64
+			const Area = 64 :: number
+			const InvArea = 1 / Area :: number
+			const WhiteColor = 0xFFFFFFFF :: number
+
+			MathModule.RasterizeTriangleSpan(
+				2, 2, InvArea, 0, 0,
+				2, 10, InvArea, 0, InvArea,
+				10, 2, InvArea, InvArea, 0,
+				WhiteColor,
+				SolidTex,
+				2,
+				2,
+				16,
+				16,
+				16 * 4,
+				PixBuf,
+				ZBuf
+			)
+
+			-- Pixel at (3, 3) is inside the triangle and should be red (255, 0, 0, 255)
+			const Sampled = buffer.readu32(PixBuf, (3 * 16 + 3) * 4)
+			expect(bit32.band(Sampled, 0xFF)).to.equal(255)
+			expect(bit32.band(bit32.rshift(Sampled, 8), 0xFF)).to.equal(0)
+			expect(bit32.band(bit32.rshift(Sampled, 16), 0xFF)).to.equal(0)
 		end)
 	end)
 end

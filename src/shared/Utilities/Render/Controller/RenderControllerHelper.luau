@@ -9,6 +9,7 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper)
 const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath)
+const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Texture.TextureTable)
 
 -- Configs --
 const WIDTH = SystemsConfigs.RenderWidth :: number
@@ -230,6 +231,41 @@ function RenderControllerHelper.SubmitFace(
 
 		buffer.writeu32(RenderBuffer, RenderBufferOffset + 48, PackedColor)
 		buffer.writeu32(RenderBuffer, RenderBufferOffset + 52, TextureId)
+	end
+end
+
+--[=[
+	Decodes synced TextureTable entries received from the server into 64x64 buffers and invokes OnTextureUpdated when cached buffers change.
+	@param Entries any -- Array of TextureTable.TextureEntry records from TextureSyncEvent.
+	@param OnTextureUpdated ({ [number]: buffer }) -> () -- Callback invoked with updated cached texture buffers.
+]=]
+function RenderControllerHelper.ApplySyncedTextures(Entries: any, OnTextureUpdated: ({ [number]: buffer }) -> ())
+	if typeof(Entries) ~= "table" then
+		return
+	end
+
+	for _, Entry: any in ipairs(Entries :: { TextureTable.TextureEntry }) do
+		if typeof(Entry) ~= "table" then
+			continue
+		end
+
+		const TextureId = Entry.Id :: number?
+		const RawUrl = Entry.Url :: string?
+		const TextureName = Entry.Name :: string?
+		if typeof(TextureId) ~= "number" or typeof(RawUrl) ~= "string" then
+			continue
+		end
+
+		task.spawn(function()
+			const _Buf: buffer?, Updated: boolean = TextureTable.RegisterEntryWithId(
+				TextureId,
+				RawUrl,
+				if typeof(TextureName) == "string" then TextureName else nil
+			)
+			if Updated then
+				OnTextureUpdated(TextureTable.GetAllCachedBuffers())
+			end
+		end)
 	end
 end
 

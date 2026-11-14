@@ -74,7 +74,7 @@ PlayerCuller.RemovePlayerState = PlayerFunctions.RemovePlayerState
 --[=[
 	Culls world entities against a player's dynamic view cone, delta-checks mutations, and returns packed replication buffers.
 	@param PlayerObject Player -- Target replicating player.
-	@return (buffer?, buffer?, buffer?, buffer?, buffer?, ECSTable?) -- DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, Counts.
+	@return (buffer?, buffer?, buffer?, buffer?, buffer?, buffer?, ECSTable?) -- DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, DeltaProperties, Counts.
 ]=]
 function PlayerCuller.CullObjects(
 	PlayerObject: Player
@@ -146,6 +146,11 @@ function PlayerCuller.CullObjects(
 			continue
 		end
 
+		if PackedCount >= MAX_ENTITIES_PER_PACKET then
+			warn("ENTITY PACKETS HAVE OVERFLOWN THE LIMIT, CURRENT ENTITY NUMBER", MAX_ENTITIES_PER_PACKET)
+			break
+		end
+
 		buffer.writeu8(VisibleFlags, FlagOffset, 1)
 
 		buffer.copy(CachedPositions, ReadOffset, PositionBuffer, ReadOffset, COMPONENT_STRIDE)
@@ -167,11 +172,6 @@ function PlayerCuller.CullObjects(
 		DirectionWriteOffset += DIRECTION_STRIDE
 		PropertiesWriteOffset += PROPERTIES_STRIDE
 		PackedCount += 1
-
-		if PackedCount >= MAX_ENTITIES_PER_PACKET then
-			warn("ENTITY PACKETS HAVE OVERFLOWN THE LIMIT, CURRENT ENTITY NUMBER", MAX_ENTITIES_PER_PACKET)
-			break
-		end
 	end
 
 	if WriteOffset == 0 then

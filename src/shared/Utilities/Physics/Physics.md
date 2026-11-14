@@ -11,6 +11,7 @@
 ## Architectural Mechanisms
 
 ### 1. Kinematic Velocity, Ground Interaction & Character Independence
+- **`PlayerPhysics` (`Core/PlayerPhysics`)**: Houses player-specific kinematics (`StepPlayerVelocity`, `IntegrateGroundedDrive`, `IntegrateAirborneDrive`, `ApplyStopFriction`), separating character drive/friction/jump math from general rigid-body physics in `PhysicsMath`.
 - **One-Time Spawn Seeding (`PhysicsController.BindCharacter`)**: Optionally seeds the initial player spawn position once from an initial `Character` model (without requiring a `Humanoid` or `HumanoidRootPart`, falling back to `PrimaryPart`, any `BasePart`, `GetPivot()`, or `PlayerDefaultSpawnPosition`) and continues simulating player kinematics completely standalone even after the `Character` or `Humanoid` is destroyed.
 - **Wish-Direction Projection:** Character and dynamic bodies project horizontal intent vectors (`WishX`, `WishZ`) scaled by maximum speed caps.
 - **Dynamic Friction & Air Drag:** Velocity decays under surface friction when grounded, or gentle quadratic aerodynamic drag when airborne.

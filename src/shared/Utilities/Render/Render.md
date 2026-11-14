@@ -19,7 +19,8 @@
 - **`MathModule.ClipPolygon`**: Evaluates polygon vertices against camera frustum boundary planes using Sutherland-Hodgman clipping.
 - Triangles intersecting the near plane are sliced dynamically into quads or clipped triangles, eliminating near-plane projection artifacts.
 
-### 3. Perspective Projection & Sub-Pixel Rasterization
+### 3. Mesh Registry & Perspective Projection (`VerticeFile`, `VerticeHelper`, `MathModule`)
+- **`VerticeFile` & `VerticeHelper`**: `VerticeHelper` constructs the procedural local-space unit shape meshes (`BuildCubeMesh`, `BuildSphereMesh`, `BuildCylinderMesh`, `BuildTriangleMesh`, `BuildPlaneMesh`) with winding-verified face normals; `VerticeFile` exposes shape ID/name translation (`IdToShape`, `ShapeToId`) and `ShapeData` lookup.
 - **`MathModule.ProjectVertex` / `MathModule.ProjectVertexUV`**: Converts 3D camera-space coordinates into 2D viewport pixel coordinates with reciprocal depth ($1/Z$) and optional UV coordinates.
 - **`MathModule.EdgeFunction`**: Computes signed 2D barycentric half-plane determinants for triangle traversal and pixel coverage testing.
 - **Perspective-Correct Texture Mapping (`MathModule.RasterizeTriangleSpan`)**: Interpolates $1/Z$, $U/Z$, and $V/Z$ across horizontal spans, recovering true perspective-correct $(U, V)$ per visible fragment after the Z-test and modulating sampled texels from a power-of-two RGBA texture buffer (`TextureHelper`) by the face's shaded `PackedColor`.

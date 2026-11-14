@@ -41,6 +41,7 @@ const PROPERTIES_BUFFER_SIZE = buffer.len(PropertiesBuffer) :: number
 const MAX_ENTITIES = COMPONENT_BUFFER_SIZE // COMPONENT_STRIDE :: number
 
 export type PlayerDeltaState = {
+	ClientReady: boolean,
 	CharacterSeeded: boolean,
 	ClientSynced: boolean,
 	OriginX: number,
@@ -130,6 +131,7 @@ function PlayerFunctions.GetOrCreatePlayerState(PlayerObject: Player, EntityCoun
 	local State = PlayerStates[PlayerObject] :: PlayerDeltaState?
 	if not State then
 		const NewState: PlayerDeltaState = {
+			ClientReady = false,
 			CharacterSeeded = false,
 			ClientSynced = false,
 			OriginX = DEFAULT_SPAWN.X,
@@ -170,6 +172,27 @@ function PlayerFunctions.GetOrCreatePlayerState(PlayerObject: Player, EntityCoun
 
 	State.LastEntityCount = EntityCount
 	return State
+end
+
+--[=[
+	Marks a player's Actor-hosted ReplicationReceiver as connected and clears VisibleFlags so a complete initial snapshot is delivered.
+	@param PlayerObject Player -- Target replicating player.
+	@param EntityCount number -- Current total world entity count.
+]=]
+function PlayerFunctions.MarkClientReady(PlayerObject: Player, EntityCount: number)
+	const State = PlayerFunctions.GetOrCreatePlayerState(PlayerObject, EntityCount)
+	State.ClientReady = true
+	buffer.fill(State.VisibleFlags, 0, 0, MAX_ENTITIES)
+end
+
+--[=[
+	Returns whether a player's client ReplicationReceiver has connected and signaled readiness.
+	@param PlayerObject Player -- Target replicating player.
+	@return boolean -- True once the client receiver is listening on ReplicateEvent.
+]=]
+function PlayerFunctions.IsClientReady(PlayerObject: Player): boolean
+	const State = PlayerStates[PlayerObject]
+	return if State then State.ClientReady else false
 end
 
 --[=[
@@ -238,14 +261,16 @@ function PlayerFunctions.UpdateObserverFromBuffer(PlayerObject: Player, PayloadB
 end
 
 --[=[
-	Checks whether an entity's position, orientation, visual, size, or directions have changed since last replication.
+	Checks whether an entity's position, orientation, visual, size, directions, or properties have changed since last replication.
 	@param Offset number -- Byte offset in component buffers.
 	@param DirectionOffset number -- Byte offset in directions buffers.
+	@param PropertiesOffset number -- Byte offset in properties buffers.
 	@param CachedPositions buffer -- Player's shadow position buffer.
 	@param CachedOrientations buffer -- Player's shadow orientation buffer.
 	@param CachedVisuals buffer -- Player's shadow visual buffer.
 	@param CachedSizes buffer -- Player's shadow size buffer.
 	@param CachedDirections buffer -- Player's shadow directions buffer.
+	@param CachedProperties buffer -- Player's shadow properties buffer.
 	@return boolean -- True if any component byte differs.
 ]=]
 function PlayerFunctions.HasEntityChanged(
@@ -287,40 +312,13 @@ function PlayerFunctions.HasEntityChanged(
 		return true
 	end
 
-	if
-		buffer.readu32(DirectionsBuffer, DirectionOffset) ~= buffer.readu32(CachedDirections, DirectionOffset)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 4) ~= buffer.readu32(
-			CachedDirections,
-			DirectionOffset + 4
-		)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 8) ~= buffer.readu32(
-			CachedDirections,
-			DirectionOffset + 8
-		)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 12) ~= buffer.readu32(
-			CachedDirections,
-			DirectionOffset + 12
-		)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 16) ~= buffer.readu32(
-			CachedDirections,
-			DirectionOffset + 16
-		)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 20) ~= buffer.readu32(
-			CachedDirections,
-			DirectionOffset + 20
-		)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 24) ~= buffer.readu32(
-			CachedDirections,
-			DirectionOffset + 24
-		)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 28) ~= buffer.readu32(
-			CachedDirections,
-			DirectionOffset + 28
-		)
-		or buffer.readu32(DirectionsBuffer, DirectionOffset + 32)
-			~= buffer.readu32(CachedDirections, DirectionOffset + 32)
-	then
-		return true
+	for DirectionByte = 0, 32, 4 do
+		if
+			buffer.readu32(DirectionsBuffer, DirectionOffset + DirectionByte)
+			~= buffer.readu32(CachedDirections, DirectionOffset + DirectionByte)
+		then
+			return true
+		end
 	end
 
 	if buffer.readu32(PropertiesBuffer, PropertiesOffset) ~= buffer.readu32(CachedProperties, PropertiesOffset) then

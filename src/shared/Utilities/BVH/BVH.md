@@ -23,7 +23,7 @@ The BVH module queries the engine's centralized Entity Component System (ECS) bu
   3. `HitDistance`: Scalar ray travel distance to the contact surface.
   4. `HitPosition`: World-space 3D contact point.
   5. `HitNormal`: Outward unit surface normal vector.
-- **Callable Module (`__call`)**: Allows invoking the module directly as a function `BVH(Origin, Direction, Storage)` where `Direction`'s magnitude dictates the search distance.
+- **Callable Module (`__call`)**: Allows invoking the module directly as a function `BVH(Storage, Origin, Direction)` where `Direction`'s magnitude dictates the search distance.
 
 ### 3. Broadphase Volume Queries
 - **`BVH.QueryAABB`**: Queries an axis-aligned bounding box defined by `MinVector` and `MaxVector`. Fast rejection tests discard entities whose extents do not intersect the query bounds, collecting surviving entity IDs into an output array.

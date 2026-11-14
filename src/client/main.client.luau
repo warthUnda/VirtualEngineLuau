@@ -6,6 +6,13 @@
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const RunService = game:GetService("RunService")
 
+-- Static References --
+-- Cloned into the Controller Actor by RenderBootstrap; skip execution in the PlayerScripts template copy.
+const SelfActor = script:GetActor() :: Actor?
+if not SelfActor then
+	return
+end
+
 const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
 const Utilities = SharedFolder:WaitForChild("Utilities")
 
@@ -23,7 +30,7 @@ const OBSERVER_SYNC_INTERVAL = SystemsConfigs.ObserverSyncInterval :: number
 
 -- Remote events
 const CoreEvents = ReplicatedStorage:WaitForChild(CORE_EVENTS_FOLDER_NAME) :: Folder
-const ObserverStateEvent = CoreEvents:WaitForChild(OBSERVER_REMOTE_EVENT_NAME) :: UnreliableRemoteEvent
+const ObserverStateEvent = CoreEvents:WaitForChild(OBSERVER_REMOTE_EVENT_NAME) :: any
 
 -- Tables --
 local SyncAccumulator = OBSERVER_SYNC_INTERVAL :: number
@@ -44,9 +51,14 @@ Renderer.Init()
 
 while true do
 	const DeltaTime = RunService.RenderStepped:Wait() :: number
+	debug.profilebegin("SimulatePhysics")
 	PhysicsController.SimulatePhysicsFrame(DeltaTime)
+	debug.profileend()
+	debug.profilebegin("Render all instances")
 	Renderer.DrawFrame()
+	debug.profileend()
 
+	debug.profilebegin("Send replication info")
 	SyncAccumulator += DeltaTime
 	if SyncAccumulator >= OBSERVER_SYNC_INTERVAL then
 		SyncAccumulator = 0
@@ -54,4 +66,5 @@ while true do
 			ObserverStateEvent:FireServer(ObserverPayload)
 		end
 	end
+	debug.profileend()
 end

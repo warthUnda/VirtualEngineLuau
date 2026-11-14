@@ -12,10 +12,6 @@ const PhysicsMathHelper = require(script.Parent.PhysicsMathHelper)
 
 -- Configs --
 const GRAVITY = SystemsConfigs.PhysicsGravity :: number
-const FALL_GRAVITY_MULTIPLIER = SystemsConfigs.PhysicsFallGravityMultiplier :: number
-
-const PLAYER_MASS = SystemsConfigs.PlayerMass :: number
-const PLAYER_JUMP_VELOCITY = SystemsConfigs.PlayerJumpImpulse / PLAYER_MASS :: number
 const WALKABLE_NORMAL_Y = SystemsConfigs.PlayerWalkableNormalY :: number
 
 const OBJECT_LINEAR_DRAG = SystemsConfigs.ObjectLinearDrag :: number
@@ -34,65 +30,6 @@ local PhysicsMath = {}
 -- ============================================================================
 -- 1. VELOCITY & INERTIA INTEGRATION
 -- ============================================================================
-
---[=[
-	Steps player linear velocity forward by DeltaTime, applying ground or airborne wish drive, friction, jump, and gravity.
-	@param VelocityX number -- Current velocity X.
-	@param VelocityY number -- Current velocity Y.
-	@param VelocityZ number -- Current velocity Z.
-	@param WishX number -- Normalized horizontal wish direction X.
-	@param WishZ number -- Normalized horizontal wish direction Z.
-	@param WishScale number -- Desired movement speed scalar.
-	@param JumpRequested boolean -- True if jump button is active.
-	@param IsGrounded boolean -- True if resting on a walkable surface.
-	@param DeltaTime number -- Elapsed frame time in seconds.
-	@return (number, number, number, boolean) -- NextVelocityX, NextVelocityY, NextVelocityZ, NextGrounded.
-]=]
-function PhysicsMath.StepPlayerVelocity(
-	VelocityX: number,
-	VelocityY: number,
-	VelocityZ: number,
-	WishX: number,
-	WishZ: number,
-	WishScale: number,
-	JumpRequested: boolean,
-	IsGrounded: boolean,
-	DeltaTime: number
-): (number, number, number, boolean)
-	local NextVelocityX = VelocityX :: number
-	local NextVelocityY = VelocityY :: number
-	local NextVelocityZ = VelocityZ :: number
-	local NextGrounded = IsGrounded :: boolean
-
-	if NextGrounded then
-		NextVelocityX, NextVelocityZ = PhysicsMathHelper.IntegrateGroundedDrive(
-			NextVelocityX,
-			NextVelocityZ,
-			WishX,
-			WishZ,
-			WishScale,
-			DeltaTime
-		)
-		if JumpRequested then
-			NextVelocityY = math.max(NextVelocityY, PLAYER_JUMP_VELOCITY)
-			NextGrounded = false
-		end
-	else
-		NextVelocityX, NextVelocityZ = PhysicsMathHelper.IntegrateAirborneDrive(
-			NextVelocityX,
-			NextVelocityZ,
-			WishX,
-			WishZ,
-			WishScale,
-			DeltaTime
-		)
-	end
-
-	const GravityScale = if NextVelocityY < 0 then FALL_GRAVITY_MULTIPLIER else 1.0 :: number
-	NextVelocityY -= GRAVITY * GravityScale * DeltaTime
-
-	return NextVelocityX, NextVelocityY, NextVelocityZ, NextGrounded
-end
 
 --[=[
 	Integrates external forces, gravity, and drag onto a dynamic object's linear velocity.

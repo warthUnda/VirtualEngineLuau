@@ -23,10 +23,10 @@ local CameraTable = {
 	CameraSubject = nil :: Instance?,
 }
 
-local CameraPosition = Vector3.new(0, 0, 0) :: Vector3
-local CameraRight = Vector3.new(1, 0, 0) :: Vector3
-local CameraUp = Vector3.new(0, 1, 0) :: Vector3
-local CameraLook = Vector3.new(0, 0, 1) :: Vector3
+local CameraPosition = DEFAULT_CAMERA_CFRAME.Position :: Vector3
+local CameraRight = DEFAULT_CAMERA_CFRAME.RightVector :: Vector3
+local CameraUp = DEFAULT_CAMERA_CFRAME.UpVector :: Vector3
+local CameraLook = DEFAULT_CAMERA_CFRAME.LookVector :: Vector3
 
 local CameraStore = {}
 

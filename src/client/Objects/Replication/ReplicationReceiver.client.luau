@@ -10,7 +10,10 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- own copy of each required ModuleScript. The receiver therefore has to live in that same Actor,
 -- otherwise it fills the PlayerScripts copy of the ECS that nothing ever reads and the controller
 -- keeps seeing an entity count of 0. It is cloned into the controller Actor by RenderBootstrap.
-const SelfActor = script:GetActor() :: Actor
+const SelfActor = script:GetActor() :: Actor?
+if not SelfActor then
+	return
+end
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
@@ -79,11 +82,12 @@ ReplicateEvent.OnClientEvent:Connect(
 		VisualBuffer: buffer,
 		SizeBuffer: buffer,
 		DirectionsBuffer: buffer,
-		PropertiesOrCounts: any,
-		MaybeCounts: ECSTable?
+		PropertiesBuffer: buffer,
+		ECSDataTable: ECSTable
 	)
-		const PropertiesBuffer = PropertiesOrCounts :: buffer
-		const ECSDataTable = PropertiesOrCounts :: ECSTable
+		if not ECSDataTable then
+			return
+		end
 
 		const DeltaCount = math.min(ECSDataTable.EntityECSCount, MAX_ENTITIES) :: number
 		if DeltaCount <= 0 then
@@ -142,3 +146,6 @@ ReplicateEvent.OnClientEvent:Connect(
 		end
 	end
 )
+
+-- Notify server that the Controller Actor's ReplicationReceiver listener is connected and ready for initial snapshot
+ReplicateEvent:FireServer()

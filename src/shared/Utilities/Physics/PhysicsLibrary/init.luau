@@ -28,7 +28,7 @@ local PhysicsLibrary = {}
 ]=]
 function PhysicsLibrary.SimulateInstance(
 	EntityId: number,
-	Angle: number,
+	Angle: (Vector3 | number)?,
 	Impulse: number?,
 	Speed: number?,
 	CustomMass: number?

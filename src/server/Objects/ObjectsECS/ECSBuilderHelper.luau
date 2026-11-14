@@ -28,13 +28,19 @@ const ENTITY_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
 const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 const STATIC_FOLDER_NAME = SystemsConfigs.StaticObjectsFolderName :: string
-const TEXTURE_REGISTRY_FOLDER_NAME = SystemsConfigs.TextureRegistryFolderName :: string
+const CORE_EVENTS_FOLDER_NAME = SystemsConfigs.CoreEventsFolderName :: string
+const TEXTURE_SYNC_REMOTE_EVENT_NAME = SystemsConfigs.TextureSyncRemoteEventName :: string
 
 -- Tables --
+const PART_TYPE_TO_SHAPE_ID = {
+	[Enum.PartType.Block] = VerticeFile.ShapeToId.Cube,
+	[Enum.PartType.Ball] = VerticeFile.ShapeToId.Sphere,
+	[Enum.PartType.Cylinder] = VerticeFile.ShapeToId.Cylinder,
+	[Enum.PartType.Wedge] = VerticeFile.ShapeToId.Triangle,
+	[Enum.PartType.CornerWedge] = VerticeFile.ShapeToId.Triangle,
+} :: { [Enum.PartType]: number }
+
 local StaticFolder = Workspace:FindFirstChild(STATIC_FOLDER_NAME) :: Folder?
-const TextureRegistryFolder = Instance.new("Folder")
-NewFolder.Name = TEXTURE_REGISTRY_FOLDER_NAME
-NewFolder.Parent = ReplicatedStorage
 
 local ECSBuilderHelper = {}
 
@@ -83,14 +89,12 @@ function ECSBuilderHelper.RegisterDecal(DecalInstance: Decal): number
 	end
 
 	if IsNew then
-		const RegistryFolder = TextureRegistryFolder :: Folder
-		const ExistingEntry = RegistryFolder:FindFirstChild(tostring(TextureId))
-		if not ExistingEntry then
-			const EntryValue = Instance.new("StringValue")
-			EntryValue.Name = tostring(TextureId)
-			EntryValue.Value = TextureTable.IdToUrl[TextureId] or ""
-			EntryValue:SetAttribute("TextureName", TextureTable.TranslateIdToName(TextureId))
-			EntryValue.Parent = RegistryFolder
+		const CoreEvents = ReplicatedStorage:FindFirstChild(CORE_EVENTS_FOLDER_NAME)
+		const TextureSyncEvent = if CoreEvents
+			then CoreEvents:FindFirstChild(TEXTURE_SYNC_REMOTE_EVENT_NAME)
+			else nil
+		if TextureSyncEvent and TextureSyncEvent:IsA("RemoteEvent") then
+			TextureSyncEvent:FireAllClients(TextureTable.ExportEntries())
 		end
 	end
 
@@ -103,10 +107,6 @@ end
 ]=]
 function ECSBuilderHelper.ScanWorkspaceDecals(RootInstance: Instance)
 	TextureTable.ResetEntries()
-
-	for _, Entry: Instance in ipairs((TextureRegistryFolder :: Folder):GetChildren()) do
-		Entry:Destroy()
-	end
 
 	for _, Descendant: Instance in ipairs(RootInstance:GetDescendants()) do
 		if Descendant:IsA("Decal") then
@@ -128,7 +128,7 @@ function ECSBuilderHelper.PopulatePart(Part: BasePart)
 		return
 	end
 
-	if not StaticFolder then
+	if not StaticFolder or not StaticFolder.Parent then
 		StaticFolder = Workspace:FindFirstChild(STATIC_FOLDER_NAME) :: Folder?
 	end
 
@@ -194,22 +194,17 @@ function ECSBuilderHelper.PopulatePart(Part: BasePart)
 	end
 
 	local ShapeId = VerticeFile.ShapeToId.Cube :: number
+	const ShapeIdAttr = Part:GetAttribute("ShapeId")
+	const ShapeNameAttr = Part:GetAttribute("Shape")
 
-	if Part:IsA("Part") then
-		const PartShape = Part.Shape
-
-		if PartShape == Enum.PartType.Block then -- in most cases, its a cube
-			ShapeId = VerticeFile.ShapeToId.Cube
-		end
-
-		-- Other shapes like spheres or cylinders (rare)
-		if PartShape == Enum.PartType.Ball then
-			ShapeId = VerticeFile.ShapeToId.Sphere
-		elseif PartShape == Enum.PartType.Cylinder then
-			ShapeId = VerticeFile.ShapeToId.Cylinder
-		elseif PartShape == Enum.PartType.Wedge or PartShape == Enum.PartType.CornerWedge then
-			ShapeId = VerticeFile.ShapeToId.Triangle
-		end
+	if typeof(ShapeIdAttr) == "number" and VerticeFile.IdToShape[ShapeIdAttr] ~= nil then
+		ShapeId = ShapeIdAttr
+	elseif typeof(ShapeNameAttr) == "string" and VerticeFile.ShapeToId[ShapeNameAttr] ~= nil then
+		ShapeId = VerticeFile.ShapeToId[ShapeNameAttr]
+	elseif Part:IsA("WedgePart") or Part:IsA("CornerWedgePart") then
+		ShapeId = VerticeFile.ShapeToId.Triangle
+	elseif Part:IsA("Part") then
+		ShapeId = PART_TYPE_TO_SHAPE_ID[Part.Shape] or VerticeFile.ShapeToId.Cube
 	end
 
 	const PropertiesOffset = (EntityId - 1) * PROPERTIES_STRIDE :: number

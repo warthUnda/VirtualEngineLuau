@@ -16,6 +16,7 @@ const PhysicsFolder = UtilitiesFolder:WaitForChild("Physics")
 -- Modules --
 const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 const PhysicsMath = require(PhysicsFolder:WaitForChild("Core"):WaitForChild("PhysicsMath"))
+const PlayerPhysics = require(PhysicsFolder:WaitForChild("Core"):WaitForChild("PlayerPhysics"))
 const PhysicsControllerHelper = require(script.Parent.PhysicsControllerHelper)
 
 -- Configs --
@@ -89,7 +90,7 @@ local PhysicsController = {}
 -- 1. PUBLIC CONTROLLER API - INITIALIZATION, DIRECT ACTIONS & SIMULATION
 -- ============================================================================
 
-function PhysicsController.BindPlrCharacter(Character: Model)
+function PhysicsController.BindCharacter(Character: Model)
 	const RootPart, StartX, StartY, StartZ = PhysicsControllerHelper.ConfigureCharacterInstance(Character)
 	HostRootPart = RootPart
 	CharacterSeeded = true
@@ -133,9 +134,18 @@ function PhysicsController.InitializePhysics()
 	end
 
 	if LocalPlayer.Character then
-		PhysicsController.BindCharacter(LocalPlayer.Character)
+		task.spawn(function()
+			const Character = LocalPlayer.Character
+			if Character and not CharacterSeeded then
+				PhysicsControllerHelper.AwaitCharacterRoot(Character)
+				if not CharacterSeeded then
+					PhysicsController.BindCharacter(Character)
+				end
+			end
+		end)
 	else
 		CharacterAddedConnection = LocalPlayer.CharacterAdded:Once(function(Character: Model)
+			PhysicsControllerHelper.AwaitCharacterRoot(Character)
 			if not CharacterSeeded then
 				PhysicsController.BindCharacter(Character)
 			end
@@ -177,6 +187,10 @@ function PhysicsController.AddObjectMovement(
 	Magnitude: number,
 	IsImpulse: boolean?
 )
+	if not Initialized then
+		PhysicsController.InitializePhysics()
+	end
+
 	if EntityId < 1 or EntityId > MAX_ENTITIES then
 		return
 	end
@@ -273,7 +287,7 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 	for _ = 1, SUBSTEPS do
 		if IS_CLIENT then
 			const WasGrounded = PlayerGrounded :: boolean
-			PlayerVelX, PlayerVelY, PlayerVelZ, PlayerGrounded = PhysicsMath.StepPlayerVelocity(
+			PlayerVelX, PlayerVelY, PlayerVelZ, PlayerGrounded = PlayerPhysics.StepPlayerVelocity(
 				PlayerVelX,
 				PlayerVelY,
 				PlayerVelZ,

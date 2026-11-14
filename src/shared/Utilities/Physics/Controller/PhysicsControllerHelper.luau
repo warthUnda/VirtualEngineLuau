@@ -109,6 +109,23 @@ function PhysicsControllerHelper.ConfigureCharacterInstance(
 end
 
 --[=[
+	Waits briefly for a live Workspace character model's root BasePart to replicate before seeding spawn coordinates.
+	@param Character Model -- Spawned character model.
+]=]
+function PhysicsControllerHelper.AwaitCharacterRoot(Character: Model)
+	if not Character.Parent then
+		return
+	end
+
+	const ExistingRoot = Character:FindFirstChild("HumanoidRootPart")
+		or Character.PrimaryPart
+		or Character:FindFirstChildWhichIsA("BasePart")
+	if not ExistingRoot then
+		Character:WaitForChild("HumanoidRootPart", 2)
+	end
+end
+
+--[=[
 	Samples WASD and Space keyboard inputs relative to camera orientation.
 	@param PendingWishX number -- Accumulated wish direction X.
 	@param PendingWishZ number -- Accumulated wish direction Z.

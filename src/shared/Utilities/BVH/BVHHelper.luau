@@ -113,21 +113,18 @@ function BVHHelper.ResolveStorage(ProvidedStorage: ECSMain.ECSStorage?): ECSMain
 		const ActorStorage = if SelfActor then SelfActor:FindFirstChild("ObjectStorage") else nil
 		if ActorStorage and ActorStorage:IsA("ModuleScript") then
 			DefaultClientStorage = (require :: any)(ActorStorage) :: ECSMain.ECSStorage
-			return
-		end
-
-		const LocalPlayer = Players.LocalPlayer :: Player?
-		const PlayerScripts = if LocalPlayer then LocalPlayer:FindFirstChild("PlayerScripts") else nil
-		const ControllerActor = if PlayerScripts then PlayerScripts:FindFirstChild("Controller") else nil
-		const ControllerStorage = if ControllerActor then ControllerActor:FindFirstChild("ObjectStorage") else nil
-
-		if ControllerStorage and ControllerStorage:IsA("ModuleScript") then
-			DefaultClientStorage = (require :: any)(ControllerStorage) :: ECSMain.ECSStorage
-		elseif PlayerScripts then
-			const ClientFolder = PlayerScripts:FindFirstChild("Client")
+		else
+			const LocalPlayer = Players.LocalPlayer :: Player?
+			const PlayerScripts = if LocalPlayer then LocalPlayer:FindFirstChild("PlayerScripts") else nil
+			const ControllerActor = if PlayerScripts then PlayerScripts:FindFirstChild("Controller") else nil
+			const ControllerStorage = if ControllerActor then ControllerActor:FindFirstChild("ObjectStorage") else nil
+			const ClientFolder = if PlayerScripts then PlayerScripts:FindFirstChild("Client") else nil
 			const ObjectsFolder = if ClientFolder then ClientFolder:FindFirstChild("Objects") else nil
 			const ObjStorage = if ObjectsFolder then ObjectsFolder:FindFirstChild("ObjectStorage") else nil
-			if ObjStorage and ObjStorage:IsA("ModuleScript") then
+
+			if ControllerStorage and ControllerStorage:IsA("ModuleScript") then
+				DefaultClientStorage = (require :: any)(ControllerStorage) :: ECSMain.ECSStorage
+			elseif ObjStorage and ObjStorage:IsA("ModuleScript") then
 				DefaultClientStorage = (require :: any)(ObjStorage) :: ECSMain.ECSStorage
 			end
 		end

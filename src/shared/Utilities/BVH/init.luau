@@ -200,28 +200,31 @@ end
 
 --[=[
 	Casts a ray through the BVH hierarchy returning the closest hit entity and OOP object.
-	Accepts both (Origin, Direction, MaxDistance, IgnoreFilter, Storage) and (Storage, Origin, Direction, ...) calling styles.
-	@param Arg1 any -- Ray origin (Vector3) or ECSStorage.
-	@param Arg2 any -- Ray direction (Vector3) or Ray origin (Vector3).
-	@param Arg3 any? -- MaxDistance (number), ECSStorage, or IgnoreFilter.
-	@param Arg4 any? -- IgnoreFilter, MaxDistance (number), or ECSStorage.
-	@param Arg5 any? -- ECSStorage or IgnoreFilter.
+	@param ProvidedStorage ECSMain.ECSStorage? -- Target ECS storage; falls back to active/server storage when nil.
+	@param Origin Vector3 -- World-space ray origin.
+	@param DirectionVector Vector3 -- World-space ray direction (length used when MaxDistance is omitted).
+	@param MaxDistance number? -- Optional maximum raycast distance.
+	@param IgnoreFilter any? -- Optional EntityId, OOP object, array/set, or filter callback.
 	@return number? -- Hit ECS entity ID (or nil).
 	@return any? -- Hit dynamic OOP object (or nil).
-	@return number -- Hit distance along ray.
+	@return number -- Hit distance along ray (0 on invalid ray, MaxDistance on miss).
 	@return Vector3? -- Hit world position.
 	@return Vector3? -- Hit surface outward normal.
 ]=]
 function BVH.Raycast(
-	ProvidedStorage: ECSMain.ECSStorage,
+	ProvidedStorage: ECSMain.ECSStorage?,
 	Origin: Vector3,
 	DirectionVector: Vector3,
-	MaxDistance: number,
+	MaxDistance: number?,
 	IgnoreFilter: any?
-): (number?, any?, number?, Vector3?, Vector3?)
+): (number?, any?, number, Vector3?, Vector3?)
 	-- ==========================================
 	-- 1. Verification and seeing if its possible to cast a RAYCAST
 	-- ==========================================
+
+	if typeof(Origin) ~= "Vector3" or typeof(DirectionVector) ~= "Vector3" then
+		return nil, nil, 0, nil, nil
+	end
 
 	const OriginX: number, OriginY: number, OriginZ: number = Origin.X, Origin.Y, Origin.Z
 	if
@@ -232,23 +235,27 @@ function BVH.Raycast(
 		or math.abs(OriginY) == math.huge
 		or math.abs(OriginZ) == math.huge
 	then
-		return nil, nil, nil, nil, nil
+		return nil, nil, 0, nil, nil
 	end
 
 	const DirectionLength = DirectionVector.Magnitude :: number
 	if not (DirectionLength > 1e-8 and DirectionLength < math.huge) then
-		return nil, nil, nil, nil, nil
+		return nil, nil, 0, nil, nil
+	end
+
+	if MaxDistance ~= nil and not (MaxDistance > 0) then
+		return nil, nil, 0, nil, nil
 	end
 
 	const InverseDirectionLength = 1 / DirectionLength :: number
 	const DirectionX = DirectionVector.X * InverseDirectionLength :: number
 	const DirectionY = DirectionVector.Y * InverseDirectionLength :: number
 	const DirectionZ = DirectionVector.Z * InverseDirectionLength :: number
-	const MaxDistance = if MaxDistanceArg then math.min(MaxDistanceArg, 1e15) else DirectionLength :: number
+	const ResolvedMaxDistance = if MaxDistance then math.min(MaxDistance, 1e15) else DirectionLength :: number
 
 	const Storage = BVHHelper.ResolveStorage(ProvidedStorage)
 	if not Storage then
-		return nil, nil, MaxDistance, nil, nil
+		return nil, nil, ResolvedMaxDistance, nil, nil
 	end
 
 	const RawEntityCount = Storage.ECSData.GetCounts().EntityECSCount :: number
@@ -296,116 +303,114 @@ function BVH.Raycast(
 	RayGeneration += 1
 	const CurrentRayGen = RayGeneration :: number
 
-	local ClosestDistance = MaxDistance :: number
+	local ClosestDistance = ResolvedMaxDistance :: number
 	local HitEntityId = 0 :: number
 	local HitDynamicObject: any = nil
 	local BestNormalX: number, BestNormalY: number, BestNormalZ: number = 0, 1, 0
 
 	-- 1. Traverse Flat-Buffer Static BVH (Near-First Child Ordering)
-	if AllocatedNodeBytes < 0 then
-		return
-	end
+	if AllocatedNodeBytes > 0 then
+		const RootHit, _ = BVHMath.TestNodeAABB(
+			NodeBuffer,
+			0,
+			OriginX,
+			OriginY,
+			OriginZ,
+			InverseDirectionX,
+			InverseDirectionY,
+			InverseDirectionZ,
+			ClosestDistance
+		)
 
-	const RootHit, _ = BVHMath.TestNodeAABB(
-		NodeBuffer,
-		0,
-		OriginX,
-		OriginY,
-		OriginZ,
-		InverseDirectionX,
-		InverseDirectionY,
-		InverseDirectionZ,
-		ClosestDistance
-	)
+		if RootHit then -- has hit a physical
+			local StackTop = 1 :: number
+			buffer.writeu32(TraversalStackBuffer, 0, 0)
 
-	if RootHit then -- has hit a physical
-		local StackTop = 1 :: number
-		buffer.writeu32(TraversalStackBuffer, 0, 0)
+			while StackTop > 0 do
+				StackTop -= 1
+				const NodeOffset = buffer.readu32(TraversalStackBuffer, StackTop * 4) :: number
+				const RightOffset = buffer.readu32(NodeBuffer, NodeOffset + 28) :: number
 
-		while StackTop > 0 do
-			StackTop -= 1
-			const NodeOffset = buffer.readu32(TraversalStackBuffer, StackTop * 4) :: number
-			const RightOffset = buffer.readu32(NodeBuffer, NodeOffset + 28) :: number
-
-			if RightOffset == 0 then
-				const EntityId = buffer.readu32(NodeBuffer, NodeOffset + 12) :: number
-				if EntityId == IgnoredId or EntityId < 1 or EntityId > EntityCount then
-					continue
-				end
-
-				if HasComplexIgnore then
-					const EntityObj = if DynamicObjectsList
-						then DynamicObjectsList.GetObjectByEntityId(EntityId)
-						else nil
-					if BVHHelper.IsIgnored(EntityId, EntityObj, IgnoredId, IgnoreFilter) then
+				if RightOffset == 0 then
+					const EntityId = buffer.readu32(NodeBuffer, NodeOffset + 12) :: number
+					if EntityId == IgnoredId or EntityId < 1 or EntityId > EntityCount then
 						continue
 					end
-				end
 
-				buffer.writeu32(TestedGenBuffer, EntityId * 4, CurrentRayGen)
-
-				const Hit, HitDistance, NormalX, NormalY, NormalZ = BVHMath.TestEntityOBB(
-					EntityId,
-					OriginX,
-					OriginY,
-					OriginZ,
-					DirectionX,
-					DirectionY,
-					DirectionZ,
-					ClosestDistance,
-					PositionBuffer,
-					SizeBuffer,
-					DirectionsBuffer,
-					PropertiesBuffer
-				)
-				if Hit then
-					ClosestDistance = HitDistance
-					HitEntityId = EntityId
-					HitDynamicObject = nil
-					BestNormalX, BestNormalY, BestNormalZ = NormalX, NormalY, NormalZ
-				end
-			else
-				const LeftOffset = buffer.readu32(NodeBuffer, NodeOffset + 12) :: number
-				const HitLeft, DistanceLeft = BVHMath.TestNodeAABB(
-					NodeBuffer,
-					LeftOffset,
-					OriginX,
-					OriginY,
-					OriginZ,
-					InverseDirectionX,
-					InverseDirectionY,
-					InverseDirectionZ,
-					ClosestDistance
-				)
-				const HitRight, DistanceRight = BVHMath.TestNodeAABB(
-					NodeBuffer,
-					RightOffset,
-					OriginX,
-					OriginY,
-					OriginZ,
-					InverseDirectionX,
-					InverseDirectionY,
-					InverseDirectionZ,
-					ClosestDistance
-				)
-
-				if HitLeft and HitRight then
-					if StackTop + 2 <= STACK_CAPACITY then
-						if DistanceLeft < DistanceRight then
-							buffer.writeu32(TraversalStackBuffer, StackTop * 4, RightOffset)
-							buffer.writeu32(TraversalStackBuffer, (StackTop + 1) * 4, LeftOffset)
-						else
-							buffer.writeu32(TraversalStackBuffer, StackTop * 4, LeftOffset)
-							buffer.writeu32(TraversalStackBuffer, (StackTop + 1) * 4, RightOffset)
+					if HasComplexIgnore then
+						const EntityObj = if DynamicObjectsList
+							then DynamicObjectsList.GetObjectByEntityId(EntityId)
+							else nil
+						if BVHHelper.IsIgnored(EntityId, EntityObj, IgnoredId, IgnoreFilter) then
+							continue
 						end
-						StackTop += 2
 					end
-				elseif HitLeft and StackTop < STACK_CAPACITY then
-					buffer.writeu32(TraversalStackBuffer, StackTop * 4, LeftOffset)
-					StackTop += 1
-				elseif HitRight and StackTop < STACK_CAPACITY then
-					buffer.writeu32(TraversalStackBuffer, StackTop * 4, RightOffset)
-					StackTop += 1
+
+					buffer.writeu32(TestedGenBuffer, EntityId * 4, CurrentRayGen)
+
+					const Hit, HitDistance, NormalX, NormalY, NormalZ = BVHMath.TestEntityOBB(
+						EntityId,
+						OriginX,
+						OriginY,
+						OriginZ,
+						DirectionX,
+						DirectionY,
+						DirectionZ,
+						ClosestDistance,
+						PositionBuffer,
+						SizeBuffer,
+						DirectionsBuffer,
+						PropertiesBuffer
+					)
+					if Hit then
+						ClosestDistance = HitDistance
+						HitEntityId = EntityId
+						HitDynamicObject = nil
+						BestNormalX, BestNormalY, BestNormalZ = NormalX, NormalY, NormalZ
+					end
+				else
+					const LeftOffset = buffer.readu32(NodeBuffer, NodeOffset + 12) :: number
+					const HitLeft, DistanceLeft = BVHMath.TestNodeAABB(
+						NodeBuffer,
+						LeftOffset,
+						OriginX,
+						OriginY,
+						OriginZ,
+						InverseDirectionX,
+						InverseDirectionY,
+						InverseDirectionZ,
+						ClosestDistance
+					)
+					const HitRight, DistanceRight = BVHMath.TestNodeAABB(
+						NodeBuffer,
+						RightOffset,
+						OriginX,
+						OriginY,
+						OriginZ,
+						InverseDirectionX,
+						InverseDirectionY,
+						InverseDirectionZ,
+						ClosestDistance
+					)
+
+					if HitLeft and HitRight then
+						if StackTop + 2 <= STACK_CAPACITY then
+							if DistanceLeft < DistanceRight then
+								buffer.writeu32(TraversalStackBuffer, StackTop * 4, RightOffset)
+								buffer.writeu32(TraversalStackBuffer, (StackTop + 1) * 4, LeftOffset)
+							else
+								buffer.writeu32(TraversalStackBuffer, StackTop * 4, LeftOffset)
+								buffer.writeu32(TraversalStackBuffer, (StackTop + 1) * 4, RightOffset)
+							end
+							StackTop += 2
+						end
+					elseif HitLeft and StackTop < STACK_CAPACITY then
+						buffer.writeu32(TraversalStackBuffer, StackTop * 4, LeftOffset)
+						StackTop += 1
+					elseif HitRight and StackTop < STACK_CAPACITY then
+						buffer.writeu32(TraversalStackBuffer, StackTop * 4, RightOffset)
+						StackTop += 1
+					end
 				end
 			end
 		end
@@ -569,7 +574,7 @@ function BVH.Raycast(
 	end
 
 	if HitEntityId == 0 and HitDynamicObject == nil then
-		return nil, nil, MaxDistance, nil, nil
+		return nil, nil, ResolvedMaxDistance, nil, nil
 	end
 
 	if HitDynamicObject == nil and HitEntityId > 0 and DynamicObjectsList then

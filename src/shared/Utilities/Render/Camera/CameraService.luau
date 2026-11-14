@@ -80,18 +80,18 @@
 
 math.randomseed(tick())
 -- > Services < --
-local TweenService = game:GetService("TweenService")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+const TweenService = game:GetService("TweenService")
+const RunService = game:GetService("RunService")
+const UserInputService = game:GetService("UserInputService")
+const Players = game:GetService("Players")
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- > Player Objects < --
-local player = Players.LocalPlayer :: Player
-local mouse = player:GetMouse()
+const player = Players.LocalPlayer :: Player
+const mouse = player:GetMouse()
 
 -- > Camera System Variables < --
-local TWEEN_INFO = TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+const TWEEN_INFO = TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 local currentCamPosition = Vector3.zero
 local cameraRotation = Vector2.zero
 local currentCharacter: Model? = player.Character
@@ -106,27 +106,15 @@ local _wobbleAngle = 0
 local neckCache: CFrame? = nil
 
 -- > MUNCHMALS INTERVENTION < --
-local SharedFolder = ReplicatedStorage:WaitForChild("Shared")
-local SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
-local PhysicsController = require(
+const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
+const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
+const PhysicsController = require(
 	SharedFolder:WaitForChild("Utilities"):WaitForChild("Physics"):WaitForChild("Controller"):WaitForChild("PhysicsController")
 )
-local CameraStore = require(script.Parent.CameraStore)
-local CamTable = CameraStore.GetCameraTable()
-local PLAYER_EYE_OFFSET = SystemsConfigs.CameraPlayerEyeOffset :: number
-
-local function resolveCharacterRoot(characterModel: Model?): BasePart?
-	if not characterModel or not characterModel.Parent then
-		return nil
-	end
-	local rootCandidate = characterModel:FindFirstChild("HumanoidRootPart")
-		or characterModel.PrimaryPart
-		or characterModel:FindFirstChildWhichIsA("BasePart")
-	if rootCandidate and rootCandidate:IsA("BasePart") then
-		return rootCandidate
-	end
-	return nil
-end
+const CameraStore = require(script.Parent.CameraStore)
+const CameraHelper = require(script.Parent.CameraHelper)
+const CamTable = CameraStore.GetCameraTable()
+const PLAYER_EYE_OFFSET = SystemsConfigs.CameraPlayerEyeOffset :: number
 
 --> Built-in camera views
 local cameraSettings: { [string]: { [string]: any } } = {
@@ -236,7 +224,7 @@ local CameraService = {
 	Wobble = 0 :: number,
 	TiltFactor = CFrame.fromEulerAnglesYXZ(0, 0, 0) :: CFrame,
 	Angle = 60 :: number,
-	Host = resolveCharacterRoot(currentCharacter) :: BasePart?,
+	Host = CameraHelper.ResolveCharacterRoot(currentCharacter) :: BasePart?,
 	xLock = false :: boolean,
 	yLock = false :: boolean,
 	atX = 0 :: number,
@@ -370,105 +358,11 @@ local CameraService = {
 
 -- > Camera System Functions < --
 
---> @hideBodyParts: helper function setting up CharacterVisibility
-local function hideBodyParts(__type: string?)
-	if currentCharacter and currentCharacter.Parent then
-		--> Set-up the rotation for shift-locking
-		local hum = currentCharacter:FindFirstChildWhichIsA("Humanoid")
-		if hum then
-			hum.AutoRotate = not CameraService.AlignChar and true or false
-		end
-
-		--> Hide/unhide body parts when changing between views
-		for _, v in ipairs(currentCharacter:GetChildren()) do
-			if v:IsA("BasePart") and v.Name ~= "HumanoidRootPart" then
-				--> Run logic for parts within parts
-				if v:GetDescendants() then
-					for _, child in ipairs(v:GetDescendants()) do
-						if child:IsA("BasePart") then
-							child.LocalTransparencyModifier = __type and __type == "All" and 0 or 1
-						elseif child:IsA("Decal") then
-							child.LocalTransparencyModifier = __type and __type == "All" and 0 or 1
-						end
-					end
-				end
-
-				--> If no __type, hide everything
-				if __type then
-					v.LocalTransparencyModifier = __type == "All" and 0
-						or __type == "Body" and v.Name == "Head" and 1
-						or 0
-				else
-					v.LocalTransparencyModifier = 1
-				end
-			elseif v:IsA("Accessory") and v:FindFirstChildWhichIsA("BasePart") then
-				--> Set the hiding logic
-				for _, child in ipairs(v:GetDescendants()) do
-					if child:IsA("BasePart") then
-						child.LocalTransparencyModifier = __type and __type == "All" and 0 or 1
-					elseif child:IsA("Decal") then
-						child.LocalTransparencyModifier = __type and __type == "All" and 0 or 1
-					end
-				end
-			end
-		end
-	end
-end
-
---> @calculateShakingOffset: shakes the camera each frame w/an offset
-local function calculateShakingOffset(intensity: number): Vector3
-	local multipliers = { -1, 1 }
-	--> Use sin/cos for sense of randomness
-	local currentSeed = math.random(1, os.time()) * multipliers[math.random(1, #multipliers)]
-	local x = math.sin(currentSeed) * (intensity * 1.5 ^ 2) / 3
-	local y = math.clamp(math.cos(currentSeed) * (intensity * 1.5 ^ 1.5), 0, 10) / 3
-	--> Only offset Z in non-first-person views
-	local z = CameraService.CharacterVisibility == "All" and (math.cos(currentSeed) / 2) * intensity / 5 or 0
-
-	return Vector3.new(x, y, z) * math.max(CameraService.Smoothness ^ 2 * 0.5, 1)
-end
-
---> @raycastWorld: correct zooms to avoid clipping parts
-local function raycastWorld(origin: Vector3, direction: Vector3): Vector3
-	if direction.Magnitude <= 1e-5 then
-		return origin
-	end
-	--> Set params w/blacklist
-	local params = RaycastParams.new()
-	params.IgnoreWater = true
-	local filterInstances = {} :: { Instance }
-	if currentCharacter and currentCharacter.Parent then
-		table.insert(filterInstances, currentCharacter)
-	end
-	local activeHost = CameraService.Host
-	if activeHost and activeHost.Parent then
-		if activeHost.Parent ~= workspace and activeHost.Parent:IsA("Model") then
-			table.insert(filterInstances, activeHost.Parent)
-		else
-			table.insert(filterInstances, activeHost)
-		end
-	end
-	params.FilterDescendantsInstances = filterInstances
-	local _pos = (currentCamPosition + offset) -- no Offset property applied yet
-	--> Allow clipping through transluscent parts
-	local landRay = workspace:Raycast(origin, direction, params)
-	if landRay and landRay.Distance and landRay.Instance then
-		if landRay.Instance:IsA("BasePart") or landRay.Instance:IsA("UnionOperation") then
-			direction *= (landRay.Distance * 0.9 / direction.Magnitude)
-		else
-			direction *= (landRay.Distance * 0.95 / direction.Magnitude)
-		end
-	end
-
-	--> Cframe * Vector3 to zoom out in proper direction.
-	return origin + direction
-end
-
---> @updateCamera: update camera orientation + pos @ each frame
+--> @UpdateCamera: update camera orientation + pos @ each frame
 local lapsed = 1000 --> Used for dampening while jumping/falling
 local arrowKeyAngle = 0
 local pastCamRot = CFrame.Angles(0, 0, 0)
-function updateCamera(deltaTime: number)
+local UpdateCamera = function(deltaTime: number)
 	local self = CameraService
 	if currentCharacter and not currentCharacter.Parent then
 		currentCharacter = nil
@@ -511,7 +405,7 @@ function updateCamera(deltaTime: number)
 	--> Convert cameraRotation into an angle CFrame (YXZ = Angles)
 	local rotationCFrame = CFrame.fromEulerAnglesYXZ(cameraRotation.Y, cameraRotation.X - arrowKeyAngle, 0)
 	updateShake = updateShake < math.random(2, 3) and updateShake + 1 or 0
-	offset = self.Shaking and offset and updateShake == 0 and calculateShakingOffset(self.ShakingIntensity)
+	offset = self.Shaking and offset and updateShake == 0 and CameraHelper.CalculateShakingOffset(self.ShakingIntensity, self.CharacterVisibility, self.Smoothness)
 		or self.Shaking and offset
 		or Vector3.new(0, 0, 0)
 	local yCFOffset = CFrame.fromEulerAnglesYXZ(0, 0, 0)
@@ -550,40 +444,25 @@ function updateCamera(deltaTime: number)
 		+ currentCamPosition
 		+ offset
 		+ (rotationCFrame * Vector3.new(0, 0, self.Zoom))
-	local camPos = raycastWorld(currentCamPosition + offset, camCFrame.Position - offset - currentCamPosition)
+	const camPos = CameraHelper.RaycastWorld(
+		currentCamPosition + offset,
+		camCFrame.Position - offset - currentCamPosition,
+		currentCharacter,
+		self.Host
+	)
 	camCFrame = (camCFrame - camCFrame.Position) + camPos
 	local targetCFrame = CamTable.CameraCFrame:Lerp(camCFrame, lerpFactor)
 
 	local desired2 = desiredTime
 	local lerp2: CFrame? = nil
 	if self.Zoom > 0 and self.Smoothness > 0 then
-		--> @damper: Increases damping factor for vertical motion
-		local function damper()
-			local hum = if currentCharacter and currentCharacter.Parent
-				then currentCharacter:FindFirstChildWhichIsA("Humanoid")
-				else nil
-			local isAirborne: boolean
-
-			if hum then
-				local humState = hum:GetState()
-				isAirborne = (humState == Enum.HumanoidStateType.Jumping)
-					or (humState == Enum.HumanoidStateType.Freefall)
-			else
-				isAirborne = not PhysicsController.IsPlayerGrounded()
-			end
-
-			if isAirborne then
-				lapsed = 0
-				return desiredTime * 3.33
-			end
-			lapsed += 1
-			if lapsed < 1 / deltaTime then
-				return desiredTime * 3.33
-			else
-				return math.max(desiredTime, desiredTime * (3.33 - (lapsed - (1 / deltaTime)) * 0.03))
-			end
-		end
-		desired2 = damper()
+		desired2, lapsed = CameraHelper.ComputeVerticalDamping(
+			desiredTime,
+			deltaTime,
+			lapsed,
+			currentCharacter,
+			PhysicsController.IsPlayerGrounded()
+		)
 	end
 
 	lerp2 = desired2 ~= desiredTime and CamTable.CameraCFrame:Lerp(camCFrame, 1 - math.exp(-deltaTime / desired2))
@@ -706,88 +585,34 @@ function CameraService:SetCameraView(__type: string)
 		--> Add in settings
 		workspace.Retargeting = Enum.AnimatorRetargetingMode.Disabled
 		if not customHost and currentCharacter and currentCharacter.Parent then
-			hideBodyParts(if svc.CharacterVisibility ~= "None" then svc.CharacterVisibility else nil)
+			CameraHelper.HideBodyParts(
+				currentCharacter,
+				svc.AlignChar,
+				if svc.CharacterVisibility ~= "None" then svc.CharacterVisibility else nil
+			)
 		end
 		UserInputService.MouseBehavior = svc.LockMouse and __type ~= "Default" and Enum.MouseBehavior.LockCenter
 			or Enum.MouseBehavior.Default
 		CamTable.CameraType = Enum.CameraType.Scriptable
 		CamTable.CameraSubject = nil
 
-		--> @updateZoom: for camera zooming in/out
-		local function updateZoom(input: InputObject, gpe: boolean)
-			if not gpe then
-				if input.UserInputType == Enum.UserInputType.MouseWheel then --> Computer (mouse)
-					local multiplier = input.Position.Z
-					svc.Zoom = math.clamp(
-						svc.Zoom - (multiplier * (svc.MaxZoom - svc.MinZoom) / 4),
-						svc.MinZoom,
-						svc.MaxZoom
-					)
-				elseif
-					input.UserInputState == Enum.UserInputState.Begin
-					and (input.KeyCode == Enum.KeyCode.I or input.KeyCode == Enum.KeyCode.O)
-				then --> Computer (I/O)
-					local multiplier = input.KeyCode == Enum.KeyCode.I and 1 or -1
-					svc.Zoom = math.clamp(
-						svc.Zoom - (multiplier * (svc.MaxZoom - svc.MinZoom) / 4),
-						svc.MinZoom,
-						svc.MaxZoom
-					)
-				elseif input.KeyCode == Enum.KeyCode.ButtonR3 and input.UserInputState == Enum.UserInputState.Begin then --> Console Joystick Press
-					svc.Zoom = svc.Zoom - ((svc.MaxZoom - svc.MinZoom) / 4) < svc.MinZoom and svc.MaxZoom
-						or svc.Zoom - ((svc.MaxZoom - svc.MinZoom) / 4)
-				end
-			end
-		end
-
-		--> @onInputChange: stores input, convert to Vector2 with rotation data
-		local function onInputChange(input: InputObject, gpe: boolean)
-			updateZoom(input, gpe)
-			local rightHold = svc.LockMouse or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
-			local mobile = input.UserInputType == Enum.UserInputType.Touch
-			local console = input.UserInputType == Enum.UserInputType.Gamepad1
-				and input.KeyCode == Enum.KeyCode.Thumbstick2
-			if
-				(not gpe or (not mobile and not console))
-				and (rightHold or mobile or console)
-				and input.UserInputState == Enum.UserInputState.Change
-			then
-				delta = console and input.Position / 15 * math.sqrt(UserInputService.MouseDeltaSensitivity)
-					or input.Delta --> Get mouse position
-				differenceVector = if console
-					then Vector2.new(delta.X, -delta.Y)
-					else Vector2.new(
-						math.sqrt(math.abs(delta.X)) / (mobile and 27 or 50),
-						math.sqrt(math.abs(delta.Y)) / (mobile and 27 or 50)
-					)
-				--> Adjust the positions
-				if console then
-					differenceVector = Vector2.new(
-						if delta.X < 0.2 / 15 * math.sqrt(UserInputService.MouseDeltaSensitivity)
-								and delta.X > -0.2 / 15 * math.sqrt(UserInputService.MouseDeltaSensitivity)
-							then 0
-							else delta.X,
-						if -delta.Y < 0.2 / 15 * math.sqrt(UserInputService.MouseDeltaSensitivity)
-								and -delta.Y > -0.2 / 15 * math.sqrt(UserInputService.MouseDeltaSensitivity)
-							then 0
-							else -delta.Y
-					)
-				else
-					differenceVector = Vector2.new(
-						if delta.X > 0 then 1 * differenceVector.X else -1 * differenceVector.X,
-						if delta.Y > 0 then 1 * differenceVector.Y else -1 * differenceVector.Y
-					)
-				end
-				--> Update rotation once if not console; console updates rotation on each frame
-				if not console then
-					cameraRotation -= differenceVector
-					cameraRotation = Vector2.new(
-						svc.xLock and svc.atX or cameraRotation.X,
-						svc.yLock and svc.atY
-							or math.clamp(cameraRotation.Y, math.rad(-svc.Angle), math.rad(svc.Angle))
-					)
-				end
-			end
+		--> @OnInputChange: handles zoom & look rotation input
+		const OnInputChange = function(input: InputObject, gpe: boolean)
+			svc.Zoom = CameraHelper.ComputeZoomFromInput(input, gpe, svc.Zoom, svc.MinZoom, svc.MaxZoom)
+			const rightHold = svc.LockMouse or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+			delta, differenceVector, cameraRotation = CameraHelper.ComputeLookRotation(
+				input,
+				gpe,
+				rightHold,
+				cameraRotation,
+				svc.xLock,
+				svc.atX,
+				svc.yLock,
+				svc.atY,
+				svc.Angle,
+				delta,
+				differenceVector
+			)
 			UserInputService.MouseBehavior = svc.LockMouse and Enum.MouseBehavior.LockCenter
 				or rightHold and Enum.MouseBehavior.LockCurrentPosition
 				or Enum.MouseBehavior.Default
@@ -800,8 +625,8 @@ function CameraService:SetCameraView(__type: string)
 
 		--> Mobile Compatibility
 		if UserInputService.TouchEnabled then
-			table.insert(connectionList, UserInputService.TouchPan:Connect(onInputChange :: any))
-			table.insert(connectionList, UserInputService.TouchRotate:Connect(onInputChange :: any))
+			table.insert(connectionList, UserInputService.TouchPan:Connect(OnInputChange :: any))
+			table.insert(connectionList, UserInputService.TouchRotate:Connect(OnInputChange :: any))
 			local pinchDelta = 0
 			table.insert(
 				connectionList,
@@ -819,11 +644,11 @@ function CameraService:SetCameraView(__type: string)
 		end
 
 		--> Set up the input connections
-		table.insert(connectionList, UserInputService.InputBegan:Connect(onInputChange))
-		table.insert(connectionList, UserInputService.InputChanged:Connect(onInputChange))
-		table.insert(connectionList, UserInputService.InputEnded:Connect(onInputChange))
+		table.insert(connectionList, UserInputService.InputBegan:Connect(OnInputChange))
+		table.insert(connectionList, UserInputService.InputChanged:Connect(OnInputChange))
+		table.insert(connectionList, UserInputService.InputEnded:Connect(OnInputChange))
 		--> Set up the actual system to run
-		table.insert(connectionList, RunService.PostSimulation:Connect(updateCamera))
+		table.insert(connectionList, RunService.PostSimulation:Connect(UpdateCamera))
 
 		--> Special effects for the CINEMATIC VIEW
 		if __type == "Cinematic" then
@@ -916,7 +741,7 @@ function CameraService:SetCameraHost(newHost: BasePart?)
 		"[CameraService] :SetCameraHost() only accepts a BasePart parameter, or none at all. "
 	)
 	customHost = newHost
-	self.Host = newHost or resolveCharacterRoot(currentCharacter)
+	self.Host = newHost or CameraHelper.ResolveCharacterRoot(currentCharacter)
 end
 
 --- Changes a live camera property. Optionally persists the change into the current view's defaults.
@@ -1041,9 +866,13 @@ if not hasSeededCharacter then
 		hasSeededCharacter = true
 		currentCharacter = char
 		if not customHost then
-			CameraService.Host = resolveCharacterRoot(char)
+			CameraService.Host = CameraHelper.ResolveCharacterRoot(char)
 			if CameraService.CameraView ~= "Default" then
-				hideBodyParts(if CameraService.CharacterVisibility ~= "None" then CameraService.CharacterVisibility else nil)
+				CameraHelper.HideBodyParts(
+					currentCharacter,
+					CameraService.AlignChar,
+					if CameraService.CharacterVisibility ~= "None" then CameraService.CharacterVisibility else nil
+				)
 			end
 		end
 	end)

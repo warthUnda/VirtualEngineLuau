@@ -2,17 +2,24 @@
 --!native
 --!optimize 2
 
--- Modules --
+-- Services --
+const StarterGui = game:GetService("StarterGui")
 
--- exploit to disable roblox gui core services to save up to 200mbs of ram
-local StarterGui = game:GetService("StarterGui")
-local coreTypes = { Enum.CoreGuiType.All }
-for _, guiType in ipairs(coreTypes) do
+-- Modules --
+const RenderBootstrap = require(script.Parent.RenderBootstrap)
+
+-- Configs --
+const CORE_GUI_TYPES = { Enum.CoreGuiType.All }
+
+-- ============================================================================
+-- 1. CORE GUI CLEANUP & CLIENT RENDER BOOTSTRAP
+-- ============================================================================
+
+-- Disable Roblox core GUI elements to reduce client memory footprint
+for _, GuiType: Enum.CoreGuiType in ipairs(CORE_GUI_TYPES) do
 	pcall(function()
-		StarterGui:SetCoreGuiEnabled(guiType, false)
+		StarterGui:SetCoreGuiEnabled(GuiType, false)
 	end)
 end
-
-const RenderBootstrap = require(script.Parent.RenderBootstrap)
 
 RenderBootstrap.CreateSetup()

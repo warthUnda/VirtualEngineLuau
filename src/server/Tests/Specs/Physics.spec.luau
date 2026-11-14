@@ -19,6 +19,7 @@ return function()
 	const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 	const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
 	const PhysicsMath = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Physics"):WaitForChild("Core"):WaitForChild("PhysicsMath"))
+	const PlayerPhysics = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Physics"):WaitForChild("Core"):WaitForChild("PlayerPhysics"))
 	const PhysicsLibrary = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Physics"):WaitForChild("PhysicsLibrary"))
 	const ServerStorage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
 	const TestHelper = require(ServerScriptService.Server.Tests.TestHelper)
@@ -27,7 +28,7 @@ return function()
 		it("should decelerate on ground when wish direction is zero", function()
 			const InitialVelX = 20 :: number
 			const InitialVelZ = 0 :: number
-			const NextX, _NextY, _NextZ, Grounded = PhysicsMath.StepPlayerVelocity(
+			const NextX, _NextY, _NextZ, Grounded = PlayerPhysics.StepPlayerVelocity(
 				InitialVelX, 0, InitialVelZ,
 				0, 0, 0,
 				false, true,
@@ -40,7 +41,7 @@ return function()
 		end)
 
 		it("should accelerate toward wish direction when moving", function()
-			const _NextX, _, NextZ = PhysicsMath.StepPlayerVelocity(
+			const _NextX, _, NextZ = PlayerPhysics.StepPlayerVelocity(
 				0, 0, 0,
 				0, -1, 1,
 				false, true,
@@ -51,7 +52,7 @@ return function()
 		end)
 
 		it("should apply upward jump velocity when jump is requested on ground", function()
-			const _, NextY, _, Grounded = PhysicsMath.StepPlayerVelocity(
+			const _, NextY, _, Grounded = PlayerPhysics.StepPlayerVelocity(
 				0, 0, 0,
 				0, 0, 0,
 				true, true,
@@ -153,6 +154,8 @@ return function()
 			expect(PhysicsLibrary.SimulateInstance(UnanchoredId)).to.equal(true)
 
 			PhysicsLibrary.StopSimulatingInstance(UnanchoredId)
+			ServerStorage.ECSData.DeleteEntity(UnanchoredId)
+			ServerStorage.ECSData.DeleteEntity(AnchoredId)
 		end)
 	end)
 end

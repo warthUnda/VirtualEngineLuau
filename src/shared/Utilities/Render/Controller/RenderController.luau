@@ -193,38 +193,12 @@ function Renderer.Init()
 	const CoreEvents = ReplicatedStorage:WaitForChild(CORE_EVENTS_FOLDER_NAME) :: Folder
 	const TextureSyncEvent = CoreEvents:WaitForChild(TEXTURE_SYNC_REMOTE_EVENT_NAME) :: RemoteEvent
 
-	local function ApplySyncedTextures(Entries: any)
-		if typeof(Entries) ~= "table" then
-			return
-		end
-
-		for _, Entry: any in ipairs(Entries :: { TextureTable.TextureEntry }) do
-			if typeof(Entry) ~= "table" then
-				continue
-			end
-
-			const TextureId = Entry.Id :: number?
-			const RawUrl = Entry.Url :: string?
-			const TextureName = Entry.Name :: string?
-			if typeof(TextureId) ~= "number" or typeof(RawUrl) ~= "string" then
-				continue
-			end
-
-			task.spawn(function()
-				const _Buf: buffer?, Updated: boolean = TextureTable.RegisterEntryWithId(
-					TextureId,
-					RawUrl,
-					if typeof(TextureName) == "string" then TextureName else nil
-				)
-				if Updated or not LoadedTextureBuffers then
-					LoadedTextureBuffers = TextureTable.GetAllCachedBuffers()
-					PendingTextureSyncFrames = 3
-				end
-			end)
-		end
-	end
-
-	TextureSyncEvent.OnClientEvent:Connect(ApplySyncedTextures)
+	TextureSyncEvent.OnClientEvent:Connect(function(Entries: any)
+		RenderControllerHelper.ApplySyncedTextures(Entries, function(UpdatedBuffers: { [number]: buffer })
+			LoadedTextureBuffers = UpdatedBuffers
+			PendingTextureSyncFrames = 3
+		end)
+	end)
 	TextureSyncEvent:FireServer()
 
 	LoadedTextureBuffers = TextureTable.GetAllCachedBuffers()

@@ -35,7 +35,7 @@ ECSConfig.DynamicObjectsMaxCount = 1023 :: number
 ECSConfig.ReplicationTickInterval = 0.05 :: number
 -- Yield duration in seconds between server replication delta broadcast passes.
 
-ECSConfig.MaxEntitiesPerReplicationPacket = 256 :: number
+ECSConfig.MaxEntitiesPerReplicationPacket = 2048 :: number
 -- Maximum number of entities packed into a single ReplicateEvent packet per player per tick to prevent network queue buildup.
 
 ECSConfig.StaticObjectsFolderName = "Static" :: string

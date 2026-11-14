@@ -38,6 +38,7 @@ const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const PLAYER_EYE_OFFSET = SystemsConfigs.CameraPlayerEyeOffset :: number
 const DEFAULT_CAMERA_FOV = SystemsConfigs.DefaultCameraFOV :: number
 const OBSERVER_PAYLOAD_BYTES = 56 :: number
+const OBSERVER_HEARTBEAT_INTERVAL = 0.5 :: number
 
 -- Tables --
 local ViewOriginX = 0 :: number
@@ -67,6 +68,7 @@ local OccMinY = 0 :: number
 local OccMaxY = 0 :: number
 
 local HasSentObserver = false :: boolean
+local LastSentClock = 0 :: number
 local LastSentOriginX = 0 :: number
 local LastSentOriginY = 0 :: number
 local LastSentOriginZ = 0 :: number
@@ -160,6 +162,19 @@ function ViewCulling.UpdateObserverFromVectors(
 end
 
 --[=[
+	Computes backward frustum padding from the camera position to the player's eye position.
+	@param CamPos Vector3 -- Camera world position.
+	@param PlayerPosition Vector3 -- Simulated player world position.
+	@return number -- Scaled backward padding distance.
+]=]
+function ViewCulling.ComputeBackPadding(CamPos: Vector3, PlayerPosition: Vector3): number
+	const DiffX = CamPos.X - PlayerPosition.X :: number
+	const DiffY = CamPos.Y - (PlayerPosition.Y + PLAYER_EYE_OFFSET) :: number
+	const DiffZ = CamPos.Z - PlayerPosition.Z :: number
+	return math.sqrt(DiffX * DiffX + DiffY * DiffY + DiffZ * DiffZ) * PADDING_AMOUNT
+end
+
+--[=[
 	Updates the client frustum directly from CameraStore and the simulated player physics position without requiring a Character.
 	@param PlayerPosition Vector3 -- Simulated player world position.
 ]=]
@@ -174,11 +189,7 @@ function ViewCulling.UpdateClientView(PlayerPosition: Vector3)
 	const Look = CamCFrame.LookVector :: Vector3
 	const Up = CamCFrame.UpVector :: Vector3
 	const Right = CamCFrame.RightVector :: Vector3
-
-	const DiffX = CamPos.X - PlayerPosition.X :: number
-	const DiffY = CamPos.Y - (PlayerPosition.Y + PLAYER_EYE_OFFSET) :: number
-	const DiffZ = CamPos.Z - PlayerPosition.Z :: number
-	const ExtraBackPadding = math.sqrt(DiffX * DiffX + DiffY * DiffY + DiffZ * DiffZ) * PADDING_AMOUNT :: number
+	const ExtraBackPadding = ViewCulling.ComputeBackPadding(CamPos, PlayerPosition)
 
 	ViewCulling.UpdateObserverFromVectors(
 		CamPos.X,
@@ -227,19 +238,24 @@ function ViewCulling.PackClientObserverState(PayloadBuffer: buffer, PlayerPositi
 	const DeltaLookZ = Look.Z - LastSentLookZ :: number
 	const LookDiffSq = DeltaLookX * DeltaLookX + DeltaLookY * DeltaLookY + DeltaLookZ * DeltaLookZ :: number
 
-	if HasSentObserver and PosDistSq < 0.0025 and LookDiffSq < 1e-5 and math.abs(CamFov - LastSentFov) < 0.1 then
+	const NowClock = os.clock() :: number
+	if
+		HasSentObserver
+		and (NowClock - LastSentClock) < OBSERVER_HEARTBEAT_INTERVAL
+		and PosDistSq < 0.0025
+		and LookDiffSq < 1e-5
+		and math.abs(CamFov - LastSentFov) < 0.1
+	then
 		return false
 	end
 
 	HasSentObserver = true
+	LastSentClock = NowClock
 	LastSentOriginX, LastSentOriginY, LastSentOriginZ = CamPos.X, CamPos.Y, CamPos.Z
 	LastSentLookX, LastSentLookY, LastSentLookZ = Look.X, Look.Y, Look.Z
 	LastSentFov = CamFov
 
-	const DiffX = CamPos.X - PlayerPosition.X :: number
-	const DiffY = CamPos.Y - (PlayerPosition.Y + PLAYER_EYE_OFFSET) :: number
-	const DiffZ = CamPos.Z - PlayerPosition.Z :: number
-	const ExtraBackPadding = math.sqrt(DiffX * DiffX + DiffY * DiffY + DiffZ * DiffZ) * PADDING_AMOUNT :: number
+	const ExtraBackPadding = ViewCulling.ComputeBackPadding(CamPos, PlayerPosition)
 
 	buffer.writef32(PayloadBuffer, 0, CamPos.X)
 	buffer.writef32(PayloadBuffer, 4, CamPos.Y)

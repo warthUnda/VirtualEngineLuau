@@ -24,10 +24,10 @@ local RenderBootstrap = {}
 -- 1. CREATE WORKER - CONTROLLER SETUP
 -- ============================================================================
 
---[=[                                                                                                                         
-        Bootstraps the multi-threaded rendering environment by instantiating worker actors,                                          
-        cloning isolated ECS storage copies, replication receivers, and the main controller script.                                  
-    ]=]
+--[=[
+	Bootstraps the multi-threaded rendering environment by instantiating worker actors,
+	cloning isolated ECS storage copies, replication receivers, and the main controller script.
+]=]
 function RenderBootstrap.CreateSetup()
 	const PlayerScripts = Players.LocalPlayer:WaitForChild("PlayerScripts") :: PlayerScripts
 	const ClientFolder = PlayerScripts:WaitForChild("Client") :: Folder

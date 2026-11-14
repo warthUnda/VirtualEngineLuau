@@ -140,15 +140,26 @@ return function()
 			buffer.writef32(BackwardPayload, 44, 0)
 			buffer.writef32(BackwardPayload, 52, 70)
 
-			-- 1. Look at entity -> sent once
+			-- 1. Look at entity -> sent once (drain all initial map chunks when Workspace exceeds packet cap)
 			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, ForwardPayload, EntityId)
-			const FirstPos, _, _, _, _, _, FirstCounts = PlayerCuller.CullObjects(MockPlayer)
-			expect(FirstPos ~= nil).to.equal(true)
-			expect(FirstCounts ~= nil and FirstCounts.EntityECSCount >= 1).to.equal(true)
+			local TotalInitialSent = 0 :: number
+			for _ = 1, 64 do
+				const BatchPos, _, _, _, _, _, BatchCounts = PlayerCuller.CullObjects(MockPlayer)
+				if not BatchPos or not BatchCounts then
+					break
+				end
+				TotalInitialSent += BatchCounts.EntityECSCount
+			end
+			expect(TotalInitialSent >= 1).to.equal(true)
 
-			-- 2. Look away (culls entity; other map parts in +Z may replicate here)
+			-- 2. Look away (culls entity; drain any remaining map parts in +Z)
 			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, BackwardPayload, EntityId)
-			PlayerCuller.CullObjects(MockPlayer)
+			for _ = 1, 64 do
+				const AwayPos = PlayerCuller.CullObjects(MockPlayer)
+				if not AwayPos then
+					break
+				end
+			end
 
 			-- 3. Look back without entity mutating -> must NOT re-send
 			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, ForwardPayload, EntityId)

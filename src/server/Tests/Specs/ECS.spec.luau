@@ -58,10 +58,15 @@ return function()
 			expect(ECSMain.IsEntityVisible(UpdatedReg)).to.equal(false)
 			expect(ECSMain.IsEntityAnchored(UpdatedReg)).to.equal(true)
 
-			-- Updating DynamicId must also preserve TextureId
+			-- Updating DynamicId must also preserve TextureId and ShapeId
+			Storage.PropertiesData.CreateLayout(0, true, false, true, 77, 2, 3)
+			expect(ECSMain.GetEntityShapeId(buffer.readu32(PropsBuf, 0))).to.equal(3)
+			ECSMain.SetEntityShapeId(PropsBuf, EntityId, 4)
+			expect(ECSMain.GetEntityShapeId(buffer.readu32(PropsBuf, 0))).to.equal(4)
 			ECSMain.SetEntityDynamicId(PropsBuf, EntityId, 123)
 			const AfterDynReg = buffer.readu32(PropsBuf, 0)
 			expect(ECSMain.GetEntityTextureId(AfterDynReg)).to.equal(2)
+			expect(ECSMain.GetEntityShapeId(AfterDynReg)).to.equal(4)
 			expect(ECSMain.GetEntityDynamicId(AfterDynReg)).to.equal(123)
 		end)
 	end)

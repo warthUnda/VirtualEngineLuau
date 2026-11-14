@@ -17,8 +17,9 @@ return function()
 
 	const MathModule = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("MathModule"))
 	const BufferHelper = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("BufferHelper"))
-	const TextureHelper = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("TextureHelper"))
-	const TextureTable = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("TextureTable"))
+	const VerticeFile = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("VerticeFile"))
+	const TextureHelper = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Texture"):WaitForChild("TextureHelper"))
+	const TextureTable = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Texture"):WaitForChild("TextureTable"))
 	const RenderMath = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("RenderMath"))
 
 	describe("1. 2D Edge Functions & Geometric Tests", function()
@@ -46,13 +47,13 @@ return function()
 		end)
 
 		it("should project 3D camera-space vertices onto integer 2D screen coordinates", function()
-			const OutBuffer = buffer.create(16)
+			const OutBuffer = buffer.create(20)
 			const Vertex = vector.create(2, 4, 10)
 			const FocalLength = 100 :: number
 			const HalfW = 160 :: number
 			const HalfH = 120 :: number
 
-			MathModule.ProjectVertex(OutBuffer, 0, Vertex, FocalLength, HalfW, HalfH)
+			MathModule.ProjectVertexUV(OutBuffer, 0, Vertex, 0, 0, FocalLength, HalfW, HalfH)
 
 			const ProjX = buffer.readf32(OutBuffer, 0)
 			const ProjY = buffer.readf32(OutBuffer, 4)
@@ -68,16 +69,16 @@ return function()
 
 	describe("3. Sutherland-Hodgman Polygon Clipping", function()
 		it("should clip a triangle straddling a plane and produce a quad", function()
-			const InputBuf = buffer.create(3 * 12)
-			const OutputBuf = buffer.create(6 * 12)
+			const InputBuf = buffer.create(3 * 20)
+			const OutputBuf = buffer.create(6 * 20)
 
 			-- Triangle vertices: (0, 0, 2), (2, 0, -2), (-2, 0, -2) straddling plane Z = 0
 			BufferHelper.WriteVec3(InputBuf, 0, vector.create(0, 0, 2))
-			BufferHelper.WriteVec3(InputBuf, 12, vector.create(2, 0, -2))
-			BufferHelper.WriteVec3(InputBuf, 24, vector.create(-2, 0, -2))
+			BufferHelper.WriteVec3(InputBuf, 20, vector.create(2, 0, -2))
+			BufferHelper.WriteVec3(InputBuf, 40, vector.create(-2, 0, -2))
 
 			-- Plane normal (0, 0, 1) offset 0 (keeps vertices with Z >= 0)
-			const ClippedCount = MathModule.ClipPolygon(InputBuf, 3, OutputBuf, vector.create(0, 0, 1), 0)
+			const ClippedCount = MathModule.ClipPolygonUV(InputBuf, 3, OutputBuf, vector.create(0, 0, 1), 0)
 			-- Triangle crossing plane creates 3 vertices inside half-space
 			expect(ClippedCount).to.equal(3)
 		end)
@@ -153,9 +154,9 @@ return function()
 			expect(buffer.readf32(OutputBuf, 40 + 12)).to.be.near(0.5, 1e-4)
 		end)
 
-		it("should generate a procedural template texture and rasterize textured triangles", function()
+		it("should generate a procedural stud texture and rasterize textured triangles", function()
 			const TexSize = 4 :: number
-			const TexBuf = TextureHelper.CreateProceduralTemplateTexture(TexSize)
+			const TexBuf = TextureHelper.CreateProceduralStudTexture(TexSize)
 			expect(buffer.len(TexBuf)).to.equal(TexSize * TexSize * 4)
 
 			-- Fill a 2x2 solid red texture to verify tinting + sampling
@@ -269,15 +270,26 @@ return function()
 			const CmdBuf = buffer.create(56)
 			const Area = 64 :: number
 			const InvArea = 1 / Area :: number
-			BufferHelper.CreateRenderBuffer(
-				CmdBuf,
-				0,
-				2, 2, InvArea, 0, 0,
-				2, 10, InvArea, 0, InvArea,
-				10, 2, InvArea, InvArea, 0,
-				0xFFFFFFFF,
-				2
-			)
+			local function WriteTriCmd(TexId: number, Color: number)
+				buffer.writei16(CmdBuf, 0, 2)
+				buffer.writei16(CmdBuf, 2, 2)
+				buffer.writef32(CmdBuf, 4, InvArea)
+				buffer.writef32(CmdBuf, 8, 0)
+				buffer.writef32(CmdBuf, 12, 0)
+				buffer.writei16(CmdBuf, 16, 2)
+				buffer.writei16(CmdBuf, 18, 10)
+				buffer.writef32(CmdBuf, 20, InvArea)
+				buffer.writef32(CmdBuf, 24, 0)
+				buffer.writef32(CmdBuf, 28, InvArea)
+				buffer.writei16(CmdBuf, 32, 10)
+				buffer.writei16(CmdBuf, 34, 2)
+				buffer.writef32(CmdBuf, 36, InvArea)
+				buffer.writef32(CmdBuf, 40, InvArea)
+				buffer.writef32(CmdBuf, 44, 0)
+				buffer.writeu32(CmdBuf, 48, Color)
+				buffer.writeu32(CmdBuf, 52, TexId)
+			end
+			WriteTriCmd(2, 0xFFFFFFFF)
 
 			const PixBuf = buffer.create(16 * 16 * 4)
 			const ZBuf = buffer.create(16 * 16 * 4)
@@ -291,17 +303,20 @@ return function()
 
 			-- Verify TextureId = 0 renders untextured solid PackedColor
 			BufferHelper.ClearBuffers(16 * 16, PixBuf, ZBuf)
-			BufferHelper.CreateRenderBuffer(
-				CmdBuf,
-				0,
-				2, 2, InvArea, 0, 0,
-				2, 10, InvArea, 0, InvArea,
-				10, 2, InvArea, InvArea, 0,
-				0xFF112233,
-				0
-			)
+			WriteTriCmd(0, 0xFF112233)
 			RenderMath.DrawTriangleBatch(CmdBuf, 56, BatchTextures, SolidGreen, 2, 2, 16, 16, PixBuf, ZBuf)
 			expect(buffer.readu32(PixBuf, (3 * 16 + 3) * 4)).to.equal(0xFF112233)
+		end)
+
+		it("should expose all 5 unit shape meshes from VerticeFile hashmap", function()
+			expect(VerticeFile.GetShapeName(0)).to.equal("Cube")
+			expect(VerticeFile.GetShapeName(1)).to.equal("Sphere")
+			expect(VerticeFile.GetShapeName(2)).to.equal("Cylinder")
+			expect(VerticeFile.GetShapeName(3)).to.equal("Triangle")
+			expect(VerticeFile.GetShapeName(4)).to.equal("Plane")
+			expect(VerticeFile.GetShapeData(0).IsAxisAligned).to.equal(true)
+			expect(VerticeFile.GetShapeData(1).IsAxisAligned).to.equal(false)
+			expect(VerticeFile.GetShapeData(4).IsAxisAligned).to.equal(true)
 		end)
 	end)
 end

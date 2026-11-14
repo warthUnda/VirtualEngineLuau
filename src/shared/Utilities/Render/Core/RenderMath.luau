@@ -9,14 +9,12 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const BufferHelper = require(script.Parent.BufferHelper)
 const MathModule = require(script.Parent.MathModule)
-const TextureHelper = require(script.Parent.TextureHelper)
 
 -- Configs --
 const NEAR_CLIP = SystemsConfigs.RenderNearClip :: number
 const FAR_CLIP = SystemsConfigs.RenderFarClip :: number
 const GUARD_BAND_SCALE = SystemsConfigs.GuardBandScale :: number
 const BUFFER_LAYOUT_SIZE = SystemsConfigs.RenderBufferLayoutSize :: number
-const BACKFACE_EPSILON = 1e-3 :: number
 
 const PLANE_NEAR = vector.create(0, 0, 1)
 const PLANE_FAR = vector.create(0, 0, -1)
@@ -28,31 +26,37 @@ local RenderMath = {}
 -- ============================================================================
 
 --[=[
-	Transforms an oriented box entity into camera space, performs frustum culling, backface culling, and writes 8 corner vertices.
+	Transforms an arbitrary shape's unit local vertices from VerticeFile into camera space and computes local camera/sun vectors for face culling and lighting.
 	@param PositionBuffer buffer -- Entity position component buffer.
 	@param DirectionsBuffer buffer -- Entity basis directions buffer.
 	@param SizeBuffer buffer -- Entity size component buffer.
 	@param ComponentOffset number -- Byte offset in position/size buffers.
 	@param DirectionOffset number -- Byte offset in directions buffer.
-	@param CameraVertices buffer -- Output buffer for 8 camera-space vertices.
+	@param LocalVertices { vector } -- Unit local-space vertices from VerticeFile.
+	@param VertexCount number -- Number of vertices in LocalVertices.
+	@param CameraVertices buffer -- Output buffer for transformed camera-space vertices (12 bytes per vertex).
 	@param CamPos vector -- Camera world position.
 	@param CamRight vector -- Camera RightVector.
 	@param CamUp vector -- Camera UpVector.
 	@param CamLook vector -- Camera LookVector.
-	@return number -- Bitmask of visible faces (0 if entirely culled).
+	@param SunVec vector -- Normalized world-space sun direction vector.
+	@return (boolean, vector, vector, vector) -- (IsVisible, LocalCameraPos, HalfSize, LocalSun).
 ]=]
-function RenderMath.GetPartCameraVertices(
+function RenderMath.TransformShapeCameraVertices(
 	PositionBuffer: buffer,
 	DirectionsBuffer: buffer,
 	SizeBuffer: buffer,
 	ComponentOffset: number,
 	DirectionOffset: number,
+	LocalVertices: { vector },
+	VertexCount: number,
 	CameraVertices: buffer,
 	CamPos: vector,
 	CamRight: vector,
 	CamUp: vector,
-	CamLook: vector
-): number
+	CamLook: vector,
+	SunVec: vector
+): (boolean, vector, vector, vector)
 	const PartPosition = BufferHelper.ReadVec3(PositionBuffer, ComponentOffset)
 	const HalfSize = BufferHelper.ReadVec3(SizeBuffer, ComponentOffset) * 0.5
 	const HalfSizeX: number, HalfSizeY: number, HalfSizeZ: number = HalfSize.x, HalfSize.y, HalfSize.z
@@ -75,35 +79,7 @@ function RenderMath.GetPartCameraVertices(
 	const CameraSpaceExtentZ =
 		math.abs(RightAxisCameraZ) + math.abs(UpAxisCameraZ) + math.abs(LookAxisCameraZ) :: number
 	if CameraSpaceCenterZ + CameraSpaceExtentZ < NEAR_CLIP or CameraSpaceCenterZ - CameraSpaceExtentZ > FAR_CLIP then
-		return 0
-	end
-
-	-- Object-space backface test: at most 3 of the 6 box faces can face the camera
-	const LocalCameraLook = vector.dot(RelativePosition, LookAxis) :: number
-	const LocalCameraUp = vector.dot(RelativePosition, UpAxis) :: number
-	const LocalCameraRight = vector.dot(RelativePosition, RightAxis) :: number
-
-	local FaceMask = 0 :: number
-	if LocalCameraLook < -HalfSizeZ + BACKFACE_EPSILON then
-		FaceMask += 1 -- Back (+Look)
-	elseif LocalCameraLook > HalfSizeZ - BACKFACE_EPSILON then
-		FaceMask += 2 -- Front (-Look)
-	end
-
-	if LocalCameraUp > HalfSizeY - BACKFACE_EPSILON then
-		FaceMask += 4 -- Bottom (-Up)
-	elseif LocalCameraUp < -HalfSizeY + BACKFACE_EPSILON then
-		FaceMask += 8 -- Top (+Up)
-	end
-
-	if LocalCameraRight > HalfSizeX - BACKFACE_EPSILON then
-		FaceMask += 16 -- Left (-Right)
-	elseif LocalCameraRight < -HalfSizeX + BACKFACE_EPSILON then
-		FaceMask += 32 -- Right (+Right)
-	end
-
-	if FaceMask == 0 then
-		return 0
+		return false, vector.zero, vector.zero, vector.zero
 	end
 
 	const CameraSpaceCenter = vector.create(
@@ -127,22 +103,27 @@ function RenderMath.GetPartCameraVertices(
 		LookAxisCameraZ
 	)
 
-	const CenterMinusUpAxis = CameraSpaceCenter - CameraSpaceUpAxis
-	const CenterPlusUpAxis = CameraSpaceCenter + CameraSpaceUpAxis
-	const RightPlusLookAxis = CameraSpaceRightAxis + CameraSpaceLookAxis
-	const LookMinusRightAxis = CameraSpaceLookAxis - CameraSpaceRightAxis
+	for VertexIndex = 1, VertexCount do
+		const LocalVertex = LocalVertices[VertexIndex]
+		const CameraVertex = CameraSpaceCenter
+			+ CameraSpaceRightAxis * LocalVertex.x
+			+ CameraSpaceUpAxis * LocalVertex.y
+			+ CameraSpaceLookAxis * LocalVertex.z
+		BufferHelper.WriteVec3(CameraVertices, (VertexIndex - 1) * 12, CameraVertex)
+	end
 
-	-- 8 corners computed with 3-wide SIMD vector add/sub
-	BufferHelper.WriteVec3(CameraVertices, 0, CenterMinusUpAxis + LookMinusRightAxis)
-	BufferHelper.WriteVec3(CameraVertices, 12, CenterMinusUpAxis + RightPlusLookAxis)
-	BufferHelper.WriteVec3(CameraVertices, 24, CenterPlusUpAxis + RightPlusLookAxis)
-	BufferHelper.WriteVec3(CameraVertices, 36, CenterPlusUpAxis + LookMinusRightAxis)
-	BufferHelper.WriteVec3(CameraVertices, 48, CenterMinusUpAxis - RightPlusLookAxis)
-	BufferHelper.WriteVec3(CameraVertices, 60, CenterMinusUpAxis - LookMinusRightAxis)
-	BufferHelper.WriteVec3(CameraVertices, 72, CenterPlusUpAxis - LookMinusRightAxis)
-	BufferHelper.WriteVec3(CameraVertices, 84, CenterPlusUpAxis - RightPlusLookAxis)
+	const LocalCameraPos = vector.create(
+		-vector.dot(RelativePosition, RightAxis),
+		-vector.dot(RelativePosition, UpAxis),
+		-vector.dot(RelativePosition, LookAxis)
+	)
+	const LocalSun = vector.create(
+		vector.dot(RightAxis, SunVec),
+		vector.dot(UpAxis, SunVec),
+		vector.dot(LookAxis, SunVec)
+	)
 
-	return FaceMask
+	return true, LocalCameraPos, HalfSize, LocalSun
 end
 
 --[=[
@@ -254,69 +235,81 @@ function RenderMath.ClipAndProjectQuad(
 end
 
 --[=[
-	Clips a camera-space triangle against frustum planes and projects vertices onto the screen.
+	Clips a camera-space triangle face against frustum planes and projects vertices with UVs onto the screen.
 	@param CameraVertices buffer -- Buffer containing camera-space vertices.
-	@param V0Index number -- 1-based index for triangle vertex 0.
-	@param V1Index number -- 1-based index for triangle vertex 1.
-	@param V2Index number -- 1-based index for triangle vertex 2.
-	@param ProjectedVertices buffer -- Buffer to receive projected 2D vertices.
-	@param ClipBufferA buffer -- Temporary scratch buffer for polygon clipping.
-	@param ClipBufferB buffer -- Secondary scratch buffer for polygon clipping.
+	@param V0ByteOffset number -- Byte offset for triangle vertex 0.
+	@param V1ByteOffset number -- Byte offset for triangle vertex 1.
+	@param V2ByteOffset number -- Byte offset for triangle vertex 2.
+	@param ScaleU number -- Horizontal UV tile scale for the face.
+	@param ScaleV number -- Vertical UV tile scale for the face.
+	@param ProjectedVertices buffer -- Buffer to receive projected 20-byte vertices (X, Y, InvZ, U, V).
+	@param ClipBufferA buffer -- Temporary scratch buffer for 20-byte polygon clipping.
+	@param ClipBufferB buffer -- Secondary scratch buffer for 20-byte polygon clipping.
 	@param FocalLength number -- Camera focal length.
 	@param GuardBandX number -- Horizontal guardband slope factor.
 	@param GuardBandY number -- Vertical guardband slope factor.
-	@param WIDTH number -- Target screen width in pixels.
-	@param HEIGHT number -- Target screen height in pixels.
+	@param HalfWidth number -- Half screen width in pixels.
+	@param HalfHeight number -- Half screen height in pixels.
 	@return number -- Total projected vertex count (0 if culled).
 ]=]
-function RenderMath.ClipAndProjectTriangle(
+function RenderMath.ClipAndProjectTriangleUV(
 	CameraVertices: buffer,
-	V0Index: number,
-	V1Index: number,
-	V2Index: number,
+	V0ByteOffset: number,
+	V1ByteOffset: number,
+	V2ByteOffset: number,
+	ScaleU: number,
+	ScaleV: number,
 	ProjectedVertices: buffer,
 	ClipBufferA: buffer,
 	ClipBufferB: buffer,
 	FocalLength: number,
 	GuardBandX: number,
 	GuardBandY: number,
-	WIDTH: number,
-	HEIGHT: number
+	HalfWidth: number,
+	HalfHeight: number
 ): number
-	const HalfWidth = WIDTH * 0.5 :: number
-	const HalfHeight = HEIGHT * 0.5 :: number
-	const TriangleVertex0 = BufferHelper.ReadVec3(CameraVertices, (V0Index - 1) * 12)
-	const TriangleVertex1 = BufferHelper.ReadVec3(CameraVertices, (V1Index - 1) * 12)
-	const TriangleVertex2 = BufferHelper.ReadVec3(CameraVertices, (V2Index - 1) * 12)
+	const TriVertex0 = BufferHelper.ReadVec3(CameraVertices, V0ByteOffset)
+	const TriVertex1 = BufferHelper.ReadVec3(CameraVertices, V1ByteOffset)
+	const TriVertex2 = BufferHelper.ReadVec3(CameraVertices, V2ByteOffset)
 
 	if
-		MathModule.IsVertexInside(TriangleVertex0, GuardBandX, GuardBandY)
-		and MathModule.IsVertexInside(TriangleVertex1, GuardBandX, GuardBandY)
-		and MathModule.IsVertexInside(TriangleVertex2, GuardBandX, GuardBandY)
+		MathModule.IsVertexInside(TriVertex0, GuardBandX, GuardBandY)
+		and MathModule.IsVertexInside(TriVertex1, GuardBandX, GuardBandY)
+		and MathModule.IsVertexInside(TriVertex2, GuardBandX, GuardBandY)
 	then
-		MathModule.ProjectVertex(ProjectedVertices, 0, TriangleVertex0, FocalLength, HalfWidth, HalfHeight)
-		MathModule.ProjectVertex(ProjectedVertices, 12, TriangleVertex1, FocalLength, HalfWidth, HalfHeight)
-		MathModule.ProjectVertex(ProjectedVertices, 24, TriangleVertex2, FocalLength, HalfWidth, HalfHeight)
+		MathModule.ProjectVertexUV(ProjectedVertices, 0, TriVertex0, 0, ScaleV, FocalLength, HalfWidth, HalfHeight)
+		MathModule.ProjectVertexUV(ProjectedVertices, 20, TriVertex1, 0, 0, FocalLength, HalfWidth, HalfHeight)
+		MathModule.ProjectVertexUV(ProjectedVertices, 40, TriVertex2, ScaleU, ScaleV, FocalLength, HalfWidth, HalfHeight)
 		return 3
 	end
 
-	BufferHelper.WriteVec3(ClipBufferA, 0, TriangleVertex0)
-	BufferHelper.WriteVec3(ClipBufferA, 12, TriangleVertex1)
-	BufferHelper.WriteVec3(ClipBufferA, 24, TriangleVertex2)
+	BufferHelper.WriteVec3(ClipBufferA, 0, TriVertex0)
+	buffer.writef32(ClipBufferA, 12, 0)
+	buffer.writef32(ClipBufferA, 16, ScaleV)
 
-	local VertexCount = MathModule.ClipPolygon(ClipBufferA, 3, ClipBufferB, PLANE_NEAR, -NEAR_CLIP)
-	VertexCount = MathModule.ClipPolygon(ClipBufferB, VertexCount, ClipBufferA, PLANE_FAR, FAR_CLIP)
-	VertexCount = MathModule.ClipPolygon(ClipBufferA, VertexCount, ClipBufferB, vector.create(1, 0, GuardBandX), 0)
-	VertexCount = MathModule.ClipPolygon(ClipBufferB, VertexCount, ClipBufferA, vector.create(-1, 0, GuardBandX), 0)
-	VertexCount = MathModule.ClipPolygon(ClipBufferA, VertexCount, ClipBufferB, vector.create(0, 1, GuardBandY), 0)
-	VertexCount = MathModule.ClipPolygon(ClipBufferB, VertexCount, ClipBufferA, vector.create(0, -1, GuardBandY), 0)
+	BufferHelper.WriteVec3(ClipBufferA, 20, TriVertex1)
+	buffer.writef32(ClipBufferA, 32, 0)
+	buffer.writef32(ClipBufferA, 36, 0)
+
+	BufferHelper.WriteVec3(ClipBufferA, 40, TriVertex2)
+	buffer.writef32(ClipBufferA, 52, ScaleU)
+	buffer.writef32(ClipBufferA, 56, ScaleV)
+
+	local VertexCount = MathModule.ClipPolygonUV(ClipBufferA, 3, ClipBufferB, PLANE_NEAR, -NEAR_CLIP)
+	VertexCount = MathModule.ClipPolygonUV(ClipBufferB, VertexCount, ClipBufferA, PLANE_FAR, FAR_CLIP)
+	VertexCount = MathModule.ClipPolygonUV(ClipBufferA, VertexCount, ClipBufferB, vector.create(1, 0, GuardBandX), 0)
+	VertexCount = MathModule.ClipPolygonUV(ClipBufferB, VertexCount, ClipBufferA, vector.create(-1, 0, GuardBandX), 0)
+	VertexCount = MathModule.ClipPolygonUV(ClipBufferA, VertexCount, ClipBufferB, vector.create(0, 1, GuardBandY), 0)
+	VertexCount = MathModule.ClipPolygonUV(ClipBufferB, VertexCount, ClipBufferA, vector.create(0, -1, GuardBandY), 0)
 
 	for i = 1, VertexCount do
-		const Offset = (i - 1) * 12 :: number
-		MathModule.ProjectVertex(
+		const Offset = (i - 1) * 20 :: number
+		MathModule.ProjectVertexUV(
 			ProjectedVertices,
 			Offset,
 			BufferHelper.ReadVec3(ClipBufferA, Offset),
+			buffer.readf32(ClipBufferA, Offset + 12),
+			buffer.readf32(ClipBufferA, Offset + 16),
 			FocalLength,
 			HalfWidth,
 			HalfHeight
@@ -329,68 +322,6 @@ end
 -- ============================================================================
 -- 2. DRAWING OBJECTS - EXACT SPAN RASTERIZATION
 -- ============================================================================
-
---[=[
-	Draws a single screen-space triangle into the color pixel and Z depth buffers.
-	@param Vertex0X number -- Screen vertex 0 X.
-	@param Vertex0Y number -- Screen vertex 0 Y.
-	@param ScaledInverseZ0 number -- Pre-scaled 1/Z depth for vertex 0.
-	@param Vertex1X number -- Screen vertex 1 X.
-	@param Vertex1Y number -- Screen vertex 1 Y.
-	@param ScaledInverseZ1 number -- Pre-scaled 1/Z depth for vertex 1.
-	@param Vertex2X number -- Screen vertex 2 X.
-	@param Vertex2Y number -- Screen vertex 2 Y.
-	@param ScaledInverseZ2 number -- Pre-scaled 1/Z depth for vertex 2.
-	@param PackedColor number -- Packed 32-bit RGBA color.
-	@param WIDTH number -- Screen width in pixels.
-	@param HEIGHT number -- Screen height in pixels.
-	@param PixelBuffer buffer -- Destination color pixel buffer.
-	@param ZBuffer buffer -- Destination 32-bit depth buffer.
-]=]
-function RenderMath.DrawTriangle(
-	Vertex0X: number,
-	Vertex0Y: number,
-	ScaledInverseZ0: number,
-	Vertex1X: number,
-	Vertex1Y: number,
-	ScaledInverseZ1: number,
-	Vertex2X: number,
-	Vertex2Y: number,
-	ScaledInverseZ2: number,
-	PackedColor: number,
-	WIDTH: number,
-	HEIGHT: number,
-	PixelBuffer: buffer,
-	ZBuffer: buffer
-)
-	const DefaultTexture: buffer, TextureWidth: number, TextureHeight: number = TextureHelper.GetDefaultTexture()
-	MathModule.RasterizeTriangleSpan(
-		Vertex0X,
-		Vertex0Y,
-		ScaledInverseZ0,
-		0,
-		0,
-		Vertex1X,
-		Vertex1Y,
-		ScaledInverseZ1,
-		0,
-		0,
-		Vertex2X,
-		Vertex2Y,
-		ScaledInverseZ2,
-		0,
-		0,
-		PackedColor,
-		DefaultTexture,
-		TextureWidth,
-		TextureHeight,
-		WIDTH,
-		HEIGHT,
-		WIDTH * 4,
-		PixelBuffer,
-		ZBuffer
-	)
-end
 
 --[=[
 	Iterates and rasterizes a packed batch of textured triangles from a render command buffer.

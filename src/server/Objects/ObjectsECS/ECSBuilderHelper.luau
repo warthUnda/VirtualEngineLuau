@@ -11,7 +11,8 @@ const Workspace = workspace :: Workspace
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
-const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Core.TextureTable)
+const VerticeFile = require(ReplicatedStorage.Shared.Utilities.Render.Core.VerticeFile)
+const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Texture.TextureTable)
 const Storage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
 const ECSData = Storage.ECSData
 const PositionData = Storage.PositionData
@@ -50,7 +51,7 @@ local ECSBuilderHelper = {}
 	@return number -- Assigned (or existing) TextureTable ID (0 if URL is empty).
 ]=]
 function ECSBuilderHelper.RegisterDecal(DecalInstance: Decal): number
-	const TextureId: number, IsNew: boolean = TextureTable.RegisterUrl(DecalInstance.Texture, DecalInstance.Name, true)
+	const TextureId: number, IsNew: boolean = TextureTable.RegisterUrl(DecalInstance.Texture, DecalInstance.Name, false)
 	if TextureId == 0 then
 		return 0
 	end
@@ -166,8 +167,38 @@ function ECSBuilderHelper.PopulatePart(Part: BasePart)
 		end
 	end
 
+	local ShapeId = VerticeFile.ShapeToId.Cube :: number
+	const ShapeIdAttr = Part:GetAttribute("ShapeId")
+	if typeof(ShapeIdAttr) == "number" then
+		ShapeId = math.clamp(math.floor(ShapeIdAttr), 0, 7)
+	else
+		const ShapeNameAttr = Part:GetAttribute("Shape")
+		if typeof(ShapeNameAttr) == "string" then
+			ShapeId = VerticeFile.GetShapeId(ShapeNameAttr)
+		elseif Part:IsA("WedgePart") or Part:IsA("CornerWedgePart") then
+			ShapeId = VerticeFile.ShapeToId.Triangle
+		elseif Part:IsA("Part") then
+			const PartShape = Part.Shape
+			if PartShape == Enum.PartType.Ball then
+				ShapeId = VerticeFile.ShapeToId.Sphere
+			elseif PartShape == Enum.PartType.Cylinder then
+				ShapeId = VerticeFile.ShapeToId.Cylinder
+			elseif PartShape == Enum.PartType.Wedge or PartShape == Enum.PartType.CornerWedge then
+				ShapeId = VerticeFile.ShapeToId.Triangle
+			end
+		end
+	end
+
 	const PropertiesOffset = (EntityId - 1) * PROPERTIES_STRIDE :: number
-	PropertiesData.CreateLayout(PropertiesOffset, Part.CanCollide, Part.Transparency < 1, Part.Anchored, 0, TextureId)
+	PropertiesData.CreateLayout(
+		PropertiesOffset,
+		Part.CanCollide,
+		Part.Transparency < 1,
+		Part.Anchored,
+		0,
+		TextureId,
+		ShapeId
+	)
 end
 
 return ECSBuilderHelper

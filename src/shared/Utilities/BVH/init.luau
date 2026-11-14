@@ -27,7 +27,7 @@ const MAX_NODE_BYTES = MAX_BVH_NODES * NODE_STRIDE :: number
 const FLAG_CAN_COLLIDE = bit32.lshift(1, 1) :: number
 const FLAG_ANCHORED = bit32.lshift(1, 3) :: number
 const FLAG_HAS_DYNAMIC_ID = bit32.lshift(1, 4) :: number
-const DYNAMIC_ID_SHIFT = 20 :: number
+const DYNAMIC_ID_SHIFT = 22 :: number
 
 -- Buffers
 const NodeBuffer = buffer.create(MAX_NODE_BYTES) :: buffer

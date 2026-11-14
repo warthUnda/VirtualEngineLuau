@@ -7,14 +7,10 @@ const AssetService = game:GetService("AssetService")
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- Modules --
-const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const RenderConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Configs"):WaitForChild("RenderConfig"))
 
 -- Configs --
-const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
-const DEFAULT_TEXTURE_URI = SystemsConfigs.DefaultTextureUri :: string
-
--- Buffers
-local CachedDefaultTexture: buffer? = nil
+const TEXTURE_SIZE = RenderConfig.TextureSize :: number
 
 local TextureHelper = {}
 
@@ -160,15 +156,6 @@ function TextureHelper.CreateProceduralStudTexture(TargetSize: number): buffer
 end
 
 --[=[
-	Generates the default procedural template texture buffer (stud template).
-	@param TargetSize number -- Width and height of the square texture in texels.
-	@return buffer -- RGBA pixel buffer of size TargetSize * TargetSize * 4.
-]=]
-function TextureHelper.CreateProceduralTemplateTexture(TargetSize: number): buffer
-	return TextureHelper.CreateProceduralStudTexture(TargetSize)
-end
-
---[=[
 	Resamples a source RGBA pixel buffer to a square TargetSize x TargetSize buffer using nearest-neighbor sampling.
 	@param SourceBuffer buffer -- Source RGBA pixel buffer.
 	@param SourceWidth number -- Source image width in pixels.
@@ -209,7 +196,7 @@ end
 	Decodes a raw Roblox texture URL into a TargetSize x TargetSize RGBA buffer using EditableImage, falling back to FallbackBuffer on empty URI or load failure.
 	@param RawUrl string -- Raw Roblox texture URL (e.g. "rbxassetid://..." or "rbxasset://...").
 	@param FallbackBuffer buffer? -- Optional precomputed fallback buffer if decoding fails or URL is empty.
-	@param TargetSize number? -- Optional square target size in texels (defaults to SystemsConfigs.TextureSize).
+	@param TargetSize number? -- Optional square target size in texels (defaults to RenderConfig.TextureSize).
 	@return (buffer, boolean) -- Decoded (or fallback) 64x64 RGBA buffer, and true if decoded from the URL.
 ]=]
 function TextureHelper.DecodeUrlToBuffer(
@@ -239,31 +226,6 @@ function TextureHelper.DecodeUrlToBuffer(
 	end
 
 	return TextureHelper.CreateProceduralStudTexture(ResolvedSize), false
-end
-
---[=[
-	Returns the cached synchronous procedural default texture buffer and its dimensions.
-	@return (buffer, number, number) -- TextureBuffer, TextureWidth, TextureHeight.
-]=]
-function TextureHelper.GetDefaultTexture(): (buffer, number, number)
-	if not CachedDefaultTexture then
-		CachedDefaultTexture = TextureHelper.CreateProceduralStudTexture(TEXTURE_SIZE)
-	end
-
-	return CachedDefaultTexture :: buffer, TEXTURE_SIZE, TEXTURE_SIZE
-end
-
---[=[
-	Loads an optional Roblox texture URI or returns the procedural stud template texture.
-	@param TextureUri string? -- Optional asset URI override (defaults to SystemsConfigs.DefaultTextureUri).
-	@param TargetSize number? -- Optional square target size in texels (defaults to SystemsConfigs.TextureSize).
-	@return (buffer, number, number) -- TextureBuffer, TextureWidth, TextureHeight.
-]=]
-function TextureHelper.LoadRobloxTemplateTexture(TextureUri: string?, TargetSize: number?): (buffer, number, number)
-	const ResolvedUri = TextureUri or DEFAULT_TEXTURE_URI :: string
-	const ResolvedSize = TargetSize or TEXTURE_SIZE :: number
-	const DecodedBuffer = TextureHelper.DecodeUrlToBuffer(ResolvedUri, nil, ResolvedSize)
-	return DecodedBuffer, ResolvedSize, ResolvedSize
 end
 
 return TextureHelper

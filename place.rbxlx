@@ -11528,7 +11528,297 @@ return Signal
       <Properties>
         <string name="Name">Shared</string>
       </Properties>
-      <Item class="ModuleScript" referent="118">
+      <Item class="Folder" referent="118">
+        <Properties>
+          <string name="Name">Configs</string>
+        </Properties>
+        <Item class="ModuleScript" referent="119">
+          <Properties>
+            <string name="Name">BVHConfig</string>
+            <string name="Source"><![CDATA[--!strict
+--!native
+--!optimize 2
+
+local BVHConfig = {}
+
+BVHConfig.BVHStackCapacity = 64 :: number
+-- Maximum depth of the iterative BVH traversal stack for raycasting and spatial queries.
+
+BVHConfig.BVHMaxLeafEntities = 1 :: number
+-- Maximum number of entities grouped into a single BVH leaf node during tree construction.
+
+BVHConfig.BVHMutationScanBudget = 256 :: number
+-- Number of static entities scanned per query to detect silent buffer mutations without full-array scans.
+
+return BVHConfig
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="120">
+          <Properties>
+            <string name="Name">ECSConfig</string>
+            <string name="Source"><![CDATA[--!strict
+--!native
+--!optimize 2
+
+local ECSConfig = {}
+
+-- ECS Component Buffer Layout --
+
+ECSConfig.ECSComponentStride = 12 :: number
+-- Byte stride per entity for 3-float ECS component buffers (Position, Orientation, Visual, and Size: 3 x f32 = 12 bytes).
+
+ECSConfig.ECSDirectionStride = 36 :: number
+-- Byte stride per entity for the Directions ECS buffer (LookVector, UpVector, and RightVector: 9 x f32 = 36 bytes).
+
+ECSConfig.ECSComponentBufferSize = 100000 :: number
+-- Allocated byte capacity for each 12-byte-stride ECS component buffer (Position, Orientation, Visual, Size).
+
+ECSConfig.ECSDirectionBufferSize = 300000 :: number
+-- Allocated byte capacity for each 36-byte-stride Directions ECS buffer.
+
+ECSConfig.ECSMaxEntities = ECSConfig.ECSComponentBufferSize // ECSConfig.ECSComponentStride :: number
+-- Maximum number of entities that can be stored in the preallocated ECS component buffers.
+
+ECSConfig.ECSPropertiesStride = 4 :: number
+-- Byte stride per entity for the bitpacked u32 Properties ECS buffer (CanCollide, IsVisible, Anchored, HasDynamicId, TextureId, ShapeId, DynamicId).
+
+ECSConfig.ECSPropertiesBufferSize = 40000 :: number
+-- Allocated byte capacity for each 4-byte-stride Properties ECS buffer.
+
+ECSConfig.DynamicObjectsMaxCount = 1023 :: number
+-- Maximum 10-bit ID capacity (bits 22-31 of the Properties u32 register) for the Dynamic OOP / Objects List.
+
+-- Server ECS Builder & Replication --
+
+ECSConfig.ReplicationTickInterval = 0 :: number
+-- Yield duration in seconds between server replication delta broadcast passes.
+
+ECSConfig.StaticObjectsFolderName = "Static" :: string
+-- Name of the Workspace folder whose descendant BaseParts are flagged as static entities in the server ECS.
+
+ECSConfig.WorkspaceCleanupDelay = 5 :: number
+-- Delay in seconds after server startup before original Workspace BaseParts are destroyed once registered in the ECS.
+
+ECSConfig.CoreEventsFolderName = "CoreEvents" :: string
+-- Name of the ReplicatedStorage folder containing networking RemoteEvents.
+
+ECSConfig.ReplicateRemoteEventName = "ReplicateEvent" :: string
+-- Name of the RemoteEvent used to replicate ECS component delta buffers from server to client.
+
+return ECSConfig
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="121">
+          <Properties>
+            <string name="Name">PhysicsConfig</string>
+            <string name="Source"><![CDATA[--!strict
+--!native
+--!optimize 2
+
+local PhysicsConfig = {}
+
+PhysicsConfig.PhysicsGravity = 98.0 :: number
+-- Downward gravitational acceleration in studs per second squared.
+
+PhysicsConfig.PhysicsFallGravityMultiplier = 1.2 :: number
+-- Multiplier applied to downward gravity when falling so jump arcs feel grounded rather than floaty.
+
+PhysicsConfig.PhysicsMaxDeltaTime = 0.05 :: number
+-- Maximum clamped frame delta time in seconds to prevent tunneling during frame spikes.
+
+PhysicsConfig.PhysicsSubsteps = 2 :: number
+-- Number of physics integration and collision substeps executed per frame.
+
+PhysicsConfig.PlayerDefaultSpawnPosition = Vector3.new(0, 12, 0) :: Vector3
+-- Fallback world spawn position for the player physics body when no character root part is present.
+
+PhysicsConfig.PlayerVoidResetY = -500.0 :: number
+-- World Y threshold below which the player physics body resets back to its spawn position.
+
+PhysicsConfig.PlayerMass = 80.0 :: number
+-- Mass of the player physics body in kilograms used for force acceleration and collision impulses.
+
+PhysicsConfig.PlayerHalfExtents = Vector3.new(1.0, 2.5, 1.0) :: Vector3
+-- Collision box half-extents (X, Y, Z) in studs for the player physics body.
+
+PhysicsConfig.PlayerMoveForce = 4400.0 :: number
+-- Horizontal driving force in Newtons applied to accelerate the player on grounded surfaces.
+
+PhysicsConfig.PlayerMaxGroundSpeed = 60 :: number
+-- Target maximum horizontal ground speed in studs per second.
+
+PhysicsConfig.PlayerGroundFriction = 10.0 :: number
+-- Ground traction damping rate per second applied to lateral drift and coasting velocity.
+
+PhysicsConfig.PlayerBrakeMultiplier = 1.65 :: number
+-- Extra braking multiplier applied when releasing movement input or counter-steering against momentum.
+
+PhysicsConfig.PlayerStopSpeed = 4.0 :: number
+-- Minimum speed reference in studs per second used to bring low-speed coasting cleanly to rest.
+
+PhysicsConfig.PlayerAirControlMultiplier = 0.2 :: number
+-- Fraction of ground driving force available while airborne so jumps preserve takeoff inertia.
+
+PhysicsConfig.PlayerAirDrag = 0.45 :: number
+-- Linear aerodynamic drag per second applied while the player is airborne.
+
+PhysicsConfig.PlayerJumpImpulse = 2600.0 :: number
+-- Upward impulse in Newton-seconds applied when jumping from grounded contact.
+
+PhysicsConfig.PlayerWalkableNormalY = 0.65 :: number
+-- Minimum surface normal Y component required for a contact to count as walkable ground.
+
+PhysicsConfig.ObjectDefaultDensity = 1.2 :: number
+-- Default mass per cubic stud used to derive dynamic ECS entity mass from bounding volume.
+
+PhysicsConfig.ObjectLinearDrag = 0.6 :: number
+-- Linear air damping per second applied to dynamic ECS object velocities.
+
+PhysicsConfig.ObjectSurfaceFriction = 6.5 :: number
+-- Tangential surface friction rate per second applied to dynamic ECS objects in contact.
+
+PhysicsConfig.ObjectRestitution = 0.15 :: number
+-- Normal impact restitution (0-1) for dynamic ECS object collisions.
+
+PhysicsConfig.ObjectSleepSpeedThreshold = 0.08 :: number
+-- Velocity magnitude threshold in studs per second below which grounded dynamic objects settle to sleep.
+
+PhysicsConfig.PhysicsBroadphasePadding = 2.0 :: number
+-- World-space AABB padding in studs around a moving body when querying the BVH for collision candidates.
+
+PhysicsConfig.PlayerMaxWishScale = 2.5 :: number
+-- Maximum movement speed multiplier allowed when combining directional player movement inputs.
+
+return PhysicsConfig
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="122">
+          <Properties>
+            <string name="Name">RenderConfig</string>
+            <string name="Source"><![CDATA[--!strict
+--!native
+--!optimize 2
+
+local RenderConfig = {}
+
+-- Display & Worker Settings --
+
+RenderConfig.RenderWidth = 300 :: number
+-- Horizontal pixel resolution of the renderer's EditableImage and frame buffers.
+
+RenderConfig.RenderHeight = 300 :: number
+-- Vertical pixel resolution of the renderer's EditableImage and frame buffers.
+
+RenderConfig.RenderTotalPixels = RenderConfig.RenderWidth * RenderConfig.RenderHeight :: number
+-- Total pixel count of the renderer canvas (RenderWidth * RenderHeight).
+
+RenderConfig.ActorCount = 3 :: number
+-- Number of parallel worker Actors spawned to rasterize triangles across frames.
+
+RenderConfig.WorkerBufferMultiplier = 4 :: number
+-- Per-pixel byte multiplier used to allocate each worker's triangle command buffer.
+
+RenderConfig.RenderBufferLayoutSize = 56 :: number
+-- Byte stride of a single serialized textured triangle in the worker render buffer (three 16-byte vertices, one 4-byte packed RGBA color, and one 4-byte texture ID).
+
+-- Texture Settings --
+
+RenderConfig.TextureSize = 64 :: number
+-- Power-of-two width and height in texels for the software renderer's cached texture buffers.
+
+RenderConfig.TextureStudsPerTile = 0 :: number
+-- World-space studs covered by one texture tile on part faces (set <= 0 to stretch 1x1 across each face instead of repeating).
+
+RenderConfig.TextureRegistryFolderName = "TextureRegistry" :: string
+-- Name of the ReplicatedStorage folder where ECSBuilder publishes discovered Decal URLs for client 64x64 decoding.
+
+-- Lighting & Clear Color --
+
+RenderConfig.ClearColorR = 15 :: number
+-- Red channel (0-255) of the background clear color filled into the pixel buffer each frame.
+
+RenderConfig.ClearColorG = 15 :: number
+-- Green channel (0-255) of the background clear color filled into the pixel buffer each frame.
+
+RenderConfig.ClearColorB = 20 :: number
+-- Blue channel (0-255) of the background clear color filled into the pixel buffer each frame.
+
+RenderConfig.SunDirection = Vector3.new(-0.4, 0.85, -0.35).Unit :: Vector3
+-- Normalized world-space directional light vector used to compute per-face illumination.
+
+RenderConfig.AmbientLight = 0.3 :: number
+-- Minimum ambient illumination factor (0-1) applied to all rendered part faces.
+
+RenderConfig.MinTriangleArea = 0.5 :: number
+-- Minimum screen-space signed edge area (2x pixel area; >= 0.5 keeps all visible 1-pixel triangles while culling degenerate slivers).
+
+-- Clipping & Frustum Culling --
+
+RenderConfig.RenderNearClip = 0.4 :: number
+-- Near clipping plane distance in studs for camera-space part rejection and polygon clipping.
+
+RenderConfig.RenderFarClip = 200 :: number
+-- Far clipping plane distance in studs for camera-space part rejection and polygon clipping (matched to CullingFarClip).
+
+RenderConfig.GuardBandScale = 1.25 :: number
+-- 25% screen-space frustum guard-band scale so edge-straddling quads use fast-path projection without boundary pop-in.
+
+RenderConfig.CullingPaddingAmount = 1.03 :: number
+-- Master frustum culling padding multiplier; 1.03 adds a ~1.2-degree angular buffer over the 70-degree FOV to absorb 1-frame task.wait() rotation lag.
+
+RenderConfig.CullingBaseTanY = 0.7002 :: number
+-- Exact vertical frustum half-angle tangent at the reference 70-degree FOV (tan(35 deg) = 0.7002).
+
+RenderConfig.CullingBaseBackPadding = 3.5 :: number
+-- 3.5-stud backward origin shift so adjacent parts do not pop in when turning while still rejecting geometry behind the camera.
+
+RenderConfig.CullingRadiusPaddingFactor = 0.35 :: number
+-- Secant-corrected L1 cube circumradius factor ((sqrt(3)/6) * sec(35 deg) = 0.2887 * 1.2208 = 0.3524) so rotated corners never pop at frustum planes.
+
+RenderConfig.CullingNearClip = 0.4 :: number
+-- Near clipping plane distance in studs for view frustum culling (matched to RenderNearClip).
+
+RenderConfig.CullingFarClip = 200 :: number
+-- Far clipping plane distance in studs for view frustum culling (matched to RenderFarClip).
+
+RenderConfig.OccluderInscribedRadiusFactor = 0.32 :: number
+-- Conservative scale factor applied to an entity's smallest axis so foreground occluders never overestimate back-face coverage.
+
+RenderConfig.OccluderMinProjectedRadius = 0.26 :: number
+-- Minimum projected screen-space radius required for a foreground entity to become the active dominant occluder without false edge pop-in.
+
+-- Camera & Scene Cleaner --
+
+RenderConfig.ScriptableCameraParkPosition = Vector3.new(0, -50000, 0) :: Vector3
+-- World position where the client's Workspace Camera is initially parked when switched to Scriptable.
+
+RenderConfig.CameraFixedPosition = Vector3.new(0, 1000, -5000) :: Vector3
+-- Fixed distant world position where CameraStore locks the Workspace Camera every frame to avoid rendering default Roblox geometry.
+
+RenderConfig.DefaultCameraCFrame = CFrame.new(5, 5, 5) :: CFrame
+-- Initial virtual camera CFrame in CameraStore before the camera host updates it.
+
+RenderConfig.DefaultCameraFOV = 70 :: number
+-- Default vertical field of view in degrees for the virtual camera and projection math.
+
+RenderConfig.DefaultCameraView = "FirstPerson" :: string
+-- Initial CameraService view preset activated when the render controller starts.
+
+RenderConfig.CameraMaxVerticalAngle = 60 :: number
+-- Default maximum vertical look angle in degrees (up/down pitch clamp) in CameraService.
+
+RenderConfig.CleanerTickInterval = 0 :: number
+-- Yield duration in seconds between client RendererCleaner culling passes.
+
+return RenderConfig
+]]></string>
+          </Properties>
+        </Item>
+      </Item>
+      <Item class="ModuleScript" referent="123">
         <Properties>
           <string name="Name">DynamicObjectsMain</string>
           <string name="Source"><![CDATA[--!strict
@@ -11736,7 +12026,7 @@ return DynamicObjectsMain
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="119">
+      <Item class="ModuleScript" referent="124">
         <Properties>
           <string name="Name">ECSMain</string>
           <string name="Source"><![CDATA[--!strict
@@ -11766,8 +12056,11 @@ const FLAG_HAS_DYNAMIC_ID = bit32.lshift(1, 4) :: number
 const TEXTURE_ID_SHIFT = 5 :: number
 const MAX_TEXTURE_ID = 255 :: number
 const TEXTURE_ID_MASK = bit32.lshift(MAX_TEXTURE_ID, TEXTURE_ID_SHIFT) :: number
-const DYNAMIC_ID_SHIFT = 20 :: number
-const LOWER_FLAGS_MASK = 0x000FFFFF :: number
+const SHAPE_ID_SHIFT = 13 :: number
+const MAX_SHAPE_ID = 7 :: number
+const SHAPE_ID_MASK = bit32.lshift(MAX_SHAPE_ID, SHAPE_ID_SHIFT) :: number
+const DYNAMIC_ID_SHIFT = 22 :: number
+const LOWER_FLAGS_MASK = 0x003FFFFF :: number
 
 export type ECSTable = {
 	OrientationECSCount: number,
@@ -11817,7 +12110,8 @@ export type PropertiesComponent = {
 		IsVisible: boolean?,
 		Anchored: boolean?,
 		DynamicId: number?,
-		TextureId: number?
+		TextureId: number?,
+		ShapeId: number?
 	) -> number,
 	GetData: () -> buffer,
 }
@@ -11955,8 +12249,9 @@ end
 	@param CanCollide boolean? -- Collision enabled flag.
 	@param IsVisible boolean? -- Visibility flag.
 	@param Anchored boolean? -- Anchored physics state flag.
-	@param DynamicId number? -- Bound dynamic OOP object ID.
+	@param DynamicId number? -- Bound dynamic OOP object ID (bits 22-31, 0-1023).
 	@param TextureId number? -- TextureTable ID (bits 5-12, 0-255).
+	@param ShapeId number? -- VerticeFile shape ID (bits 13-15, 0-7).
 	@return number -- Packed 32-bit register.
 ]=]
 function ECSMain.PackProperties(
@@ -11964,7 +12259,8 @@ function ECSMain.PackProperties(
 	IsVisible: boolean?,
 	Anchored: boolean?,
 	DynamicId: number?,
-	TextureId: number?
+	TextureId: number?,
+	ShapeId: number?
 ): number
 	const CollideBit = if CanCollide ~= false then 1 else 0 :: number
 	const VisibleBit = if IsVisible ~= false then 1 else 0 :: number
@@ -11976,6 +12272,9 @@ function ECSMain.PackProperties(
 	const ClampedTextureId = if TextureId and TextureId > 0
 		then math.clamp(math.floor(TextureId), 0, MAX_TEXTURE_ID)
 		else 0 :: number
+	const ClampedShapeId = if ShapeId and ShapeId > 0
+		then math.clamp(math.floor(ShapeId), 0, MAX_SHAPE_ID)
+		else 0 :: number
 
 	return bit32.bor(
 		0,
@@ -11984,7 +12283,8 @@ function ECSMain.PackProperties(
 		bit32.lshift(AnchoredBit, 3), -- Anchored
 		bit32.lshift(HasDynamicBit, 4), -- Has dynamic oop / object list id?
 		bit32.lshift(ClampedTextureId, TEXTURE_ID_SHIFT), -- TextureTable ID (bits 5-12)
-		bit32.lshift(ClampedDynamicId, DYNAMIC_ID_SHIFT) -- DYNAMIC OOP / OBJECTS LIST ID
+		bit32.lshift(ClampedShapeId, SHAPE_ID_SHIFT), -- VerticeFile Shape ID (bits 13-15)
+		bit32.lshift(ClampedDynamicId, DYNAMIC_ID_SHIFT) -- DYNAMIC OOP / OBJECTS LIST ID (bits 22-31)
 	)
 end
 
@@ -11997,6 +12297,7 @@ end
 	@param Anchored boolean? -- Anchored physics state flag.
 	@param DynamicId number? -- Bound dynamic OOP object ID.
 	@param TextureId number? -- TextureTable ID (0-255).
+	@param ShapeId number? -- VerticeFile shape ID (0-7).
 	@return number -- Next properties byte offset.
 ]=]
 function ECSMain.CreatePropertiesLayout(
@@ -12006,9 +12307,10 @@ function ECSMain.CreatePropertiesLayout(
 	IsVisible: boolean?,
 	Anchored: boolean?,
 	DynamicId: number?,
-	TextureId: number?
+	TextureId: number?,
+	ShapeId: number?
 ): number
-	const Register = ECSMain.PackProperties(CanCollide, IsVisible, Anchored, DynamicId, TextureId) :: number
+	const Register = ECSMain.PackProperties(CanCollide, IsVisible, Anchored, DynamicId, TextureId, ShapeId) :: number
 	buffer.writeu32(TargetBuffer, MemoryOffset, Register)
 
 	return MemoryOffset + PROPERTIES_STRIDE
@@ -12048,6 +12350,29 @@ end
 ]=]
 function ECSMain.HasEntityDynamicId(Register: number): boolean
 	return bit32.btest(Register, FLAG_HAS_DYNAMIC_ID)
+end
+
+--[=[
+	Extracts the 3-bit VerticeFile shape ID from a 32-bit property register.
+	@param Register number -- Packed 32-bit property register.
+	@return number -- Shape ID (0-7).
+]=]
+function ECSMain.GetEntityShapeId(Register: number): number
+	return bit32.band(bit32.rshift(Register, SHAPE_ID_SHIFT), MAX_SHAPE_ID)
+end
+
+--[=[
+	Updates an entity's 3-bit VerticeFile shape ID in-place inside the properties buffer without altering other flags.
+	@param PropertiesBuffer buffer -- Properties buffer.
+	@param EntityId number -- Target entity ID.
+	@param ShapeId number -- New Shape ID (0-7).
+]=]
+function ECSMain.SetEntityShapeId(PropertiesBuffer: buffer, EntityId: number, ShapeId: number)
+	const Offset = (EntityId - 1) * PROPERTIES_STRIDE :: number
+	const CurrentRegister = buffer.readu32(PropertiesBuffer, Offset) :: number
+	const BaseFlags = bit32.band(CurrentRegister, bit32.bnot(SHAPE_ID_MASK)) :: number
+	const ClampedShapeId = math.clamp(math.floor(ShapeId), 0, MAX_SHAPE_ID) :: number
+	buffer.writeu32(PropertiesBuffer, Offset, bit32.bor(BaseFlags, bit32.lshift(ClampedShapeId, SHAPE_ID_SHIFT)))
 end
 
 --[=[
@@ -12323,10 +12648,20 @@ function ECSMain.CreatePropertiesComponent(
 	IsVisible: boolean?,
 	Anchored: boolean?,
 	DynamicId: number?,
-	TextureId: number?
+	TextureId: number?,
+	ShapeId: number?
 ): any
 	if TargetBuffer and MemoryOffset then
-		return ECSMain.CreatePropertiesLayout(TargetBuffer, MemoryOffset, CanCollide, IsVisible, Anchored, DynamicId, TextureId)
+		return ECSMain.CreatePropertiesLayout(
+			TargetBuffer,
+			MemoryOffset,
+			CanCollide,
+			IsVisible,
+			Anchored,
+			DynamicId,
+			TextureId,
+			ShapeId
+		)
 	end
 
 	const PropertiesBuffer = buffer.create(PROPERTIES_BUFFER_SIZE) :: buffer
@@ -12338,9 +12673,10 @@ function ECSMain.CreatePropertiesComponent(
 		Visible: boolean?,
 		IsAnchored: boolean?,
 		DynId: number?,
-		TexId: number?
+		TexId: number?,
+		ShpId: number?
 	): number
-		return ECSMain.CreatePropertiesLayout(PropertiesBuffer, Offset, Collide, Visible, IsAnchored, DynId, TexId)
+		return ECSMain.CreatePropertiesLayout(PropertiesBuffer, Offset, Collide, Visible, IsAnchored, DynId, TexId, ShpId)
 	end
 
 	function PropertiesComponent.GetData(): buffer
@@ -12553,281 +12889,50 @@ return ECSMain
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="120">
+      <Item class="ModuleScript" referent="125">
         <Properties>
           <string name="Name">SystemsConfigs</string>
           <string name="Source"><![CDATA[--!strict
 --!native
 --!optimize 2
 
-local SystemsConfigs = {}
-
--- Here, are the configs for all systems, say frustum cullers or replication or even rendering, both client and server
-
--- Each config should have a SystemsConfigs.Whatever = whatever type
--- Make sure to type them and to in the next line give documentation as to what it does
-
--- Im thinking about making the virtual engine open source for those that are curious
--- For the renderer ive showed you, it can handle 400 x 400 comfortably while having alot of stress on my intel core 3U
--- if there is no such stress it can easily go 600 x 600
-
--- i will soon add OOP to my ECS storage here, it will just use a numerical pointer for that to reference its parent OOP object
-
--- Client --
-
-SystemsConfigs.RenderWidth = 300 :: number
--- Horizontal pixel resolution of the renderer's EditableImage and frame buffers.
-
-SystemsConfigs.RenderHeight = 300 :: number
--- Vertical pixel resolution of the renderer's EditableImage and frame buffers.
-
-SystemsConfigs.RenderTotalPixels = SystemsConfigs.RenderWidth * SystemsConfigs.RenderHeight :: number
--- Total pixel count of the renderer canvas (RenderWidth * RenderHeight).
-
-SystemsConfigs.ActorCount = 3 :: number
--- Number of parallel worker Actors spawned to rasterize triangles across frames.
-
-SystemsConfigs.WorkerBufferMultiplier = 4 :: number
--- Per-pixel byte multiplier used to allocate each worker's triangle command buffer.
-
-SystemsConfigs.RenderBufferLayoutSize = 56 :: number
--- Byte stride of a single serialized textured triangle in the worker render buffer (three 16-byte vertices, one 4-byte packed RGBA color, and one 4-byte texture ID).
-
-SystemsConfigs.TextureSize = 64 :: number
--- Power-of-two width and height in texels for the software renderer's cached texture buffers.
-
-SystemsConfigs.TextureStudsPerTile = 0 :: number
--- World-space studs covered by one texture tile on part faces (set <= 0 to stretch 1x1 across each face instead of repeating).
-
-SystemsConfigs.DefaultEntityTextureId = 0 :: number
--- Default TextureTable ID used when an ECS entity has no Decal or texture attribute (0 = untextured solid part color).
-
-SystemsConfigs.TextureRegistryFolderName = "TextureRegistry" :: string
--- Name of the ReplicatedStorage folder where ECSBuilder publishes discovered Decal URLs for client 64x64 decoding.
-
-SystemsConfigs.DefaultTextureUri = "" :: string
--- Optional Roblox asset URI override for textures; leave empty to populate from Workspace Decals via ECSBuilder.
-
-SystemsConfigs.ClearColorR = 15 :: number
--- Red channel (0-255) of the background clear color filled into the pixel buffer each frame.
-
-SystemsConfigs.ClearColorG = 15 :: number
--- Green channel (0-255) of the background clear color filled into the pixel buffer each frame.
-
-SystemsConfigs.ClearColorB = 20 :: number
--- Blue channel (0-255) of the background clear color filled into the pixel buffer each frame.
-
-SystemsConfigs.SunDirection = Vector3.new(-0.4, 0.85, -0.35).Unit :: Vector3
--- Normalized world-space directional light vector used to compute per-face illumination.
-
-SystemsConfigs.AmbientLight = 0.3 :: number
--- Minimum ambient illumination factor (0-1) applied to all rendered part faces.
-
-SystemsConfigs.MinTriangleArea = 0.5 :: number
--- Minimum screen-space signed edge area (2x pixel area; >= 0.5 keeps all visible 1-pixel triangles while culling degenerate slivers).
-
-SystemsConfigs.RenderNearClip = 0.4 :: number
--- Near clipping plane distance in studs for camera-space part rejection and polygon clipping.
-
-SystemsConfigs.RenderFarClip = 200 :: number
--- Far clipping plane distance in studs for camera-space part rejection and polygon clipping (matched to CullingFarClip).
-
-SystemsConfigs.GuardBandScale = 1.25 :: number
--- 25% screen-space frustum guard-band scale so edge-straddling quads use fast-path projection without boundary pop-in.
-
-SystemsConfigs.ScriptableCameraParkPosition = Vector3.new(0, -50000, 0) :: Vector3
--- World position where the client's Workspace Camera is initially parked when switched to Scriptable.
-
-SystemsConfigs.CameraFixedPosition = Vector3.new(0, 1000, -5000) :: Vector3
--- Fixed distant world position where CameraStore locks the Workspace Camera every frame to avoid rendering default Roblox geometry.
-
-SystemsConfigs.DefaultCameraCFrame = CFrame.new(5, 5, 5) :: CFrame
--- Initial virtual camera CFrame in CameraStore before the camera host updates it.
-
-SystemsConfigs.DefaultCameraFOV = 70 :: number
--- Default vertical field of view in degrees for the virtual camera and projection math.
-
-SystemsConfigs.DefaultCameraView = "FirstPerson" :: string
--- Initial CameraService view preset activated when the render controller starts.
-
-SystemsConfigs.CameraMaxVerticalAngle = 60 :: number
--- Default maximum vertical look angle in degrees (up/down pitch clamp) in CameraService.
-
-SystemsConfigs.CleanerTickInterval = 0 :: number
--- Yield duration in seconds between client RendererCleaner culling passes.
-
--- Server --
-
-SystemsConfigs.ReplicationTickInterval = 0 :: number
--- Yield duration in seconds between server replication delta broadcast passes.
-
-SystemsConfigs.StaticObjectsFolderName = "Static" :: string
--- Name of the Workspace folder whose descendant BaseParts are flagged as static entities in the server ECS.
-
-SystemsConfigs.WorkspaceCleanupDelay = 5 :: number
--- Delay in seconds after server startup before original Workspace BaseParts are destroyed once registered in the ECS.
-
--- Shared --
-
-SystemsConfigs.CoreEventsFolderName = "CoreEvents" :: string
--- Name of the ReplicatedStorage folder containing networking RemoteEvents.
-
-SystemsConfigs.ReplicateRemoteEventName = "ReplicateEvent" :: string
--- Name of the RemoteEvent used to replicate ECS component delta buffers from server to client.
-
-SystemsConfigs.CullingPaddingAmount = 1.03 :: number
--- Master frustum culling padding multiplier; 1.03 adds a ~1.2-degree angular buffer over the 70-degree FOV to absorb 1-frame task.wait() rotation lag.
-
-SystemsConfigs.CullingBaseTanY = 0.7002 :: number
--- Exact vertical frustum half-angle tangent at the reference 70-degree FOV (tan(35 deg) = 0.7002).
-
-SystemsConfigs.CullingBaseBackPadding = 3.5 :: number
--- 3.5-stud backward origin shift so adjacent parts do not pop in when turning while still rejecting geometry behind the camera.
-
-SystemsConfigs.CullingRadiusPaddingFactor = 0.35 :: number
--- Secant-corrected L1 cube circumradius factor ((sqrt(3)/6) * sec(35 deg) = 0.2887 * 1.2208 = 0.3524) so rotated corners never pop at frustum planes.
-
-SystemsConfigs.CullingNearClip = 0.4 :: number
--- Near clipping plane distance in studs for view frustum culling (matched to RenderNearClip).
-
-SystemsConfigs.CullingFarClip = 200 :: number
--- Far clipping plane distance in studs for view frustum culling (matched to RenderFarClip).
-
-SystemsConfigs.OccluderInscribedRadiusFactor = 0.32 :: number
--- Conservative scale factor applied to an entity's smallest axis so foreground occluders never overestimate back-face coverage.
-
-SystemsConfigs.OccluderMinProjectedRadius = 0.26 :: number
--- Minimum projected screen-space radius required for a foreground entity to become the active dominant occluder without false edge pop-in.
-
-SystemsConfigs.ECSComponentStride = 12 :: number
--- Byte stride per entity for 3-float ECS component buffers (Position, Orientation, Visual, and Size: 3 x f32 = 12 bytes).
-
-SystemsConfigs.ECSDirectionStride = 36 :: number
--- Byte stride per entity for the Directions ECS buffer (LookVector, UpVector, and RightVector: 9 x f32 = 36 bytes).
-
-SystemsConfigs.ECSComponentBufferSize = 100000 :: number
--- Allocated byte capacity for each 12-byte-stride ECS component buffer (Position, Orientation, Visual, Size).
-
-SystemsConfigs.ECSDirectionBufferSize = 300000 :: number
--- Allocated byte capacity for each 36-byte-stride Directions ECS buffer.
-
-SystemsConfigs.ECSMaxEntities = SystemsConfigs.ECSComponentBufferSize // SystemsConfigs.ECSComponentStride :: number
--- Maximum number of entities that can be stored in the preallocated ECS component buffers.
-
-SystemsConfigs.ECSPropertiesStride = 4 :: number
--- Byte stride per entity for the bitpacked u32 Properties ECS buffer (CanCollide, IsVisible, Anchored, HasDynamicId, DynamicId).
-
-SystemsConfigs.ECSPropertiesBufferSize = 40000 :: number
--- Allocated byte capacity for each 4-byte-stride Properties ECS buffer.
-
-SystemsConfigs.DynamicObjectsMaxCount = 4095 :: number
--- Maximum 12-bit ID capacity (bits 20-31 of the Properties u32 register) for the Dynamic OOP / Objects List.
-
--- Physics --
-
-SystemsConfigs.PhysicsGravity = 98.0 :: number
--- Downward gravitational acceleration in studs per second squared.
-
-SystemsConfigs.PhysicsFallGravityMultiplier = 1.2 :: number
--- Multiplier applied to downward gravity when falling so jump arcs feel grounded rather than floaty.
-
-SystemsConfigs.PhysicsMaxDeltaTime = 0.05 :: number
--- Maximum clamped frame delta time in seconds to prevent tunneling during frame spikes.
-
-SystemsConfigs.PhysicsSubsteps = 2 :: number
--- Number of physics integration and collision substeps executed per frame.
-
-SystemsConfigs.PlayerDefaultSpawnPosition = Vector3.new(0, 12, 0) :: Vector3
--- Fallback world spawn position for the player physics body when no character root part is present.
-
-SystemsConfigs.PlayerVoidResetY = -500.0 :: number
--- World Y threshold below which the player physics body resets back to its spawn position.
-
-SystemsConfigs.PlayerMass = 80.0 :: number
--- Mass of the player physics body in kilograms used for force acceleration and collision impulses.
-
-SystemsConfigs.PlayerHalfExtents = Vector3.new(1.0, 2.5, 1.0) :: Vector3
--- Collision box half-extents (X, Y, Z) in studs for the player physics body.
-
-SystemsConfigs.PlayerMoveForce = 4400.0 :: number
--- Horizontal driving force in Newtons applied to accelerate the player on grounded surfaces.
-
-SystemsConfigs.PlayerMaxGroundSpeed = 60 :: number
--- Target maximum horizontal ground speed in studs per second.
-
-SystemsConfigs.PlayerGroundFriction = 10.0 :: number
--- Ground traction damping rate per second applied to lateral drift and coasting velocity.
-
-SystemsConfigs.PlayerBrakeMultiplier = 1.65 :: number
--- Extra braking multiplier applied when releasing movement input or counter-steering against momentum.
-
-SystemsConfigs.PlayerStopSpeed = 4.0 :: number
--- Minimum speed reference in studs per second used to bring low-speed coasting cleanly to rest.
-
-SystemsConfigs.PlayerAirControlMultiplier = 0.2 :: number
--- Fraction of ground driving force available while airborne so jumps preserve takeoff inertia.
-
-SystemsConfigs.PlayerAirDrag = 0.45 :: number
--- Linear aerodynamic drag per second applied while the player is airborne.
-
-SystemsConfigs.PlayerJumpImpulse = 2600.0 :: number
--- Upward impulse in Newton-seconds applied when jumping from grounded contact.
-
-SystemsConfigs.PlayerWalkableNormalY = 0.65 :: number
--- Minimum surface normal Y component required for a contact to count as walkable ground.
-
-SystemsConfigs.ObjectDefaultDensity = 1.2 :: number
--- Default mass per cubic stud used to derive dynamic ECS entity mass from bounding volume.
-
-SystemsConfigs.ObjectLinearDrag = 0.6 :: number
--- Linear air damping per second applied to dynamic ECS object velocities.
-
-SystemsConfigs.ObjectSurfaceFriction = 6.5 :: number
--- Tangential surface friction rate per second applied to dynamic ECS objects in contact.
-
-SystemsConfigs.ObjectRestitution = 0.15 :: number
--- Normal impact restitution (0-1) for dynamic ECS object collisions.
-
-SystemsConfigs.ObjectSleepSpeedThreshold = 0.08 :: number
--- Velocity magnitude threshold in studs per second below which grounded dynamic objects settle to sleep.
-
-SystemsConfigs.PhysicsBroadphasePadding = 2.0 :: number
--- World-space AABB padding in studs around a moving body when querying the BVH for collision candidates.
-
-SystemsConfigs.PlayerMaxWishScale = 2.5 :: number
--- Maximum movement speed multiplier allowed when combining directional player movement inputs.
-
--- BVH --
-
-SystemsConfigs.BVHStackCapacity = 64 :: number
--- Maximum depth of the iterative BVH traversal stack for raycasting and spatial queries.
-
-SystemsConfigs.BVHMaxLeafEntities = 1 :: number
--- Maximum number of entities grouped into a single BVH leaf node during tree construction.
-
-SystemsConfigs.BVHMutationScanBudget = 256 :: number
--- Number of static entities scanned per query to detect silent buffer mutations without full-array scans.
+-- Domain Config Modules --
+const ConfigsFolder = script.Parent:WaitForChild("Configs")
+const RenderConfig = require(ConfigsFolder:WaitForChild("RenderConfig"))
+const ECSConfig = require(ConfigsFolder:WaitForChild("ECSConfig"))
+const PhysicsConfig = require(ConfigsFolder:WaitForChild("PhysicsConfig"))
+const BVHConfig = require(ConfigsFolder:WaitForChild("BVHConfig"))
+
+local SystemsConfigs = {} :: { [string]: any }
+
+-- Re-export domain configs as a unified table for backward-compatible lookups
+for Key: string, Value: any in pairs(RenderConfig) do
+	SystemsConfigs[Key] = Value
+end
+for Key: string, Value: any in pairs(ECSConfig) do
+	SystemsConfigs[Key] = Value
+end
+for Key: string, Value: any in pairs(PhysicsConfig) do
+	SystemsConfigs[Key] = Value
+end
+for Key: string, Value: any in pairs(BVHConfig) do
+	SystemsConfigs[Key] = Value
+end
+
+SystemsConfigs.Render = RenderConfig
+SystemsConfigs.ECS = ECSConfig
+SystemsConfigs.Physics = PhysicsConfig
+SystemsConfigs.BVH = BVHConfig
 
 return SystemsConfigs
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="121">
-        <Properties>
-          <string name="Name">TextureTable</string>
-          <string name="Source"><![CDATA[--!strict
---!native
---!optimize 2
-
-return require(script.Parent.Utilities.Render.Core.TextureTable)
-]]></string>
-        </Properties>
-      </Item>
-      <Item class="Folder" referent="122">
+      <Item class="Folder" referent="126">
         <Properties>
           <string name="Name">Utilities</string>
         </Properties>
-        <Item class="ModuleScript" referent="123">
+        <Item class="ModuleScript" referent="127">
           <Properties>
             <string name="Name">BVH</string>
             <string name="Source"><![CDATA[--!strict
@@ -12859,7 +12964,7 @@ const MAX_NODE_BYTES = MAX_BVH_NODES * NODE_STRIDE :: number
 const FLAG_CAN_COLLIDE = bit32.lshift(1, 1) :: number
 const FLAG_ANCHORED = bit32.lshift(1, 3) :: number
 const FLAG_HAS_DYNAMIC_ID = bit32.lshift(1, 4) :: number
-const DYNAMIC_ID_SHIFT = 20 :: number
+const DYNAMIC_ID_SHIFT = 22 :: number
 
 -- Buffers
 const NodeBuffer = buffer.create(MAX_NODE_BYTES) :: buffer
@@ -13636,7 +13741,7 @@ setmetatable(BVH, {
 return BVH
 ]]></string>
           </Properties>
-          <Item class="ModuleScript" referent="124">
+          <Item class="ModuleScript" referent="128">
             <Properties>
               <string name="Name">BVHHelper</string>
               <string name="Source"><![CDATA[--!strict
@@ -14033,7 +14138,7 @@ return BVHHelper
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="125">
+          <Item class="ModuleScript" referent="129">
             <Properties>
               <string name="Name">BVHMath</string>
               <string name="Source"><![CDATA[--!strict
@@ -14340,15 +14445,15 @@ return BVHMath
             </Properties>
           </Item>
         </Item>
-        <Item class="Folder" referent="126">
+        <Item class="Folder" referent="130">
           <Properties>
             <string name="Name">Physics</string>
           </Properties>
-          <Item class="Folder" referent="127">
+          <Item class="Folder" referent="131">
             <Properties>
               <string name="Name">Controller</string>
             </Properties>
-            <Item class="ModuleScript" referent="128">
+            <Item class="ModuleScript" referent="132">
               <Properties>
                 <string name="Name">PhysicsController</string>
                 <string name="Source"><![CDATA[--!strict
@@ -14765,7 +14870,7 @@ return PhysicsController
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="129">
+            <Item class="ModuleScript" referent="133">
               <Properties>
                 <string name="Name">PhysicsControllerHelper</string>
                 <string name="Source"><![CDATA[--!strict
@@ -15147,11 +15252,11 @@ return PhysicsControllerHelper
               </Properties>
             </Item>
           </Item>
-          <Item class="Folder" referent="130">
+          <Item class="Folder" referent="134">
             <Properties>
               <string name="Name">Core</string>
             </Properties>
-            <Item class="ModuleScript" referent="131">
+            <Item class="ModuleScript" referent="135">
               <Properties>
                 <string name="Name">PhysicsMath</string>
                 <string name="Source"><![CDATA[--!strict
@@ -15588,7 +15693,7 @@ return PhysicsMath
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="132">
+            <Item class="ModuleScript" referent="136">
               <Properties>
                 <string name="Name">PhysicsMathHelper</string>
                 <string name="Source"><![CDATA[--!strict
@@ -15835,7 +15940,7 @@ return PhysicsMathHelper
               </Properties>
             </Item>
           </Item>
-          <Item class="ModuleScript" referent="133">
+          <Item class="ModuleScript" referent="137">
             <Properties>
               <string name="Name">PhysicsLibrary</string>
               <string name="Source"><![CDATA[--!strict
@@ -16076,20 +16181,20 @@ return PhysicsLibrary
             </Properties>
           </Item>
         </Item>
-        <Item class="Folder" referent="134">
+        <Item class="Folder" referent="138">
           <Properties>
             <string name="Name">Player</string>
           </Properties>
-          <Item class="Folder" referent="135">
+          <Item class="Folder" referent="139">
             <Properties>
               <string name="Name">Controller</string>
             </Properties>
           </Item>
-          <Item class="Folder" referent="136">
+          <Item class="Folder" referent="140">
             <Properties>
               <string name="Name">Core</string>
             </Properties>
-            <Item class="ModuleScript" referent="137">
+            <Item class="ModuleScript" referent="141">
               <Properties>
                 <string name="Name">PlayerService</string>
                 <string name="Source"><![CDATA[--!strict
@@ -16122,15 +16227,15 @@ return PlayerService
             </Item>
           </Item>
         </Item>
-        <Item class="Folder" referent="138">
+        <Item class="Folder" referent="142">
           <Properties>
             <string name="Name">Render</string>
           </Properties>
-          <Item class="Folder" referent="139">
+          <Item class="Folder" referent="143">
             <Properties>
               <string name="Name">Camera</string>
             </Properties>
-            <Item class="ModuleScript" referent="140">
+            <Item class="ModuleScript" referent="144">
               <Properties>
                 <string name="Name">CameraHelper</string>
                 <string name="Source"><![CDATA[--!strict
@@ -16161,7 +16266,7 @@ return CameraHelper
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="141">
+            <Item class="ModuleScript" referent="145">
               <Properties>
                 <string name="Name">CameraService</string>
                 <string name="Source"><![CDATA[--!strict
@@ -17156,7 +17261,7 @@ return CameraService
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="142">
+            <Item class="ModuleScript" referent="146">
               <Properties>
                 <string name="Name">CameraStore</string>
                 <string name="Source"><![CDATA[--!strict
@@ -17255,11 +17360,11 @@ return CameraStore
               </Properties>
             </Item>
           </Item>
-          <Item class="Folder" referent="143">
+          <Item class="Folder" referent="147">
             <Properties>
               <string name="Name">Controller</string>
             </Properties>
-            <Item class="ModuleScript" referent="144">
+            <Item class="ModuleScript" referent="148">
               <Properties>
                 <string name="Name">RenderController</string>
                 <string name="Source"><![CDATA[--!strict
@@ -17281,8 +17386,9 @@ const Camera = workspace.CurrentCamera :: Camera
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
+const VerticeFile = require(ReplicatedStorage.Shared.Utilities.Render.Core.VerticeFile)
 const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath)
-const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Core.TextureTable)
+const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Texture.TextureTable)
 const RenderControllerHelper = require(script.Parent.RenderControllerHelper)
 
 const CameraStore = require(
@@ -17359,7 +17465,7 @@ const ECSSizeBuffer = SizeData.GetData() :: buffer
 const ECSDirectionsBuffer = DirectionsData.GetData() :: buffer
 const ECSVisualBuffer = VisualData.GetData() :: buffer
 const ECSPropertiesBuffer = PropertiesData.GetData() :: buffer
-local ScreenVertices = buffer.create(8 * 12) :: buffer
+local ScreenVertices = buffer.create(VerticeFile.MaxShapeVertices * 12) :: buffer
 local ProjectedVertices = buffer.create(12 * 20) :: buffer
 local ClipBufferA = buffer.create(12 * 20) :: buffer
 local ClipBufferB = buffer.create(12 * 20) :: buffer
@@ -17406,7 +17512,7 @@ function Renderer.Init()
 
 	SelfActor:BindToMessage(
 		"Return Render Calculations",
-		function(PixelBuffer: buffer, ZBuffer: buffer, FrameId: number)
+		function(PixelBuffer: buffer, ZBuffer: buffer, FrameId: number, DirtyMinY: number, DirtyMaxY: number)
 			if FrameId ~= CurrentFrame then -- ignore stale frames
 				return
 			end
@@ -17414,8 +17520,10 @@ function Renderer.Init()
 			if Received == 0 then
 				buffer.copy(FinalPixel, 0, PixelBuffer, 0, TOTAL_PIXELS * 4)
 				buffer.copy(FinalZ, 0, ZBuffer, 0, TOTAL_PIXELS * 4)
-			else
-				for i = 0, (TOTAL_PIXELS - 1) * 4, 4 do -- Overwrites the FinalZ and FinalPixel buffers
+			elseif DirtyMinY <= DirtyMaxY then
+				const StartOffset = DirtyMinY * WIDTH * 4 :: number
+				const EndOffset = ((DirtyMaxY + 1) * WIDTH - 1) * 4 :: number
+				for i = StartOffset, EndOffset, 4 do -- Overwrites only the worker's dirty scanline rows
 					const IncomingInverseZ = buffer.readf32(ZBuffer, i) :: number
 					if IncomingInverseZ > buffer.readf32(FinalZ, i) then
 						buffer.writef32(FinalZ, i, IncomingInverseZ)
@@ -17534,25 +17642,10 @@ function Renderer.DrawFrame()
 		const DirectionOffset = (i - 1) * ECS_DIRECTION_STRIDE :: number
 		const PropertiesOffset = (i - 1) * ECS_PROPERTIES_STRIDE :: number
 
-		const FaceMask = RenderMath.GetPartCameraVertices(
-			ECSPositionBuffer,
-			ECSDirectionsBuffer,
-			ECSSizeBuffer,
-			ComponentOffset,
-			DirectionOffset,
-			ScreenVertices,
-			CamPosVec,
-			CamRightVec,
-			CamUpVec,
-			CamLookVec
-		) :: number
-
-		if FaceMask == 0 then
-			continue
-		end
-
 		const PropertiesRegister = buffer.readu32(ECSPropertiesBuffer, PropertiesOffset) :: number
+		const EntityShapeId = ECSMain.GetEntityShapeId(PropertiesRegister) :: number
 		const EntityTextureId = ECSMain.GetEntityTextureId(PropertiesRegister) :: number
+		const ShapeMesh = VerticeFile.ShapeData[EntityShapeId] or VerticeFile.ShapeData[0]
 
 		-- If untextured (EntityTextureId == 0), shade with the part's color; if textured, use white base so the decal's colors are preserved
 		local PartColorR = 255 :: number
@@ -17573,20 +17666,43 @@ function Renderer.DrawFrame()
 			TileScaleZ = math.clamp(math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset + 8) * INV_TEXTURE_STUDS_PER_TILE + 0.5), 1, 8)
 		end
 
-		-- Back (+Look, bit 0) or Front (-Look, bit 1)
-		if bit32.btest(FaceMask, 3) then
-			const LookSunDot = vector.dot(
-				RenderControllerHelper.ReadDirectionVec(ECSDirectionsBuffer, DirectionOffset),
+		const IsVisible: boolean, LocalCameraPos: vector, HalfSize: vector, LocalSun: vector =
+			RenderMath.TransformShapeCameraVertices(
+				ECSPositionBuffer,
+				ECSDirectionsBuffer,
+				ECSSizeBuffer,
+				ComponentOffset,
+				DirectionOffset,
+				ShapeMesh.LocalVertices,
+				ShapeMesh.VertexCount,
+				ScreenVertices,
+				CamPosVec,
+				CamRightVec,
+				CamUpVec,
+				CamLookVec,
 				SUN_VEC
-			) :: number
-			if bit32.btest(FaceMask, 1) then
+			)
+
+		if not IsVisible then
+			continue
+		end
+
+		if ShapeMesh.IsAxisAligned then
+			for _, Face in ipairs(ShapeMesh.Faces) do
+				const ScaledPoint = Face.PointOnFace * HalfSize
+				if vector.dot(LocalCameraPos - ScaledPoint, Face.Normal) <= -1e-3 then
+					continue
+				end
+
+				const FaceSunDot = vector.dot(Face.Normal, LocalSun) :: number
 				const Color = RenderControllerHelper.PackShadedColor(
 					PartColorR,
 					PartColorG,
 					PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, LookSunDot)
+					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, FaceSunDot)
 				)
-				RenderControllerHelper.SubmitFaceQuad(
+
+				RenderControllerHelper.SubmitFace(
 					ScreenVertices,
 					ProjectedVertices,
 					ClipBufferA,
@@ -17594,37 +17710,10 @@ function Renderer.DrawFrame()
 					WorkerScores,
 					WorkerOffsets,
 					BufferTable,
-					0,
-					36,
-					24,
-					12,
-					TileScaleX,
-					TileScaleY,
-					Color,
-					EntityTextureId,
-					FocalLength,
-					GuardBandX,
-					GuardBandY
-				)
-			else
-				const Color = RenderControllerHelper.PackShadedColor(
-					PartColorR,
-					PartColorG,
-					PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, -LookSunDot)
-				)
-				RenderControllerHelper.SubmitFaceQuad(
-					ScreenVertices,
-					ProjectedVertices,
-					ClipBufferA,
-					ClipBufferB,
-					WorkerScores,
-					WorkerOffsets,
-					BufferTable,
-					48,
-					60,
-					72,
-					84,
+					Face.V0ByteOffset,
+					Face.V1ByteOffset,
+					Face.V2ByteOffset,
+					Face.V3ByteOffset,
 					TileScaleX,
 					TileScaleY,
 					Color,
@@ -17634,85 +17723,30 @@ function Renderer.DrawFrame()
 					GuardBandY
 				)
 			end
-		end
+		else
+			const InvHalfSize = vector.create(
+				if HalfSize.x > 1e-4 then 1 / HalfSize.x else 1,
+				if HalfSize.y > 1e-4 then 1 / HalfSize.y else 1,
+				if HalfSize.z > 1e-4 then 1 / HalfSize.z else 1
+			)
 
-		-- Bottom (-Up, bit 2) or Top (+Up, bit 3)
-		if bit32.btest(FaceMask, 12) then
-			const UpSunDot = vector.dot(
-				RenderControllerHelper.ReadDirectionVec(ECSDirectionsBuffer, DirectionOffset + 12),
-				SUN_VEC
-			) :: number
-			if bit32.btest(FaceMask, 4) then
-				const Color = RenderControllerHelper.PackShadedColor(
-					PartColorR,
-					PartColorG,
-					PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, -UpSunDot)
-				)
-				RenderControllerHelper.SubmitFaceQuad(
-					ScreenVertices,
-					ProjectedVertices,
-					ClipBufferA,
-					ClipBufferB,
-					WorkerScores,
-					WorkerOffsets,
-					BufferTable,
-					0,
-					12,
-					60,
-					48,
-					TileScaleZ,
-					TileScaleX,
-					Color,
-					EntityTextureId,
-					FocalLength,
-					GuardBandX,
-					GuardBandY
-				)
-			else
-				const Color = RenderControllerHelper.PackShadedColor(
-					PartColorR,
-					PartColorG,
-					PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, UpSunDot)
-				)
-				RenderControllerHelper.SubmitFaceQuad(
-					ScreenVertices,
-					ProjectedVertices,
-					ClipBufferA,
-					ClipBufferB,
-					WorkerScores,
-					WorkerOffsets,
-					BufferTable,
-					24,
-					36,
-					84,
-					72,
-					TileScaleZ,
-					TileScaleX,
-					Color,
-					EntityTextureId,
-					FocalLength,
-					GuardBandX,
-					GuardBandY
-				)
-			end
-		end
+			for _, Face in ipairs(ShapeMesh.Faces) do
+				const ScaledPoint = Face.PointOnFace * HalfSize
+				const ScaledLocalNormal = Face.Normal * InvHalfSize
+				if vector.dot(LocalCameraPos - ScaledPoint, ScaledLocalNormal) <= -1e-3 then
+					continue
+				end
 
-		-- Left (-Right, bit 4) or Right (+Right, bit 5)
-		if bit32.btest(FaceMask, 48) then
-			const RightSunDot = vector.dot(
-				RenderControllerHelper.ReadDirectionVec(ECSDirectionsBuffer, DirectionOffset + 24),
-				SUN_VEC
-			) :: number
-			if bit32.btest(FaceMask, 16) then
+				const WorldSpaceLocalNormal = vector.normalize(ScaledLocalNormal)
+				const FaceSunDot = vector.dot(WorldSpaceLocalNormal, LocalSun) :: number
 				const Color = RenderControllerHelper.PackShadedColor(
 					PartColorR,
 					PartColorG,
 					PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, -RightSunDot)
+					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, FaceSunDot)
 				)
-				RenderControllerHelper.SubmitFaceQuad(
+
+				RenderControllerHelper.SubmitFace(
 					ScreenVertices,
 					ProjectedVertices,
 					ClipBufferA,
@@ -17720,38 +17754,11 @@ function Renderer.DrawFrame()
 					WorkerScores,
 					WorkerOffsets,
 					BufferTable,
-					0,
-					48,
-					84,
-					36,
-					TileScaleY,
-					TileScaleZ,
-					Color,
-					EntityTextureId,
-					FocalLength,
-					GuardBandX,
-					GuardBandY
-				)
-			else
-				const Color = RenderControllerHelper.PackShadedColor(
-					PartColorR,
-					PartColorG,
-					PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, RightSunDot)
-				)
-				RenderControllerHelper.SubmitFaceQuad(
-					ScreenVertices,
-					ProjectedVertices,
-					ClipBufferA,
-					ClipBufferB,
-					WorkerScores,
-					WorkerOffsets,
-					BufferTable,
-					12,
-					24,
-					72,
-					60,
-					TileScaleZ,
+					Face.V0ByteOffset,
+					Face.V1ByteOffset,
+					Face.V2ByteOffset,
+					Face.V3ByteOffset,
+					TileScaleX,
 					TileScaleY,
 					Color,
 					EntityTextureId,
@@ -17766,11 +17773,7 @@ function Renderer.DrawFrame()
 	-- Sends the information to all workers
 	for i, TargetActor: Actor in ipairs(WorkerActors) do
 		const ByteCount = WorkerOffsets[i] :: number
-		local PayloadBuffer = EmptyPayload
-		if ByteCount > 0 then
-			PayloadBuffer = buffer.create(ByteCount)
-			buffer.copy(PayloadBuffer, 0, BufferTable[i], 0, ByteCount)
-		end
+		const PayloadBuffer = if ByteCount > 0 then BufferTable[i] else EmptyPayload
 
 		TargetActor:SendMessage(
 			"Execute Rendering",
@@ -17787,7 +17790,7 @@ return Renderer
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="145">
+            <Item class="ModuleScript" referent="149">
               <Properties>
                 <string name="Name">RenderControllerHelper</string>
                 <string name="Source"><![CDATA[--!strict
@@ -17877,7 +17880,7 @@ end
 	@param GuardBandX number -- Horizontal guardband slope factor.
 	@param GuardBandY number -- Vertical guardband slope factor.
 ]=]
-function RenderControllerHelper.SubmitFaceQuad(
+function RenderControllerHelper.SubmitFace(
 	ScreenVertices: buffer,
 	ProjectedVertices: buffer,
 	ClipBufferA: buffer,
@@ -17897,23 +17900,40 @@ function RenderControllerHelper.SubmitFaceQuad(
 	GuardBandX: number,
 	GuardBandY: number
 )
-	const ClippedVertexCount = RenderMath.ClipAndProjectQuad(
-		ScreenVertices,
-		V0ByteOffset,
-		V1ByteOffset,
-		V2ByteOffset,
-		V3ByteOffset,
-		ScaleU,
-		ScaleV,
-		ProjectedVertices,
-		ClipBufferA,
-		ClipBufferB,
-		FocalLength,
-		GuardBandX,
-		GuardBandY,
-		HALF_WIDTH,
-		HALF_HEIGHT
-	) :: number
+	const ClippedVertexCount = if V3ByteOffset >= 0
+		then RenderMath.ClipAndProjectQuad(
+			ScreenVertices,
+			V0ByteOffset,
+			V1ByteOffset,
+			V2ByteOffset,
+			V3ByteOffset,
+			ScaleU,
+			ScaleV,
+			ProjectedVertices,
+			ClipBufferA,
+			ClipBufferB,
+			FocalLength,
+			GuardBandX,
+			GuardBandY,
+			HALF_WIDTH,
+			HALF_HEIGHT
+		)
+		else RenderMath.ClipAndProjectTriangleUV(
+			ScreenVertices,
+			V0ByteOffset,
+			V1ByteOffset,
+			V2ByteOffset,
+			ScaleU,
+			ScaleV,
+			ProjectedVertices,
+			ClipBufferA,
+			ClipBufferB,
+			FocalLength,
+			GuardBandX,
+			GuardBandY,
+			HALF_WIDTH,
+			HALF_HEIGHT
+		) :: number
 
 	if ClippedVertexCount < 3 then
 		return
@@ -18013,11 +18033,11 @@ return RenderControllerHelper
               </Properties>
             </Item>
           </Item>
-          <Item class="Folder" referent="146">
+          <Item class="Folder" referent="150">
             <Properties>
               <string name="Name">Core</string>
             </Properties>
-            <Item class="ModuleScript" referent="147">
+            <Item class="ModuleScript" referent="151">
               <Properties>
                 <string name="Name">BufferHelper</string>
                 <string name="Source"><![CDATA[--!strict
@@ -18094,75 +18114,6 @@ function BufferHelper.EnsureClearTemplate(ByteLength: number): buffer
 end
 
 --[=[
-	Packs 3 projected textured triangle vertices and a 32-bit packed color into the worker render queue buffer.
-	@param TargetBuffer buffer -- Destination render command buffer.
-	@param MemoryOffset number -- Current byte offset in render command buffer.
-	@param Vertex0X number -- Screen vertex 0 X coordinate.
-	@param Vertex0Y number -- Screen vertex 0 Y coordinate.
-	@param ScaledInverseZ0 number -- Pre-scaled 1/Z depth for vertex 0.
-	@param ScaledUOverZ0 number -- Pre-scaled U/Z coordinate for vertex 0.
-	@param ScaledVOverZ0 number -- Pre-scaled V/Z coordinate for vertex 0.
-	@param Vertex1X number -- Screen vertex 1 X coordinate.
-	@param Vertex1Y number -- Screen vertex 1 Y coordinate.
-	@param ScaledInverseZ1 number -- Pre-scaled 1/Z depth for vertex 1.
-	@param ScaledUOverZ1 number -- Pre-scaled U/Z coordinate for vertex 1.
-	@param ScaledVOverZ1 number -- Pre-scaled V/Z coordinate for vertex 1.
-	@param Vertex2X number -- Screen vertex 2 X coordinate.
-	@param Vertex2Y number -- Screen vertex 2 Y coordinate.
-	@param ScaledInverseZ2 number -- Pre-scaled 1/Z depth for vertex 2.
-	@param ScaledUOverZ2 number -- Pre-scaled U/Z coordinate for vertex 2.
-	@param ScaledVOverZ2 number -- Pre-scaled V/Z coordinate for vertex 2.
-	@param PackedColor number -- Packed 32-bit RGBA color.
-	@param TextureId number -- TextureTable numeric ID.
-	@return number -- Next byte offset in render command buffer.
-]=]
-function BufferHelper.CreateRenderBuffer(
-	TargetBuffer: buffer,
-	MemoryOffset: number,
-	Vertex0X: number,
-	Vertex0Y: number,
-	ScaledInverseZ0: number,
-	ScaledUOverZ0: number,
-	ScaledVOverZ0: number,
-	Vertex1X: number,
-	Vertex1Y: number,
-	ScaledInverseZ1: number,
-	ScaledUOverZ1: number,
-	ScaledVOverZ1: number,
-	Vertex2X: number,
-	Vertex2Y: number,
-	ScaledInverseZ2: number,
-	ScaledUOverZ2: number,
-	ScaledVOverZ2: number,
-	PackedColor: number,
-	TextureId: number
-): number
-	-- Three 16-byte vertices (X, Y, InvZ, U/Z, V/Z), one 4-byte packed RGBA u32 color, and one 4-byte u32 TextureId (56 bytes total).
-	buffer.writei16(TargetBuffer, MemoryOffset, Vertex0X)
-	buffer.writei16(TargetBuffer, MemoryOffset + 2, Vertex0Y)
-	buffer.writef32(TargetBuffer, MemoryOffset + 4, ScaledInverseZ0)
-	buffer.writef32(TargetBuffer, MemoryOffset + 8, ScaledUOverZ0)
-	buffer.writef32(TargetBuffer, MemoryOffset + 12, ScaledVOverZ0)
-
-	buffer.writei16(TargetBuffer, MemoryOffset + 16, Vertex1X)
-	buffer.writei16(TargetBuffer, MemoryOffset + 18, Vertex1Y)
-	buffer.writef32(TargetBuffer, MemoryOffset + 20, ScaledInverseZ1)
-	buffer.writef32(TargetBuffer, MemoryOffset + 24, ScaledUOverZ1)
-	buffer.writef32(TargetBuffer, MemoryOffset + 28, ScaledVOverZ1)
-
-	buffer.writei16(TargetBuffer, MemoryOffset + 32, Vertex2X)
-	buffer.writei16(TargetBuffer, MemoryOffset + 34, Vertex2Y)
-	buffer.writef32(TargetBuffer, MemoryOffset + 36, ScaledInverseZ2)
-	buffer.writef32(TargetBuffer, MemoryOffset + 40, ScaledUOverZ2)
-	buffer.writef32(TargetBuffer, MemoryOffset + 44, ScaledVOverZ2)
-
-	buffer.writeu32(TargetBuffer, MemoryOffset + 48, PackedColor)
-	buffer.writeu32(TargetBuffer, MemoryOffset + 52, TextureId)
-
-	return MemoryOffset + RENDER_BUFFER_LAYOUT_SIZE
-end
-
---[=[
 	Clears the entire pixel and Z buffer to the default background state.
 	@param TotalPixels number -- Total screen pixel count (Width * Height).
 	@param PixelBuffer buffer -- Destination color pixel buffer.
@@ -18210,7 +18161,7 @@ return BufferHelper
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="148">
+            <Item class="ModuleScript" referent="152">
               <Properties>
                 <string name="Name">MathModule</string>
                 <string name="Source"><![CDATA[--!strict
@@ -18272,29 +18223,6 @@ function MathModule.IsVertexInside(Vertex: vector, GuardBandX: number, GuardBand
 end
 
 --[=[
-	Projects a 3D camera-space vertex onto the 2D integer screen coordinate plane.
-	@param ProjectedVertices buffer -- Buffer to receive projected vertex data.
-	@param Offset number -- Byte offset in output buffer.
-	@param Vertex vector -- Camera-space 3D vertex.
-	@param FocalLength number -- Camera focal length scalar.
-	@param HalfWidth number -- Half screen width in pixels.
-	@param HalfHeight number -- Half screen height in pixels.
-]=]
-function MathModule.ProjectVertex(
-	ProjectedVertices: buffer,
-	Offset: number,
-	Vertex: vector,
-	FocalLength: number,
-	HalfWidth: number,
-	HalfHeight: number
-)
-	const InverseZ = 1 / Vertex.z :: number
-	buffer.writef32(ProjectedVertices, Offset, math.floor(Vertex.x * InverseZ * FocalLength + HalfWidth))
-	buffer.writef32(ProjectedVertices, Offset + 4, math.floor(-Vertex.y * InverseZ * FocalLength + HalfHeight))
-	buffer.writef32(ProjectedVertices, Offset + 8, InverseZ)
-end
-
---[=[
 	Projects a 3D camera-space vertex and its texture coordinates into a 20-byte projected vertex slot.
 	@param ProjectedVertices buffer -- Buffer to receive projected vertex data.
 	@param Offset number -- Byte offset in output buffer (20-byte stride).
@@ -18321,58 +18249,6 @@ function MathModule.ProjectVertexUV(
 	buffer.writef32(ProjectedVertices, Offset + 8, InverseZ)
 	buffer.writef32(ProjectedVertices, Offset + 12, TexCoordU)
 	buffer.writef32(ProjectedVertices, Offset + 16, TexCoordV)
-end
-
---[=[
-	Clips an input polygon against an arbitrary half-space plane using Sutherland-Hodgman.
-	@param Input buffer -- Buffer of input 3D vector vertices.
-	@param InputCount number -- Number of input vertices.
-	@param Output buffer -- Buffer to receive clipped 3D vertices.
-	@param PlaneNormal vector -- Inward-pointing clipping plane normal.
-	@param PlaneOffset number -- Plane distance constant.
-	@return number -- Number of output vertices after clipping.
-]=]
-function MathModule.ClipPolygon(
-	Input: buffer,
-	InputCount: number,
-	Output: buffer,
-	PlaneNormal: vector,
-	PlaneOffset: number
-): number
-	if InputCount == 0 then
-		return 0
-	end
-
-	local OutputCount = 0 :: number
-	local PreviousVertex = BufferHelper.ReadVec3(Input, (InputCount - 1) * 12)
-	local PreviousDistance = vector.dot(PreviousVertex, PlaneNormal) + PlaneOffset :: number
-
-	for i = 1, InputCount do
-		const CurrentVertex = BufferHelper.ReadVec3(Input, (i - 1) * 12)
-		const CurrentDistance = vector.dot(CurrentVertex, PlaneNormal) + PlaneOffset :: number
-		const PreviousInside = (PreviousDistance >= 0) :: boolean
-		const CurrentInside = (CurrentDistance >= 0) :: boolean
-
-		if PreviousInside ~= CurrentInside then
-			const IntersectionFactor = PreviousDistance / (PreviousDistance - CurrentDistance) :: number
-			BufferHelper.WriteVec3(
-				Output,
-				OutputCount * 12,
-				PreviousVertex + (CurrentVertex - PreviousVertex) * IntersectionFactor
-			)
-			OutputCount += 1
-		end
-
-		if CurrentInside then
-			BufferHelper.WriteVec3(Output, OutputCount * 12, CurrentVertex)
-			OutputCount += 1
-		end
-
-		PreviousVertex = CurrentVertex
-		PreviousDistance = CurrentDistance
-	end
-
-	return OutputCount
 end
 
 --[=[
@@ -18551,63 +18427,63 @@ function MathModule.RasterizeTriangleSpan(
 	const Edge2StepY = Vertex0X - Vertex1X :: number
 
 	const ScaledInverseZVector = vector.create(ScaledInverseZ0, ScaledInverseZ1, ScaledInverseZ2)
-	const ScaledUOverZVector = vector.create(ScaledUOverZ0, ScaledUOverZ1, ScaledUOverZ2)
-	const ScaledVOverZVector = vector.create(ScaledVOverZ0, ScaledVOverZ1, ScaledVOverZ2)
 	const EdgeStepVectorX = vector.create(Edge0StepX, Edge1StepX, Edge2StepX)
 	const EdgeStepVectorY = vector.create(Edge0StepY, Edge1StepY, Edge2StepY)
 
 	const InverseZStepX = vector.dot(EdgeStepVectorX, ScaledInverseZVector) :: number
 	const InverseZStepY = vector.dot(EdgeStepVectorY, ScaledInverseZVector) :: number
-	const UOverZStepX = vector.dot(EdgeStepVectorX, ScaledUOverZVector) :: number
-	const UOverZStepY = vector.dot(EdgeStepVectorY, ScaledUOverZVector) :: number
-	const VOverZStepX = vector.dot(EdgeStepVectorX, ScaledVOverZVector) :: number
-	const VOverZStepY = vector.dot(EdgeStepVectorY, ScaledVOverZVector) :: number
 
 	const InitialEdgeWeight0 = (MinX - Vertex1X) * Edge0StepX + (MinY - Vertex1Y) * Edge0StepY :: number
 	const InitialEdgeWeight1 = (MinX - Vertex2X) * Edge1StepX + (MinY - Vertex2Y) * Edge1StepY :: number
 	const InitialEdgeWeight2 = (MinX - Vertex0X) * Edge2StepX + (MinY - Vertex0Y) * Edge2StepY :: number
 	local RowEdgeWeights = vector.create(InitialEdgeWeight0, InitialEdgeWeight1, InitialEdgeWeight2)
 	local RowInverseZ = vector.dot(RowEdgeWeights, ScaledInverseZVector) :: number
-	local RowUOverZ = vector.dot(RowEdgeWeights, ScaledUOverZVector) :: number
-	local RowVOverZ = vector.dot(RowEdgeWeights, ScaledVOverZVector) :: number
-
-	const TextureWidthMask = TextureWidth - 1 :: number
-	const TextureHeightMask = TextureHeight - 1 :: number
-
-	local ShadeRed = bit32.band(PackedColor, 0xFF) :: number
-	local ShadeGreen = bit32.band(bit32.rshift(PackedColor, 8), 0xFF) :: number
-	local ShadeBlue = bit32.band(bit32.rshift(PackedColor, 16), 0xFF) :: number
-	if ShadeRed > 0 then
-		ShadeRed += 1
-	end
-	if ShadeGreen > 0 then
-		ShadeGreen += 1
-	end
-	if ShadeBlue > 0 then
-		ShadeBlue += 1
-	end
 
 	const MaxSpanOffsetX = MaxX - MinX :: number
 	local RowOffset = (MinY * WIDTH + MinX) * 4 :: number
 
-	for _ = MinY, MaxY do
-		local SpanStartOffsetX: number, SpanEndOffsetX: number =
-			MathModule.ClipSpanEdge(RowEdgeWeights.x, Edge0StepX, 0, MaxSpanOffsetX)
-		if SpanStartOffsetX <= SpanEndOffsetX then
-			SpanStartOffsetX, SpanEndOffsetX =
-				MathModule.ClipSpanEdge(RowEdgeWeights.y, Edge1StepX, SpanStartOffsetX, SpanEndOffsetX)
+	if TextureBuffer then
+		const ScaledUOverZVector = vector.create(ScaledUOverZ0, ScaledUOverZ1, ScaledUOverZ2)
+		const ScaledVOverZVector = vector.create(ScaledVOverZ0, ScaledVOverZ1, ScaledVOverZ2)
+		const UOverZStepX = vector.dot(EdgeStepVectorX, ScaledUOverZVector) :: number
+		const UOverZStepY = vector.dot(EdgeStepVectorY, ScaledUOverZVector) :: number
+		const VOverZStepX = vector.dot(EdgeStepVectorX, ScaledVOverZVector) :: number
+		const VOverZStepY = vector.dot(EdgeStepVectorY, ScaledVOverZVector) :: number
+		local RowUOverZ = vector.dot(RowEdgeWeights, ScaledUOverZVector) :: number
+		local RowVOverZ = vector.dot(RowEdgeWeights, ScaledVOverZVector) :: number
+
+		const TextureWidthMask = TextureWidth - 1 :: number
+		const TextureHeightMask = TextureHeight - 1 :: number
+
+		local ShadeRed = bit32.band(PackedColor, 0xFF) :: number
+		local ShadeGreen = bit32.band(bit32.rshift(PackedColor, 8), 0xFF) :: number
+		local ShadeBlue = bit32.band(bit32.rshift(PackedColor, 16), 0xFF) :: number
+		if ShadeRed > 0 then
+			ShadeRed += 1
 		end
-		if SpanStartOffsetX <= SpanEndOffsetX then
-			SpanStartOffsetX, SpanEndOffsetX =
-				MathModule.ClipSpanEdge(RowEdgeWeights.z, Edge2StepX, SpanStartOffsetX, SpanEndOffsetX)
+		if ShadeGreen > 0 then
+			ShadeGreen += 1
+		end
+		if ShadeBlue > 0 then
+			ShadeBlue += 1
 		end
 
-		if SpanStartOffsetX <= SpanEndOffsetX then
-			local BufferOffset = RowOffset + SpanStartOffsetX * 4 :: number
-			const EndOffset = RowOffset + SpanEndOffsetX * 4 :: number
-			local InterpolatedInverseZ = RowInverseZ + SpanStartOffsetX * InverseZStepX :: number
+		for _ = MinY, MaxY do
+			local SpanStartOffsetX: number, SpanEndOffsetX: number =
+				MathModule.ClipSpanEdge(RowEdgeWeights.x, Edge0StepX, 0, MaxSpanOffsetX)
+			if SpanStartOffsetX <= SpanEndOffsetX then
+				SpanStartOffsetX, SpanEndOffsetX =
+					MathModule.ClipSpanEdge(RowEdgeWeights.y, Edge1StepX, SpanStartOffsetX, SpanEndOffsetX)
+			end
+			if SpanStartOffsetX <= SpanEndOffsetX then
+				SpanStartOffsetX, SpanEndOffsetX =
+					MathModule.ClipSpanEdge(RowEdgeWeights.z, Edge2StepX, SpanStartOffsetX, SpanEndOffsetX)
+			end
 
-			if TextureBuffer then
+			if SpanStartOffsetX <= SpanEndOffsetX then
+				local BufferOffset = RowOffset + SpanStartOffsetX * 4 :: number
+				const EndOffset = RowOffset + SpanEndOffsetX * 4 :: number
+				local InterpolatedInverseZ = RowInverseZ + SpanStartOffsetX * InverseZStepX :: number
 				local InterpolatedUOverZ = RowUOverZ + SpanStartOffsetX * UOverZStepX :: number
 				local InterpolatedVOverZ = RowVOverZ + SpanStartOffsetX * VOverZStepX :: number
 
@@ -18636,7 +18512,32 @@ function MathModule.RasterizeTriangleSpan(
 					InterpolatedVOverZ += VOverZStepX
 					BufferOffset += 4
 				end
-			else
+			end
+
+			RowEdgeWeights += EdgeStepVectorY
+			RowInverseZ += InverseZStepY
+			RowUOverZ += UOverZStepY
+			RowVOverZ += VOverZStepY
+			RowOffset += RowStride
+		end
+	else
+		for _ = MinY, MaxY do
+			local SpanStartOffsetX: number, SpanEndOffsetX: number =
+				MathModule.ClipSpanEdge(RowEdgeWeights.x, Edge0StepX, 0, MaxSpanOffsetX)
+			if SpanStartOffsetX <= SpanEndOffsetX then
+				SpanStartOffsetX, SpanEndOffsetX =
+					MathModule.ClipSpanEdge(RowEdgeWeights.y, Edge1StepX, SpanStartOffsetX, SpanEndOffsetX)
+			end
+			if SpanStartOffsetX <= SpanEndOffsetX then
+				SpanStartOffsetX, SpanEndOffsetX =
+					MathModule.ClipSpanEdge(RowEdgeWeights.z, Edge2StepX, SpanStartOffsetX, SpanEndOffsetX)
+			end
+
+			if SpanStartOffsetX <= SpanEndOffsetX then
+				local BufferOffset = RowOffset + SpanStartOffsetX * 4 :: number
+				const EndOffset = RowOffset + SpanEndOffsetX * 4 :: number
+				local InterpolatedInverseZ = RowInverseZ + SpanStartOffsetX * InverseZStepX :: number
+
 				while BufferOffset <= EndOffset do
 					if InterpolatedInverseZ > buffer.readf32(ZBuffer, BufferOffset) then
 						buffer.writef32(ZBuffer, BufferOffset, InterpolatedInverseZ)
@@ -18647,13 +18548,11 @@ function MathModule.RasterizeTriangleSpan(
 					BufferOffset += 4
 				end
 			end
-		end
 
-		RowEdgeWeights += EdgeStepVectorY
-		RowInverseZ += InverseZStepY
-		RowUOverZ += UOverZStepY
-		RowVOverZ += VOverZStepY
-		RowOffset += RowStride
+			RowEdgeWeights += EdgeStepVectorY
+			RowInverseZ += InverseZStepY
+			RowOffset += RowStride
+		end
 	end
 
 	return MinY, MaxY
@@ -18663,7 +18562,7 @@ return MathModule
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="149">
+            <Item class="ModuleScript" referent="153">
               <Properties>
                 <string name="Name">RenderMath</string>
                 <string name="Source"><![CDATA[--!strict
@@ -18677,14 +18576,12 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const BufferHelper = require(script.Parent.BufferHelper)
 const MathModule = require(script.Parent.MathModule)
-const TextureHelper = require(script.Parent.TextureHelper)
 
 -- Configs --
 const NEAR_CLIP = SystemsConfigs.RenderNearClip :: number
 const FAR_CLIP = SystemsConfigs.RenderFarClip :: number
 const GUARD_BAND_SCALE = SystemsConfigs.GuardBandScale :: number
 const BUFFER_LAYOUT_SIZE = SystemsConfigs.RenderBufferLayoutSize :: number
-const BACKFACE_EPSILON = 1e-3 :: number
 
 const PLANE_NEAR = vector.create(0, 0, 1)
 const PLANE_FAR = vector.create(0, 0, -1)
@@ -18696,31 +18593,37 @@ local RenderMath = {}
 -- ============================================================================
 
 --[=[
-	Transforms an oriented box entity into camera space, performs frustum culling, backface culling, and writes 8 corner vertices.
+	Transforms an arbitrary shape's unit local vertices from VerticeFile into camera space and computes local camera/sun vectors for face culling and lighting.
 	@param PositionBuffer buffer -- Entity position component buffer.
 	@param DirectionsBuffer buffer -- Entity basis directions buffer.
 	@param SizeBuffer buffer -- Entity size component buffer.
 	@param ComponentOffset number -- Byte offset in position/size buffers.
 	@param DirectionOffset number -- Byte offset in directions buffer.
-	@param CameraVertices buffer -- Output buffer for 8 camera-space vertices.
+	@param LocalVertices { vector } -- Unit local-space vertices from VerticeFile.
+	@param VertexCount number -- Number of vertices in LocalVertices.
+	@param CameraVertices buffer -- Output buffer for transformed camera-space vertices (12 bytes per vertex).
 	@param CamPos vector -- Camera world position.
 	@param CamRight vector -- Camera RightVector.
 	@param CamUp vector -- Camera UpVector.
 	@param CamLook vector -- Camera LookVector.
-	@return number -- Bitmask of visible faces (0 if entirely culled).
+	@param SunVec vector -- Normalized world-space sun direction vector.
+	@return (boolean, vector, vector, vector) -- (IsVisible, LocalCameraPos, HalfSize, LocalSun).
 ]=]
-function RenderMath.GetPartCameraVertices(
+function RenderMath.TransformShapeCameraVertices(
 	PositionBuffer: buffer,
 	DirectionsBuffer: buffer,
 	SizeBuffer: buffer,
 	ComponentOffset: number,
 	DirectionOffset: number,
+	LocalVertices: { vector },
+	VertexCount: number,
 	CameraVertices: buffer,
 	CamPos: vector,
 	CamRight: vector,
 	CamUp: vector,
-	CamLook: vector
-): number
+	CamLook: vector,
+	SunVec: vector
+): (boolean, vector, vector, vector)
 	const PartPosition = BufferHelper.ReadVec3(PositionBuffer, ComponentOffset)
 	const HalfSize = BufferHelper.ReadVec3(SizeBuffer, ComponentOffset) * 0.5
 	const HalfSizeX: number, HalfSizeY: number, HalfSizeZ: number = HalfSize.x, HalfSize.y, HalfSize.z
@@ -18743,35 +18646,7 @@ function RenderMath.GetPartCameraVertices(
 	const CameraSpaceExtentZ =
 		math.abs(RightAxisCameraZ) + math.abs(UpAxisCameraZ) + math.abs(LookAxisCameraZ) :: number
 	if CameraSpaceCenterZ + CameraSpaceExtentZ < NEAR_CLIP or CameraSpaceCenterZ - CameraSpaceExtentZ > FAR_CLIP then
-		return 0
-	end
-
-	-- Object-space backface test: at most 3 of the 6 box faces can face the camera
-	const LocalCameraLook = vector.dot(RelativePosition, LookAxis) :: number
-	const LocalCameraUp = vector.dot(RelativePosition, UpAxis) :: number
-	const LocalCameraRight = vector.dot(RelativePosition, RightAxis) :: number
-
-	local FaceMask = 0 :: number
-	if LocalCameraLook < -HalfSizeZ + BACKFACE_EPSILON then
-		FaceMask += 1 -- Back (+Look)
-	elseif LocalCameraLook > HalfSizeZ - BACKFACE_EPSILON then
-		FaceMask += 2 -- Front (-Look)
-	end
-
-	if LocalCameraUp > HalfSizeY - BACKFACE_EPSILON then
-		FaceMask += 4 -- Bottom (-Up)
-	elseif LocalCameraUp < -HalfSizeY + BACKFACE_EPSILON then
-		FaceMask += 8 -- Top (+Up)
-	end
-
-	if LocalCameraRight > HalfSizeX - BACKFACE_EPSILON then
-		FaceMask += 16 -- Left (-Right)
-	elseif LocalCameraRight < -HalfSizeX + BACKFACE_EPSILON then
-		FaceMask += 32 -- Right (+Right)
-	end
-
-	if FaceMask == 0 then
-		return 0
+		return false, vector.zero, vector.zero, vector.zero
 	end
 
 	const CameraSpaceCenter = vector.create(
@@ -18795,22 +18670,27 @@ function RenderMath.GetPartCameraVertices(
 		LookAxisCameraZ
 	)
 
-	const CenterMinusUpAxis = CameraSpaceCenter - CameraSpaceUpAxis
-	const CenterPlusUpAxis = CameraSpaceCenter + CameraSpaceUpAxis
-	const RightPlusLookAxis = CameraSpaceRightAxis + CameraSpaceLookAxis
-	const LookMinusRightAxis = CameraSpaceLookAxis - CameraSpaceRightAxis
+	for VertexIndex = 1, VertexCount do
+		const LocalVertex = LocalVertices[VertexIndex]
+		const CameraVertex = CameraSpaceCenter
+			+ CameraSpaceRightAxis * LocalVertex.x
+			+ CameraSpaceUpAxis * LocalVertex.y
+			+ CameraSpaceLookAxis * LocalVertex.z
+		BufferHelper.WriteVec3(CameraVertices, (VertexIndex - 1) * 12, CameraVertex)
+	end
 
-	-- 8 corners computed with 3-wide SIMD vector add/sub
-	BufferHelper.WriteVec3(CameraVertices, 0, CenterMinusUpAxis + LookMinusRightAxis)
-	BufferHelper.WriteVec3(CameraVertices, 12, CenterMinusUpAxis + RightPlusLookAxis)
-	BufferHelper.WriteVec3(CameraVertices, 24, CenterPlusUpAxis + RightPlusLookAxis)
-	BufferHelper.WriteVec3(CameraVertices, 36, CenterPlusUpAxis + LookMinusRightAxis)
-	BufferHelper.WriteVec3(CameraVertices, 48, CenterMinusUpAxis - RightPlusLookAxis)
-	BufferHelper.WriteVec3(CameraVertices, 60, CenterMinusUpAxis - LookMinusRightAxis)
-	BufferHelper.WriteVec3(CameraVertices, 72, CenterPlusUpAxis - LookMinusRightAxis)
-	BufferHelper.WriteVec3(CameraVertices, 84, CenterPlusUpAxis - RightPlusLookAxis)
+	const LocalCameraPos = vector.create(
+		-vector.dot(RelativePosition, RightAxis),
+		-vector.dot(RelativePosition, UpAxis),
+		-vector.dot(RelativePosition, LookAxis)
+	)
+	const LocalSun = vector.create(
+		vector.dot(RightAxis, SunVec),
+		vector.dot(UpAxis, SunVec),
+		vector.dot(LookAxis, SunVec)
+	)
 
-	return FaceMask
+	return true, LocalCameraPos, HalfSize, LocalSun
 end
 
 --[=[
@@ -18922,69 +18802,81 @@ function RenderMath.ClipAndProjectQuad(
 end
 
 --[=[
-	Clips a camera-space triangle against frustum planes and projects vertices onto the screen.
+	Clips a camera-space triangle face against frustum planes and projects vertices with UVs onto the screen.
 	@param CameraVertices buffer -- Buffer containing camera-space vertices.
-	@param V0Index number -- 1-based index for triangle vertex 0.
-	@param V1Index number -- 1-based index for triangle vertex 1.
-	@param V2Index number -- 1-based index for triangle vertex 2.
-	@param ProjectedVertices buffer -- Buffer to receive projected 2D vertices.
-	@param ClipBufferA buffer -- Temporary scratch buffer for polygon clipping.
-	@param ClipBufferB buffer -- Secondary scratch buffer for polygon clipping.
+	@param V0ByteOffset number -- Byte offset for triangle vertex 0.
+	@param V1ByteOffset number -- Byte offset for triangle vertex 1.
+	@param V2ByteOffset number -- Byte offset for triangle vertex 2.
+	@param ScaleU number -- Horizontal UV tile scale for the face.
+	@param ScaleV number -- Vertical UV tile scale for the face.
+	@param ProjectedVertices buffer -- Buffer to receive projected 20-byte vertices (X, Y, InvZ, U, V).
+	@param ClipBufferA buffer -- Temporary scratch buffer for 20-byte polygon clipping.
+	@param ClipBufferB buffer -- Secondary scratch buffer for 20-byte polygon clipping.
 	@param FocalLength number -- Camera focal length.
 	@param GuardBandX number -- Horizontal guardband slope factor.
 	@param GuardBandY number -- Vertical guardband slope factor.
-	@param WIDTH number -- Target screen width in pixels.
-	@param HEIGHT number -- Target screen height in pixels.
+	@param HalfWidth number -- Half screen width in pixels.
+	@param HalfHeight number -- Half screen height in pixels.
 	@return number -- Total projected vertex count (0 if culled).
 ]=]
-function RenderMath.ClipAndProjectTriangle(
+function RenderMath.ClipAndProjectTriangleUV(
 	CameraVertices: buffer,
-	V0Index: number,
-	V1Index: number,
-	V2Index: number,
+	V0ByteOffset: number,
+	V1ByteOffset: number,
+	V2ByteOffset: number,
+	ScaleU: number,
+	ScaleV: number,
 	ProjectedVertices: buffer,
 	ClipBufferA: buffer,
 	ClipBufferB: buffer,
 	FocalLength: number,
 	GuardBandX: number,
 	GuardBandY: number,
-	WIDTH: number,
-	HEIGHT: number
+	HalfWidth: number,
+	HalfHeight: number
 ): number
-	const HalfWidth = WIDTH * 0.5 :: number
-	const HalfHeight = HEIGHT * 0.5 :: number
-	const TriangleVertex0 = BufferHelper.ReadVec3(CameraVertices, (V0Index - 1) * 12)
-	const TriangleVertex1 = BufferHelper.ReadVec3(CameraVertices, (V1Index - 1) * 12)
-	const TriangleVertex2 = BufferHelper.ReadVec3(CameraVertices, (V2Index - 1) * 12)
+	const TriVertex0 = BufferHelper.ReadVec3(CameraVertices, V0ByteOffset)
+	const TriVertex1 = BufferHelper.ReadVec3(CameraVertices, V1ByteOffset)
+	const TriVertex2 = BufferHelper.ReadVec3(CameraVertices, V2ByteOffset)
 
 	if
-		MathModule.IsVertexInside(TriangleVertex0, GuardBandX, GuardBandY)
-		and MathModule.IsVertexInside(TriangleVertex1, GuardBandX, GuardBandY)
-		and MathModule.IsVertexInside(TriangleVertex2, GuardBandX, GuardBandY)
+		MathModule.IsVertexInside(TriVertex0, GuardBandX, GuardBandY)
+		and MathModule.IsVertexInside(TriVertex1, GuardBandX, GuardBandY)
+		and MathModule.IsVertexInside(TriVertex2, GuardBandX, GuardBandY)
 	then
-		MathModule.ProjectVertex(ProjectedVertices, 0, TriangleVertex0, FocalLength, HalfWidth, HalfHeight)
-		MathModule.ProjectVertex(ProjectedVertices, 12, TriangleVertex1, FocalLength, HalfWidth, HalfHeight)
-		MathModule.ProjectVertex(ProjectedVertices, 24, TriangleVertex2, FocalLength, HalfWidth, HalfHeight)
+		MathModule.ProjectVertexUV(ProjectedVertices, 0, TriVertex0, 0, ScaleV, FocalLength, HalfWidth, HalfHeight)
+		MathModule.ProjectVertexUV(ProjectedVertices, 20, TriVertex1, 0, 0, FocalLength, HalfWidth, HalfHeight)
+		MathModule.ProjectVertexUV(ProjectedVertices, 40, TriVertex2, ScaleU, ScaleV, FocalLength, HalfWidth, HalfHeight)
 		return 3
 	end
 
-	BufferHelper.WriteVec3(ClipBufferA, 0, TriangleVertex0)
-	BufferHelper.WriteVec3(ClipBufferA, 12, TriangleVertex1)
-	BufferHelper.WriteVec3(ClipBufferA, 24, TriangleVertex2)
+	BufferHelper.WriteVec3(ClipBufferA, 0, TriVertex0)
+	buffer.writef32(ClipBufferA, 12, 0)
+	buffer.writef32(ClipBufferA, 16, ScaleV)
 
-	local VertexCount = MathModule.ClipPolygon(ClipBufferA, 3, ClipBufferB, PLANE_NEAR, -NEAR_CLIP)
-	VertexCount = MathModule.ClipPolygon(ClipBufferB, VertexCount, ClipBufferA, PLANE_FAR, FAR_CLIP)
-	VertexCount = MathModule.ClipPolygon(ClipBufferA, VertexCount, ClipBufferB, vector.create(1, 0, GuardBandX), 0)
-	VertexCount = MathModule.ClipPolygon(ClipBufferB, VertexCount, ClipBufferA, vector.create(-1, 0, GuardBandX), 0)
-	VertexCount = MathModule.ClipPolygon(ClipBufferA, VertexCount, ClipBufferB, vector.create(0, 1, GuardBandY), 0)
-	VertexCount = MathModule.ClipPolygon(ClipBufferB, VertexCount, ClipBufferA, vector.create(0, -1, GuardBandY), 0)
+	BufferHelper.WriteVec3(ClipBufferA, 20, TriVertex1)
+	buffer.writef32(ClipBufferA, 32, 0)
+	buffer.writef32(ClipBufferA, 36, 0)
+
+	BufferHelper.WriteVec3(ClipBufferA, 40, TriVertex2)
+	buffer.writef32(ClipBufferA, 52, ScaleU)
+	buffer.writef32(ClipBufferA, 56, ScaleV)
+
+	local VertexCount = MathModule.ClipPolygonUV(ClipBufferA, 3, ClipBufferB, PLANE_NEAR, -NEAR_CLIP)
+	VertexCount = MathModule.ClipPolygonUV(ClipBufferB, VertexCount, ClipBufferA, PLANE_FAR, FAR_CLIP)
+	VertexCount = MathModule.ClipPolygonUV(ClipBufferA, VertexCount, ClipBufferB, vector.create(1, 0, GuardBandX), 0)
+	VertexCount = MathModule.ClipPolygonUV(ClipBufferB, VertexCount, ClipBufferA, vector.create(-1, 0, GuardBandX), 0)
+	VertexCount = MathModule.ClipPolygonUV(ClipBufferA, VertexCount, ClipBufferB, vector.create(0, 1, GuardBandY), 0)
+	VertexCount = MathModule.ClipPolygonUV(ClipBufferB, VertexCount, ClipBufferA, vector.create(0, -1, GuardBandY), 0)
 
 	for i = 1, VertexCount do
-		const Offset = (i - 1) * 12 :: number
-		MathModule.ProjectVertex(
+		const Offset = (i - 1) * 20 :: number
+		MathModule.ProjectVertexUV(
 			ProjectedVertices,
 			Offset,
 			BufferHelper.ReadVec3(ClipBufferA, Offset),
+			buffer.readf32(ClipBufferA, Offset + 12),
+			buffer.readf32(ClipBufferA, Offset + 16),
 			FocalLength,
 			HalfWidth,
 			HalfHeight
@@ -18997,68 +18889,6 @@ end
 -- ============================================================================
 -- 2. DRAWING OBJECTS - EXACT SPAN RASTERIZATION
 -- ============================================================================
-
---[=[
-	Draws a single screen-space triangle into the color pixel and Z depth buffers.
-	@param Vertex0X number -- Screen vertex 0 X.
-	@param Vertex0Y number -- Screen vertex 0 Y.
-	@param ScaledInverseZ0 number -- Pre-scaled 1/Z depth for vertex 0.
-	@param Vertex1X number -- Screen vertex 1 X.
-	@param Vertex1Y number -- Screen vertex 1 Y.
-	@param ScaledInverseZ1 number -- Pre-scaled 1/Z depth for vertex 1.
-	@param Vertex2X number -- Screen vertex 2 X.
-	@param Vertex2Y number -- Screen vertex 2 Y.
-	@param ScaledInverseZ2 number -- Pre-scaled 1/Z depth for vertex 2.
-	@param PackedColor number -- Packed 32-bit RGBA color.
-	@param WIDTH number -- Screen width in pixels.
-	@param HEIGHT number -- Screen height in pixels.
-	@param PixelBuffer buffer -- Destination color pixel buffer.
-	@param ZBuffer buffer -- Destination 32-bit depth buffer.
-]=]
-function RenderMath.DrawTriangle(
-	Vertex0X: number,
-	Vertex0Y: number,
-	ScaledInverseZ0: number,
-	Vertex1X: number,
-	Vertex1Y: number,
-	ScaledInverseZ1: number,
-	Vertex2X: number,
-	Vertex2Y: number,
-	ScaledInverseZ2: number,
-	PackedColor: number,
-	WIDTH: number,
-	HEIGHT: number,
-	PixelBuffer: buffer,
-	ZBuffer: buffer
-)
-	const DefaultTexture: buffer, TextureWidth: number, TextureHeight: number = TextureHelper.GetDefaultTexture()
-	MathModule.RasterizeTriangleSpan(
-		Vertex0X,
-		Vertex0Y,
-		ScaledInverseZ0,
-		0,
-		0,
-		Vertex1X,
-		Vertex1Y,
-		ScaledInverseZ1,
-		0,
-		0,
-		Vertex2X,
-		Vertex2Y,
-		ScaledInverseZ2,
-		0,
-		0,
-		PackedColor,
-		DefaultTexture,
-		TextureWidth,
-		TextureHeight,
-		WIDTH,
-		HEIGHT,
-		WIDTH * 4,
-		PixelBuffer,
-		ZBuffer
-	)
-end
 
 --[=[
 	Iterates and rasterizes a packed batch of textured triangles from a render command buffer.
@@ -19139,7 +18969,830 @@ return RenderMath
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="150">
+            <Item class="ModuleScript" referent="154">
+              <Properties>
+                <string name="Name">VerticeFile</string>
+                <string name="Source"><![CDATA[--!strict
+--!native
+--!optimize 2
+
+export type ShapeFace = {
+	V0ByteOffset: number,
+	V1ByteOffset: number,
+	V2ByteOffset: number,
+	V3ByteOffset: number,
+	Normal: vector,
+	PointOnFace: vector,
+}
+
+export type ShapeMesh = {
+	ShapeId: number,
+	Name: string,
+	IsAxisAligned: boolean,
+	VertexCount: number,
+	LocalVertices: { vector },
+	Faces: { ShapeFace },
+}
+
+local VerticeFile = {}
+
+-- ============================================================================
+-- 1. SHAPE ID <-> SHAPE NAME HASHMAP (3-BIT ECS PROPERTIES FIELD: 0-7)
+-- ============================================================================
+
+-- Hashmap translating 3-bit ECS ShapeId (bits 13-15) to shape name
+VerticeFile.IdToShape = {
+	[0] = "Cube",
+	[1] = "Sphere",
+	[2] = "Cylinder",
+	[3] = "Triangle",
+	[4] = "Plane",
+} :: { [number]: string }
+
+-- Reverse hashmap translating shape name to 3-bit ECS ShapeId
+VerticeFile.ShapeToId = {
+	Cube = 0,
+	Sphere = 1,
+	Cylinder = 2,
+	Triangle = 3,
+	Plane = 4,
+} :: { [string]: number }
+
+-- ============================================================================
+-- 2. PROCEDURAL UNIT MESH BUILDERS IN LOCAL (RIGHT, UP, LOOK) [-1, 1] SPACE
+-- ============================================================================
+
+--[=[
+	Creates a face entry with winding verified against the outward local normal so screen-space area is positive.
+	@param LocalVertices { vector } -- Shape local vertex array.
+	@param Index0 number -- 1-based vertex index 0.
+	@param Index1 number -- 1-based vertex index 1.
+	@param Index2 number -- 1-based vertex index 2.
+	@param Index3 number? -- Optional 1-based vertex index 3 for quads (nil for triangles).
+	@param ExplicitNormal vector? -- Optional explicit outward unit normal.
+	@return ShapeFace -- Constructed face record with precomputed 12-byte vertex buffer offsets.
+]=]
+local function CreateFace(
+	LocalVertices: { vector },
+	Index0: number,
+	Index1: number,
+	Index2: number,
+	Index3: number?,
+	ExplicitNormal: vector?
+): ShapeFace
+	const V0 = LocalVertices[Index0]
+	const V1 = LocalVertices[Index1]
+	const V2 = LocalVertices[Index2]
+
+	const WindingCross = vector.cross(V2 - V0, V1 - V0)
+	local OutwardNormal: vector
+	if ExplicitNormal then
+		OutwardNormal = vector.normalize(ExplicitNormal)
+	else
+		const CrossMag = vector.magnitude(WindingCross) :: number
+		OutwardNormal = if CrossMag > 1e-6 then WindingCross / CrossMag else vector.create(0, 1, 0)
+	end
+
+	-- In local (Right, Up, Look) space, (V2 - V0) x (V1 - V0) must align with OutwardNormal for positive screen area
+	if vector.dot(WindingCross, OutwardNormal) < 0 then
+		if Index3 then
+			return {
+				V0ByteOffset = (Index0 - 1) * 12,
+				V1ByteOffset = (Index3 - 1) * 12,
+				V2ByteOffset = (Index2 - 1) * 12,
+				V3ByteOffset = (Index1 - 1) * 12,
+				Normal = OutwardNormal,
+				PointOnFace = V0,
+			}
+		else
+			return {
+				V0ByteOffset = (Index0 - 1) * 12,
+				V1ByteOffset = (Index2 - 1) * 12,
+				V2ByteOffset = (Index1 - 1) * 12,
+				V3ByteOffset = -1,
+				Normal = OutwardNormal,
+				PointOnFace = V0,
+			}
+		end
+	end
+
+	return {
+		V0ByteOffset = (Index0 - 1) * 12,
+		V1ByteOffset = (Index1 - 1) * 12,
+		V2ByteOffset = (Index2 - 1) * 12,
+		V3ByteOffset = if Index3 then (Index3 - 1) * 12 else -1,
+		Normal = OutwardNormal,
+		PointOnFace = V0,
+	}
+end
+
+--[=[
+	Builds the unit Cube mesh (ShapeId = 0) with 8 corners and 6 quad faces.
+	@return ShapeMesh -- Unit cube mesh data.
+]=]
+local function BuildCubeMesh(): ShapeMesh
+	const LocalVertices = {
+		vector.create(-1, -1, 1), -- 1 (offset 0)
+		vector.create(1, -1, 1), -- 2 (offset 12)
+		vector.create(1, 1, 1), -- 3 (offset 24)
+		vector.create(-1, 1, 1), -- 4 (offset 36)
+		vector.create(-1, -1, -1), -- 5 (offset 48)
+		vector.create(1, -1, -1), -- 6 (offset 60)
+		vector.create(1, 1, -1), -- 7 (offset 72)
+		vector.create(-1, 1, -1), -- 8 (offset 84)
+	}
+
+	const Faces = {
+		CreateFace(LocalVertices, 1, 4, 3, 2, vector.create(0, 0, 1)), -- Back (+Look)
+		CreateFace(LocalVertices, 5, 6, 7, 8, vector.create(0, 0, -1)), -- Front (-Look)
+		CreateFace(LocalVertices, 1, 2, 6, 5, vector.create(0, -1, 0)), -- Bottom (-Up)
+		CreateFace(LocalVertices, 3, 4, 8, 7, vector.create(0, 1, 0)), -- Top (+Up)
+		CreateFace(LocalVertices, 1, 5, 8, 4, vector.create(-1, 0, 0)), -- Left (-Right)
+		CreateFace(LocalVertices, 2, 3, 7, 6, vector.create(1, 0, 0)), -- Right (+Right)
+	}
+
+	return {
+		ShapeId = 0,
+		Name = "Cube",
+		IsAxisAligned = true,
+		VertexCount = #LocalVertices,
+		LocalVertices = LocalVertices,
+		Faces = Faces,
+	}
+end
+
+--[=[
+	Builds the unit Sphere mesh (ShapeId = 1) using latitude/longitude rings.
+	@return ShapeMesh -- Unit sphere mesh data.
+]=]
+local function BuildSphereMesh(): ShapeMesh
+	const LatRings = 6 :: number
+	const LonSegments = 10 :: number
+	const LocalVertices = {} :: { vector }
+	const Faces = {} :: { ShapeFace }
+
+	-- Top pole (index 1) and bottom pole (index 2)
+	table.insert(LocalVertices, vector.create(0, 1, 0))
+	table.insert(LocalVertices, vector.create(0, -1, 0))
+
+	-- Intermediate rings (1 .. LatRings - 1)
+	for Ring = 1, LatRings - 1 do
+		const Phi = (Ring / LatRings) * math.pi :: number
+		const SinPhi = math.sin(Phi) :: number
+		const CosPhi = math.cos(Phi) :: number
+
+		for Seg = 0, LonSegments - 1 do
+			const Theta = (Seg / LonSegments) * (math.pi * 2) :: number
+			const X = SinPhi * math.cos(Theta) :: number
+			const Z = SinPhi * math.sin(Theta) :: number
+			table.insert(LocalVertices, vector.create(X, CosPhi, Z))
+		end
+	end
+
+	-- Top cap triangles (connecting top pole 1 to first ring)
+	const FirstRingBase = 3 :: number
+	for Seg = 0, LonSegments - 1 do
+		const NextSeg = (Seg + 1) % LonSegments :: number
+		const V1 = FirstRingBase + Seg :: number
+		const V2 = FirstRingBase + NextSeg :: number
+		const AvgNormal = vector.normalize(LocalVertices[1] + LocalVertices[V1] + LocalVertices[V2])
+		table.insert(Faces, CreateFace(LocalVertices, 1, V1, V2, nil, AvgNormal))
+	end
+
+	-- Middle quad bands between rings
+	for Ring = 1, LatRings - 2 do
+		const UpperRingBase = 3 + (Ring - 1) * LonSegments :: number
+		const LowerRingBase = UpperRingBase + LonSegments :: number
+
+		for Seg = 0, LonSegments - 1 do
+			const NextSeg = (Seg + 1) % LonSegments :: number
+			const U0 = UpperRingBase + Seg :: number
+			const U1 = UpperRingBase + NextSeg :: number
+			const L0 = LowerRingBase + Seg :: number
+			const L1 = LowerRingBase + NextSeg :: number
+			const AvgNormal = vector.normalize(
+				LocalVertices[U0] + LocalVertices[U1] + LocalVertices[L1] + LocalVertices[L0]
+			)
+			table.insert(Faces, CreateFace(LocalVertices, L0, U0, U1, L1, AvgNormal))
+		end
+	end
+
+	-- Bottom cap triangles (connecting last ring to bottom pole 2)
+	const LastRingBase = 3 + (LatRings - 2) * LonSegments :: number
+	for Seg = 0, LonSegments - 1 do
+		const NextSeg = (Seg + 1) % LonSegments :: number
+		const V1 = LastRingBase + Seg :: number
+		const V2 = LastRingBase + NextSeg :: number
+		const AvgNormal = vector.normalize(LocalVertices[2] + LocalVertices[V1] + LocalVertices[V2])
+		table.insert(Faces, CreateFace(LocalVertices, 2, V2, V1, nil, AvgNormal))
+	end
+
+	return {
+		ShapeId = 1,
+		Name = "Sphere",
+		IsAxisAligned = false,
+		VertexCount = #LocalVertices,
+		LocalVertices = LocalVertices,
+		Faces = Faces,
+	}
+end
+
+--[=[
+	Builds the unit Cylinder mesh (ShapeId = 2) with 12 radial segments.
+	@return ShapeMesh -- Unit cylinder mesh data.
+]=]
+local function BuildCylinderMesh(): ShapeMesh
+	const Segments = 12 :: number
+	const LocalVertices = {} :: { vector }
+	const Faces = {} :: { ShapeFace }
+
+	-- Top ring (indices 1..Segments) and Bottom ring (indices Segments+1..2*Segments)
+	for Seg = 0, Segments - 1 do
+		const Theta = (Seg / Segments) * (math.pi * 2) :: number
+		const X = math.cos(Theta) :: number
+		const Z = math.sin(Theta) :: number
+		table.insert(LocalVertices, vector.create(X, 1, Z))
+	end
+	for Seg = 0, Segments - 1 do
+		const Theta = (Seg / Segments) * (math.pi * 2) :: number
+		const X = math.cos(Theta) :: number
+		const Z = math.sin(Theta) :: number
+		table.insert(LocalVertices, vector.create(X, -1, Z))
+	end
+
+	-- Side quad faces
+	for Seg = 0, Segments - 1 do
+		const NextSeg = (Seg + 1) % Segments :: number
+		const Top0 = 1 + Seg :: number
+		const Top1 = 1 + NextSeg :: number
+		const Bot0 = Segments + 1 + Seg :: number
+		const Bot1 = Segments + 1 + NextSeg :: number
+		const MidNormal = vector.normalize(
+			vector.create(
+				LocalVertices[Top0].x + LocalVertices[Top1].x,
+				0,
+				LocalVertices[Top0].z + LocalVertices[Top1].z
+			)
+		)
+		table.insert(Faces, CreateFace(LocalVertices, Bot0, Top0, Top1, Bot1, MidNormal))
+	end
+
+	-- Top cap triangle fan (+Up) and Bottom cap triangle fan (-Up)
+	const TopNormal = vector.create(0, 1, 0)
+	const BottomNormal = vector.create(0, -1, 0)
+	for Seg = 2, Segments - 1 do
+		table.insert(Faces, CreateFace(LocalVertices, 1, Seg, Seg + 1, nil, TopNormal))
+		table.insert(
+			Faces,
+			CreateFace(LocalVertices, Segments + 1, Segments + Seg + 1, Segments + Seg, nil, BottomNormal)
+		)
+	end
+
+	return {
+		ShapeId = 2,
+		Name = "Cylinder",
+		IsAxisAligned = false,
+		VertexCount = #LocalVertices,
+		LocalVertices = LocalVertices,
+		Faces = Faces,
+	}
+end
+
+--[=[
+	Builds the unit 3D Triangle / Wedge prism mesh (ShapeId = 3) with 6 vertices and 5 faces.
+	@return ShapeMesh -- Unit 3D triangle/wedge mesh data.
+]=]
+local function BuildTriangleMesh(): ShapeMesh
+	const LocalVertices = {
+		vector.create(-1, -1, 1), -- 1: Bottom-Left-Back (+Look)
+		vector.create(1, -1, 1), -- 2: Bottom-Right-Back (+Look)
+		vector.create(1, 1, 1), -- 3: Top-Right-Back (+Look)
+		vector.create(-1, 1, 1), -- 4: Top-Left-Back (+Look)
+		vector.create(-1, -1, -1), -- 5: Bottom-Left-Front (-Look)
+		vector.create(1, -1, -1), -- 6: Bottom-Right-Front (-Look)
+	}
+
+	const SlopeNormal = vector.normalize(vector.create(0, 1, -1))
+	const Faces = {
+		CreateFace(LocalVertices, 1, 4, 3, 2, vector.create(0, 0, 1)), -- Back vertical quad (+Look)
+		CreateFace(LocalVertices, 1, 2, 6, 5, vector.create(0, -1, 0)), -- Bottom quad (-Up)
+		CreateFace(LocalVertices, 5, 6, 3, 4, SlopeNormal), -- Sloped ramp quad (+Up / -Look)
+		CreateFace(LocalVertices, 1, 5, 4, nil, vector.create(-1, 0, 0)), -- Left triangle (-Right)
+		CreateFace(LocalVertices, 2, 3, 6, nil, vector.create(1, 0, 0)), -- Right triangle (+Right)
+	}
+
+	return {
+		ShapeId = 3,
+		Name = "Triangle",
+		IsAxisAligned = false,
+		VertexCount = #LocalVertices,
+		LocalVertices = LocalVertices,
+		Faces = Faces,
+	}
+end
+
+--[=[
+	Builds the unit Plane mesh (ShapeId = 4) with 4 corners and double-sided top/bottom quad faces.
+	@return ShapeMesh -- Unit plane mesh data.
+]=]
+local function BuildPlaneMesh(): ShapeMesh
+	const LocalVertices = {
+		vector.create(-1, 0, 1), -- 1: Back-Left
+		vector.create(1, 0, 1), -- 2: Back-Right
+		vector.create(1, 0, -1), -- 3: Front-Right
+		vector.create(-1, 0, -1), -- 4: Front-Left
+	}
+
+	const Faces = {
+		CreateFace(LocalVertices, 2, 1, 4, 3, vector.create(0, 1, 0)), -- Top face (+Up)
+		CreateFace(LocalVertices, 1, 2, 3, 4, vector.create(0, -1, 0)), -- Bottom face (-Up)
+	}
+
+	return {
+		ShapeId = 4,
+		Name = "Plane",
+		IsAxisAligned = true,
+		VertexCount = #LocalVertices,
+		LocalVertices = LocalVertices,
+		Faces = Faces,
+	}
+end
+
+-- Hashmap translating 3-bit ECS ShapeId directly to its prebuilt ShapeMesh vertex/face data
+VerticeFile.ShapeData = {
+	[0] = BuildCubeMesh(),
+	[1] = BuildSphereMesh(),
+	[2] = BuildCylinderMesh(),
+	[3] = BuildTriangleMesh(),
+	[4] = BuildPlaneMesh(),
+} :: { [number]: ShapeMesh }
+
+-- Maximum vertex count across all registered shapes (used to size scratch buffers)
+VerticeFile.MaxShapeVertices = 64 :: number
+
+--[=[
+	Translates a 3-bit ECS ShapeId into its shape name.
+	@param ShapeId number -- 3-bit shape ID (0 = Cube, 1 = Sphere, 2 = Cylinder, 3 = Triangle, 4 = Plane).
+	@return string -- Shape name (defaults to "Cube" if unknown).
+]=]
+function VerticeFile.GetShapeName(ShapeId: number): string
+	return VerticeFile.IdToShape[ShapeId] or "Cube"
+end
+
+--[=[
+	Translates a shape name into its 3-bit ECS ShapeId.
+	@param ShapeName string -- Shape name ("Cube", "Sphere", "Cylinder", "Triangle", "Plane").
+	@return number -- 3-bit shape ID (defaults to 0 / Cube if unknown).
+]=]
+function VerticeFile.GetShapeId(ShapeName: string): number
+	return VerticeFile.ShapeToId[ShapeName] or 0
+end
+
+--[=[
+	Retrieves the prebuilt local vertex and face mesh data for a 3-bit ECS ShapeId from the ShapeData hashmap.
+	@param ShapeId number -- 3-bit shape ID (0-4).
+	@return ShapeMesh -- Prebuilt shape vertex/face definition (falls back to Cube if unknown).
+]=]
+function VerticeFile.GetShapeData(ShapeId: number): ShapeMesh
+	return VerticeFile.ShapeData[ShapeId] or VerticeFile.ShapeData[0]
+end
+
+return VerticeFile
+]]></string>
+              </Properties>
+            </Item>
+            <Item class="ModuleScript" referent="155">
+              <Properties>
+                <string name="Name">ViewCulling</string>
+                <string name="Source"><![CDATA[--!strict
+--!native
+--!optimize 2
+
+-- Services --
+const Players = game:GetService("Players")
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const RunService = game:GetService("RunService")
+
+-- Modules --
+const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const CameraStore = if RunService:IsClient()
+	then require(
+		ReplicatedStorage:WaitForChild("Shared")
+			:WaitForChild("Utilities")
+			:WaitForChild("Render")
+			:WaitForChild("Camera")
+			:WaitForChild("CameraStore")
+	)
+	else nil
+
+-- Configs --
+const PADDING_AMOUNT = SystemsConfigs.CullingPaddingAmount :: number
+
+const WIDTH = SystemsConfigs.RenderWidth :: number
+const HEIGHT = SystemsConfigs.RenderHeight :: number
+const ASPECT_RATIO = WIDTH / HEIGHT :: number
+const BASE_TAN_Y = SystemsConfigs.CullingBaseTanY * PADDING_AMOUNT :: number
+const BASE_TAN_X = BASE_TAN_Y * ASPECT_RATIO :: number
+
+const BASE_BACK_PADDING = SystemsConfigs.CullingBaseBackPadding * PADDING_AMOUNT :: number
+const RADIUS_PADDING_FACTOR = SystemsConfigs.CullingRadiusPaddingFactor * PADDING_AMOUNT :: number
+const NEAR_CLIP = SystemsConfigs.CullingNearClip :: number
+const FAR_CLIP = SystemsConfigs.CullingFarClip :: number
+const OCCLUDER_INSCRIBED_FACTOR = SystemsConfigs.OccluderInscribedRadiusFactor :: number
+const OCCLUDER_MIN_PROJ_RADIUS = SystemsConfigs.OccluderMinProjectedRadius :: number
+const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
+
+-- Tables --
+local ViewOriginX = 0 :: number
+local ViewOriginY = 0 :: number
+local ViewOriginZ = 0 :: number
+
+local ViewRightX = 1 :: number
+local ViewRightY = 0 :: number
+local ViewRightZ = 0 :: number
+
+local ViewUpX = 0 :: number
+local ViewUpY = 1 :: number
+local ViewUpZ = 0 :: number
+
+local ViewLookX = 0 :: number
+local ViewLookY = 0 :: number
+local ViewLookZ = -1 :: number
+
+local ViewTanX = BASE_TAN_X :: number
+local ViewTanY = BASE_TAN_Y :: number
+
+local HasOccluder = false :: boolean
+local OccFarZ = 0 :: number
+local OccMinX = 0 :: number
+local OccMaxX = 0 :: number
+local OccMinY = 0 :: number
+local OccMaxY = 0 :: number
+
+local ViewCulling = {}
+
+-- ============================================================================
+-- 1. CULLING FUNCTIONS - FRUSTUM & DOMINANT OCCLUDER
+-- ============================================================================
+
+--[=[
+	Resolves the observer player's character Head BasePart.
+	@param TargetPlayer Player? -- Target player instance (defaults to LocalPlayer).
+	@return BasePart? -- Observer Head instance (or nil).
+]=]
+function ViewCulling.GetObserverHead(TargetPlayer: Player?): BasePart?
+	const ResolvedPlayer = TargetPlayer or Players.LocalPlayer :: Player?
+	if not ResolvedPlayer then
+		return nil
+	end
+
+	const Character = ResolvedPlayer.Character :: Model?
+	if not Character then
+		return nil
+	end
+
+	const Head = Character:FindFirstChild("Head") :: Instance?
+	if Head and Head:IsA("BasePart") then
+		return Head
+	end
+
+	return nil
+end
+
+--[=[
+	Pulls the frustum origin backward behind the camera based on Head-to-Camera distance.
+	This naturally pads both the immediate surroundings and the frustum cone without trig.
+	@param Head BasePart -- Observer Head instance providing base position and orientation.
+]=]
+function ViewCulling.UpdateDynamicView(Head: BasePart)
+	const HeadPos = Head.Position :: Vector3
+	local Origin = HeadPos
+	local Right = Head.CFrame.RightVector :: Vector3
+	local Up = Head.CFrame.UpVector :: Vector3
+	local Look = Head.CFrame.LookVector :: Vector3
+	local BackPadding = BASE_BACK_PADDING :: number
+
+	if CameraStore then
+		const CamTable = CameraStore.GetCameraTable()
+		const CamCFrame = CamTable.CameraCFrame :: CFrame
+		const CamPos = CamCFrame.Position :: Vector3
+
+		Origin = CamPos
+		Right = CamCFrame.RightVector
+		Up = CamCFrame.UpVector
+		Look = CamCFrame.LookVector
+		BackPadding += (CamPos - HeadPos).Magnitude * PADDING_AMOUNT
+
+		const FovScale = (CamTable.CameraFOV or 70) / 70 :: number
+		ViewTanY = BASE_TAN_Y * FovScale
+		ViewTanX = ViewTanY * ASPECT_RATIO
+	end
+
+	ViewOriginX = Origin.X - Look.X * BackPadding
+	ViewOriginY = Origin.Y - Look.Y * BackPadding
+	ViewOriginZ = Origin.Z - Look.Z * BackPadding
+
+	ViewRightX, ViewRightY, ViewRightZ = Right.X, Right.Y, Right.Z
+	ViewUpX, ViewUpY, ViewUpZ = Up.X, Up.Y, Up.Z
+	ViewLookX, ViewLookY, ViewLookZ = Look.X, Look.Y, Look.Z
+
+	HasOccluder = false
+end
+
+--[=[
+	Evaluates whether an entity is outside the view frustum or occluded by a dominant occluder.
+	@param EntityIndex number -- 1-based ECS entity index.
+	@param Positions buffer -- Positions buffer.
+	@param Sizes buffer -- Sizes buffer.
+	@return boolean -- True if the entity is culled (not visible).
+]=]
+function ViewCulling.IsEntityCulled(EntityIndex: number, Positions: buffer, Sizes: buffer): boolean
+	const Offset = (EntityIndex - 1) * COMPONENT_STRIDE :: number
+
+	const RelX = buffer.readf32(Positions, Offset) - ViewOriginX :: number
+	const RelY = buffer.readf32(Positions, Offset + 4) - ViewOriginY :: number
+	const RelZ = buffer.readf32(Positions, Offset + 8) - ViewOriginZ :: number
+
+	const SizeX = buffer.readf32(Sizes, Offset) :: number
+	const SizeY = buffer.readf32(Sizes, Offset + 4) :: number
+	const SizeZ = buffer.readf32(Sizes, Offset + 8) :: number
+
+	const Radius = (SizeX + SizeY + SizeZ) * RADIUS_PADDING_FACTOR :: number
+	const ForwardZ = RelX * ViewLookX + RelY * ViewLookY + RelZ * ViewLookZ :: number
+
+	-- 1. Near / Far plane check
+	if ForwardZ + Radius < NEAR_CLIP or ForwardZ - Radius > FAR_CLIP then
+		return true
+	end
+
+	const LocalX = RelX * ViewRightX + RelY * ViewRightY + RelZ * ViewRightZ :: number
+	const LocalY = RelX * ViewUpX + RelY * ViewUpY + RelZ * ViewUpZ :: number
+
+	-- 2. Horizontal / Vertical frustum cone check
+	if math.abs(LocalX) - Radius > ForwardZ * ViewTanX then
+		return true
+	end
+
+	if math.abs(LocalY) - Radius > ForwardZ * ViewTanY then
+		return true
+	end
+
+	-- 3. O(1) Occlusion check against cached foreground occluder
+	const InvZ = 1 / math.max(NEAR_CLIP, ForwardZ) :: number
+	const ProjRadius = Radius * InvZ :: number
+	const ProjX = LocalX * InvZ :: number
+	const ProjY = LocalY * InvZ :: number
+
+	if
+		HasOccluder
+		and ForwardZ - Radius > OccFarZ
+		and ProjX - ProjRadius >= OccMinX
+		and ProjX + ProjRadius <= OccMaxX
+		and ProjY - ProjRadius >= OccMinY
+		and ProjY + ProjRadius <= OccMaxY
+	then
+		return true
+	end
+
+	-- Register large close entities as the foreground occluder for subsequent checks
+	const InscribedRadius = math.min(SizeX, SizeY, SizeZ) * OCCLUDER_INSCRIBED_FACTOR * InvZ :: number
+	if InscribedRadius > OCCLUDER_MIN_PROJ_RADIUS and (not HasOccluder or ForwardZ < OccFarZ) then
+		HasOccluder = true
+		OccFarZ = ForwardZ + Radius
+		OccMinX = ProjX - InscribedRadius
+		OccMaxX = ProjX + InscribedRadius
+		OccMinY = ProjY - InscribedRadius
+		OccMaxY = ProjY + InscribedRadius
+	end
+
+	return false
+end
+
+return ViewCulling
+]]></string>
+              </Properties>
+            </Item>
+          </Item>
+          <Item class="ModuleScript" referent="156">
+            <Properties>
+              <string name="Name">ECSStorage</string>
+              <string name="Source"><![CDATA[--!strict
+--!native
+--!optimize 2
+
+-- Services --
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- Modules --
+const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
+
+return ECSMain.CreateStorage(false)
+]]></string>
+            </Properties>
+          </Item>
+          <Item class="Folder" referent="157">
+            <Properties>
+              <string name="Name">Scene</string>
+            </Properties>
+            <Item class="ModuleScript" referent="158">
+              <Properties>
+                <string name="Name">CleanerHelper</string>
+                <string name="Source"><![CDATA[--!strict
+--!native
+--!optimize 2
+
+local CleanerHelper = {}
+
+-- ============================================================================
+-- 1. RENDER ENTITY SLOT REMOVAL HELPER
+-- ============================================================================
+
+--[=[
+	Deletes a despawned entity from the active render ECS storage and updates the bidirectional slot mapping.
+	@param RenderECSData any -- Render ECS data component interface.
+	@param RenderCounts any -- Active render entity count table.
+	@param RenderSlotByObjectId buffer -- Mapping buffer from ObjectId to RenderSlot.
+	@param ObjectIdByRenderSlot buffer -- Mapping buffer from RenderSlot to ObjectId.
+	@param ObjectId number -- Server object ID being removed.
+	@param RenderSlot number -- Active client render slot being vacated.
+]=]
+function CleanerHelper.RemoveRenderEntity(
+	RenderECSData: any,
+	RenderCounts: any,
+	RenderSlotByObjectId: buffer,
+	ObjectIdByRenderSlot: buffer,
+	ObjectId: number,
+	RenderSlot: number
+)
+	const LastRenderSlot = RenderCounts.EntityECSCount :: number
+	const LastObjectId = buffer.readu32(ObjectIdByRenderSlot, LastRenderSlot * 4) :: number
+
+	RenderECSData.DeleteEntity(RenderSlot)
+
+	if RenderSlot ~= LastRenderSlot and LastObjectId > 0 then
+		buffer.writeu32(RenderSlotByObjectId, LastObjectId * 4, RenderSlot)
+		buffer.writeu32(ObjectIdByRenderSlot, RenderSlot * 4, LastObjectId)
+	end
+
+	buffer.writeu32(RenderSlotByObjectId, ObjectId * 4, 0)
+	buffer.writeu32(ObjectIdByRenderSlot, LastRenderSlot * 4, 0)
+end
+
+return CleanerHelper
+]]></string>
+              </Properties>
+            </Item>
+            <Item class="LocalScript" referent="159">
+              <Properties>
+                <string name="Name">RendererCleaner</string>
+                <string name="Source"><![CDATA[--!strict
+--!native
+--!optimize 2
+
+-- Services --
+const Players = game:GetService("Players")
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- Static References --
+const LocalPlayer = Players.LocalPlayer :: Player
+const SelfActor = script:GetActor() :: Actor?
+const ObjectStorageModule = (SelfActor and SelfActor:WaitForChild("ObjectStorage"))
+	or LocalPlayer:WaitForChild("PlayerScripts")
+		:WaitForChild("Client")
+		:WaitForChild("Objects")
+		:WaitForChild("ObjectStorage")
+
+-- Modules --
+const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
+const ObjectStorage = (require :: any)(ObjectStorageModule) :: ECSMain.ECSStorage
+const ObjectECSData = ObjectStorage.ECSData
+const ObjectPositionData = ObjectStorage.PositionData
+const ObjectOrientationData = ObjectStorage.OrientationData
+const ObjectVisualData = ObjectStorage.VisualData
+const ObjectSizeData = ObjectStorage.SizeData
+const ObjectDirectionsData = ObjectStorage.DirectionsData
+const ObjectPropertiesData = ObjectStorage.PropertiesData
+
+const RenderECSStorage = require(
+	ReplicatedStorage:WaitForChild("Shared")
+		:WaitForChild("Utilities")
+		:WaitForChild("Render")
+		:WaitForChild("ECSStorage")
+)
+const RenderECSData = RenderECSStorage.ECSData
+const RenderPositionData = RenderECSStorage.PositionData
+const RenderOrientationData = RenderECSStorage.OrientationData
+const RenderVisualData = RenderECSStorage.VisualData
+const RenderSizeData = RenderECSStorage.SizeData
+const RenderDirectionsData = RenderECSStorage.DirectionsData
+const RenderPropertiesData = RenderECSStorage.PropertiesData
+
+const ViewCulling = require(
+	ReplicatedStorage:WaitForChild("Shared")
+		:WaitForChild("Utilities")
+		:WaitForChild("Render")
+		:WaitForChild("Core")
+		:WaitForChild("ViewCulling")
+)
+
+const CleanerHelper = require(
+	ReplicatedStorage:WaitForChild("Shared")
+		:WaitForChild("Utilities")
+		:WaitForChild("Render")
+		:WaitForChild("Scene")
+		:WaitForChild("CleanerHelper")
+)
+
+-- Configs --
+const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
+const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
+const CLEANER_TICK_INTERVAL = SystemsConfigs.CleanerTickInterval :: number
+
+-- Buffers
+const ObjectPositions = ObjectPositionData.GetData() :: buffer
+const ObjectOrientations = ObjectOrientationData.GetData() :: buffer
+const ObjectVisuals = ObjectVisualData.GetData() :: buffer
+const ObjectSizes = ObjectSizeData.GetData() :: buffer
+const ObjectDirections = ObjectDirectionsData.GetData() :: buffer
+const ObjectProperties = ObjectPropertiesData.GetData() :: buffer
+const ObjectCounts = ObjectECSData.ECSDataTable
+
+const RenderPositions = RenderPositionData.GetData() :: buffer
+const RenderOrientations = RenderOrientationData.GetData() :: buffer
+const RenderVisuals = RenderVisualData.GetData() :: buffer
+const RenderSizes = RenderSizeData.GetData() :: buffer
+const RenderDirections = RenderDirectionsData.GetData() :: buffer
+const RenderProperties = RenderPropertiesData.GetData() :: buffer
+const RenderCounts = RenderECSData.ECSDataTable
+
+const MAX_ENTITIES = buffer.len(ObjectPositions) // COMPONENT_STRIDE :: number
+const RenderSlotByObjectId = buffer.create((MAX_ENTITIES + 1) * 4) :: buffer
+const ObjectIdByRenderSlot = buffer.create((MAX_ENTITIES + 1) * 4) :: buffer
+
+-- ============================================================================
+-- 1. CLEANER LOOP - POPULATES & CULLS RENDER ECS STORAGE FROM OBJECT STORAGE
+-- ============================================================================
+
+while true do
+	const Head = ViewCulling.GetObserverHead(LocalPlayer) :: BasePart?
+	const ObjectEntityCount = math.min(ObjectCounts.EntityECSCount, MAX_ENTITIES) :: number
+
+	if Head and ObjectEntityCount > 0 then
+		ViewCulling.UpdateDynamicView(Head)
+
+		for i = 1, ObjectEntityCount do
+			const ObjectSlotOffset = i * 4 :: number
+			local RenderSlot = buffer.readu32(RenderSlotByObjectId, ObjectSlotOffset) :: number
+
+			if ViewCulling.IsEntityCulled(i, ObjectPositions, ObjectSizes) then
+				if RenderSlot > 0 then
+					CleanerHelper.RemoveRenderEntity(
+						RenderECSData,
+						RenderCounts,
+						RenderSlotByObjectId,
+						ObjectIdByRenderSlot,
+						i,
+						RenderSlot
+					)
+				end
+				continue
+			end
+
+			if RenderSlot == 0 then
+				RenderSlot = RenderECSData.RegisterEntity()
+				buffer.writeu32(RenderSlotByObjectId, ObjectSlotOffset, RenderSlot)
+				buffer.writeu32(ObjectIdByRenderSlot, RenderSlot * 4, i)
+			end
+
+			const SourceOffset = (i - 1) * COMPONENT_STRIDE :: number
+			const SourceDirOffset = (i - 1) * DIRECTION_STRIDE :: number
+			const SourcePropOffset = (i - 1) * PROPERTIES_STRIDE :: number
+			const TargetOffset = (RenderSlot - 1) * COMPONENT_STRIDE :: number
+			const TargetDirOffset = (RenderSlot - 1) * DIRECTION_STRIDE :: number
+			const TargetPropOffset = (RenderSlot - 1) * PROPERTIES_STRIDE :: number
+
+			buffer.copy(RenderPositions, TargetOffset, ObjectPositions, SourceOffset, COMPONENT_STRIDE)
+			buffer.copy(RenderOrientations, TargetOffset, ObjectOrientations, SourceOffset, COMPONENT_STRIDE)
+			buffer.copy(RenderVisuals, TargetOffset, ObjectVisuals, SourceOffset, COMPONENT_STRIDE)
+			buffer.copy(RenderSizes, TargetOffset, ObjectSizes, SourceOffset, COMPONENT_STRIDE)
+			buffer.copy(RenderDirections, TargetDirOffset, ObjectDirections, SourceDirOffset, DIRECTION_STRIDE)
+			buffer.copy(RenderProperties, TargetPropOffset, ObjectProperties, SourcePropOffset, PROPERTIES_STRIDE)
+		end
+	end
+
+	task.wait(CLEANER_TICK_INTERVAL)
+end
+]]></string>
+              </Properties>
+            </Item>
+          </Item>
+          <Item class="Folder" referent="160">
+            <Properties>
+              <string name="Name">Texture</string>
+            </Properties>
+            <Item class="ModuleScript" referent="161">
               <Properties>
                 <string name="Name">TextureHelper</string>
                 <string name="Source"><![CDATA[--!strict
@@ -19151,14 +19804,10 @@ const AssetService = game:GetService("AssetService")
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- Modules --
-const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const RenderConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Configs"):WaitForChild("RenderConfig"))
 
 -- Configs --
-const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
-const DEFAULT_TEXTURE_URI = SystemsConfigs.DefaultTextureUri :: string
-
--- Buffers
-local CachedDefaultTexture: buffer? = nil
+const TEXTURE_SIZE = RenderConfig.TextureSize :: number
 
 local TextureHelper = {}
 
@@ -19304,15 +19953,6 @@ function TextureHelper.CreateProceduralStudTexture(TargetSize: number): buffer
 end
 
 --[=[
-	Generates the default procedural template texture buffer (stud template).
-	@param TargetSize number -- Width and height of the square texture in texels.
-	@return buffer -- RGBA pixel buffer of size TargetSize * TargetSize * 4.
-]=]
-function TextureHelper.CreateProceduralTemplateTexture(TargetSize: number): buffer
-	return TextureHelper.CreateProceduralStudTexture(TargetSize)
-end
-
---[=[
 	Resamples a source RGBA pixel buffer to a square TargetSize x TargetSize buffer using nearest-neighbor sampling.
 	@param SourceBuffer buffer -- Source RGBA pixel buffer.
 	@param SourceWidth number -- Source image width in pixels.
@@ -19353,7 +19993,7 @@ end
 	Decodes a raw Roblox texture URL into a TargetSize x TargetSize RGBA buffer using EditableImage, falling back to FallbackBuffer on empty URI or load failure.
 	@param RawUrl string -- Raw Roblox texture URL (e.g. "rbxassetid://..." or "rbxasset://...").
 	@param FallbackBuffer buffer? -- Optional precomputed fallback buffer if decoding fails or URL is empty.
-	@param TargetSize number? -- Optional square target size in texels (defaults to SystemsConfigs.TextureSize).
+	@param TargetSize number? -- Optional square target size in texels (defaults to RenderConfig.TextureSize).
 	@return (buffer, boolean) -- Decoded (or fallback) 64x64 RGBA buffer, and true if decoded from the URL.
 ]=]
 function TextureHelper.DecodeUrlToBuffer(
@@ -19385,36 +20025,11 @@ function TextureHelper.DecodeUrlToBuffer(
 	return TextureHelper.CreateProceduralStudTexture(ResolvedSize), false
 end
 
---[=[
-	Returns the cached synchronous procedural default texture buffer and its dimensions.
-	@return (buffer, number, number) -- TextureBuffer, TextureWidth, TextureHeight.
-]=]
-function TextureHelper.GetDefaultTexture(): (buffer, number, number)
-	if not CachedDefaultTexture then
-		CachedDefaultTexture = TextureHelper.CreateProceduralStudTexture(TEXTURE_SIZE)
-	end
-
-	return CachedDefaultTexture :: buffer, TEXTURE_SIZE, TEXTURE_SIZE
-end
-
---[=[
-	Loads an optional Roblox texture URI or returns the procedural stud template texture.
-	@param TextureUri string? -- Optional asset URI override (defaults to SystemsConfigs.DefaultTextureUri).
-	@param TargetSize number? -- Optional square target size in texels (defaults to SystemsConfigs.TextureSize).
-	@return (buffer, number, number) -- TextureBuffer, TextureWidth, TextureHeight.
-]=]
-function TextureHelper.LoadRobloxTemplateTexture(TextureUri: string?, TargetSize: number?): (buffer, number, number)
-	const ResolvedUri = TextureUri or DEFAULT_TEXTURE_URI :: string
-	const ResolvedSize = TargetSize or TEXTURE_SIZE :: number
-	const DecodedBuffer = TextureHelper.DecodeUrlToBuffer(ResolvedUri, nil, ResolvedSize)
-	return DecodedBuffer, ResolvedSize, ResolvedSize
-end
-
 return TextureHelper
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="151">
+            <Item class="ModuleScript" referent="162">
               <Properties>
                 <string name="Name">TextureTable</string>
                 <string name="Source"><![CDATA[--!strict
@@ -19425,11 +20040,11 @@ return TextureHelper
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- Modules --
-const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const RenderConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Configs"):WaitForChild("RenderConfig"))
 const TextureHelper = require(script.Parent.TextureHelper)
 
 -- Configs --
-const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
+const TEXTURE_SIZE = RenderConfig.TextureSize :: number
 
 -- Buffers
 const DefaultWoodBuffer = TextureHelper.CreateProceduralWoodTexture(TEXTURE_SIZE) :: buffer
@@ -19680,450 +20295,12 @@ return TextureTable
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="152">
-              <Properties>
-                <string name="Name">ViewCulling</string>
-                <string name="Source"><![CDATA[--!strict
---!native
---!optimize 2
-
--- Services --
-const Players = game:GetService("Players")
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
-const RunService = game:GetService("RunService")
-
--- Modules --
-const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
-const CameraStore = if RunService:IsClient()
-	then require(
-		ReplicatedStorage:WaitForChild("Shared")
-			:WaitForChild("Utilities")
-			:WaitForChild("Render")
-			:WaitForChild("Camera")
-			:WaitForChild("CameraStore")
-	)
-	else nil
-
--- Configs --
-const PADDING_AMOUNT = SystemsConfigs.CullingPaddingAmount :: number
-
-const WIDTH = SystemsConfigs.RenderWidth :: number
-const HEIGHT = SystemsConfigs.RenderHeight :: number
-const ASPECT_RATIO = WIDTH / HEIGHT :: number
-const BASE_TAN_Y = SystemsConfigs.CullingBaseTanY * PADDING_AMOUNT :: number
-const BASE_TAN_X = BASE_TAN_Y * ASPECT_RATIO :: number
-
-const BASE_BACK_PADDING = SystemsConfigs.CullingBaseBackPadding * PADDING_AMOUNT :: number
-const RADIUS_PADDING_FACTOR = SystemsConfigs.CullingRadiusPaddingFactor * PADDING_AMOUNT :: number
-const NEAR_CLIP = SystemsConfigs.CullingNearClip :: number
-const FAR_CLIP = SystemsConfigs.CullingFarClip :: number
-const OCCLUDER_INSCRIBED_FACTOR = SystemsConfigs.OccluderInscribedRadiusFactor :: number
-const OCCLUDER_MIN_PROJ_RADIUS = SystemsConfigs.OccluderMinProjectedRadius :: number
-const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
-
--- Tables --
-local ViewOriginX = 0 :: number
-local ViewOriginY = 0 :: number
-local ViewOriginZ = 0 :: number
-
-local ViewRightX = 1 :: number
-local ViewRightY = 0 :: number
-local ViewRightZ = 0 :: number
-
-local ViewUpX = 0 :: number
-local ViewUpY = 1 :: number
-local ViewUpZ = 0 :: number
-
-local ViewLookX = 0 :: number
-local ViewLookY = 0 :: number
-local ViewLookZ = -1 :: number
-
-local ViewTanX = BASE_TAN_X :: number
-local ViewTanY = BASE_TAN_Y :: number
-
-local HasOccluder = false :: boolean
-local OccFarZ = 0 :: number
-local OccMinX = 0 :: number
-local OccMaxX = 0 :: number
-local OccMinY = 0 :: number
-local OccMaxY = 0 :: number
-
-local ViewCulling = {}
-
--- ============================================================================
--- 1. CULLING FUNCTIONS - FRUSTUM & DOMINANT OCCLUDER
--- ============================================================================
-
---[=[
-	Resolves the observer player's character Head BasePart.
-	@param TargetPlayer Player? -- Target player instance (defaults to LocalPlayer).
-	@return BasePart? -- Observer Head instance (or nil).
-]=]
-function ViewCulling.GetObserverHead(TargetPlayer: Player?): BasePart?
-	const ResolvedPlayer = TargetPlayer or Players.LocalPlayer :: Player?
-	if not ResolvedPlayer then
-		return nil
-	end
-
-	const Character = ResolvedPlayer.Character :: Model?
-	if not Character then
-		return nil
-	end
-
-	const Head = Character:FindFirstChild("Head") :: Instance?
-	if Head and Head:IsA("BasePart") then
-		return Head
-	end
-
-	return nil
-end
-
---[=[
-	Pulls the frustum origin backward behind the camera based on Head-to-Camera distance.
-	This naturally pads both the immediate surroundings and the frustum cone without trig.
-	@param Head BasePart -- Observer Head instance providing base position and orientation.
-]=]
-function ViewCulling.UpdateDynamicView(Head: BasePart)
-	const HeadPos = Head.Position :: Vector3
-	local Origin = HeadPos
-	local Right = Head.CFrame.RightVector :: Vector3
-	local Up = Head.CFrame.UpVector :: Vector3
-	local Look = Head.CFrame.LookVector :: Vector3
-	local BackPadding = BASE_BACK_PADDING :: number
-
-	if CameraStore then
-		const CamTable = CameraStore.GetCameraTable()
-		const CamCFrame = CamTable.CameraCFrame :: CFrame
-		const CamPos = CamCFrame.Position :: Vector3
-
-		Origin = CamPos
-		Right = CamCFrame.RightVector
-		Up = CamCFrame.UpVector
-		Look = CamCFrame.LookVector
-		BackPadding += (CamPos - HeadPos).Magnitude * PADDING_AMOUNT
-
-		const FovScale = (CamTable.CameraFOV or 70) / 70 :: number
-		ViewTanY = BASE_TAN_Y * FovScale
-		ViewTanX = ViewTanY * ASPECT_RATIO
-	end
-
-	ViewOriginX = Origin.X - Look.X * BackPadding
-	ViewOriginY = Origin.Y - Look.Y * BackPadding
-	ViewOriginZ = Origin.Z - Look.Z * BackPadding
-
-	ViewRightX, ViewRightY, ViewRightZ = Right.X, Right.Y, Right.Z
-	ViewUpX, ViewUpY, ViewUpZ = Up.X, Up.Y, Up.Z
-	ViewLookX, ViewLookY, ViewLookZ = Look.X, Look.Y, Look.Z
-
-	HasOccluder = false
-end
-
---[=[
-	Evaluates whether an entity is outside the view frustum or occluded by a dominant occluder.
-	@param EntityIndex number -- 1-based ECS entity index.
-	@param Positions buffer -- Positions buffer.
-	@param Sizes buffer -- Sizes buffer.
-	@return boolean -- True if the entity is culled (not visible).
-]=]
-function ViewCulling.IsEntityCulled(EntityIndex: number, Positions: buffer, Sizes: buffer): boolean
-	const Offset = (EntityIndex - 1) * COMPONENT_STRIDE :: number
-
-	const RelX = buffer.readf32(Positions, Offset) - ViewOriginX :: number
-	const RelY = buffer.readf32(Positions, Offset + 4) - ViewOriginY :: number
-	const RelZ = buffer.readf32(Positions, Offset + 8) - ViewOriginZ :: number
-
-	const SizeX = buffer.readf32(Sizes, Offset) :: number
-	const SizeY = buffer.readf32(Sizes, Offset + 4) :: number
-	const SizeZ = buffer.readf32(Sizes, Offset + 8) :: number
-
-	const Radius = (SizeX + SizeY + SizeZ) * RADIUS_PADDING_FACTOR :: number
-	const ForwardZ = RelX * ViewLookX + RelY * ViewLookY + RelZ * ViewLookZ :: number
-
-	-- 1. Near / Far plane check
-	if ForwardZ + Radius < NEAR_CLIP or ForwardZ - Radius > FAR_CLIP then
-		return true
-	end
-
-	const LocalX = RelX * ViewRightX + RelY * ViewRightY + RelZ * ViewRightZ :: number
-	const LocalY = RelX * ViewUpX + RelY * ViewUpY + RelZ * ViewUpZ :: number
-
-	-- 2. Horizontal / Vertical frustum cone check
-	if math.abs(LocalX) - Radius > ForwardZ * ViewTanX then
-		return true
-	end
-
-	if math.abs(LocalY) - Radius > ForwardZ * ViewTanY then
-		return true
-	end
-
-	-- 3. O(1) Occlusion check against cached foreground occluder
-	const InvZ = 1 / math.max(NEAR_CLIP, ForwardZ) :: number
-	const ProjRadius = Radius * InvZ :: number
-	const ProjX = LocalX * InvZ :: number
-	const ProjY = LocalY * InvZ :: number
-
-	if
-		HasOccluder
-		and ForwardZ - Radius > OccFarZ
-		and ProjX - ProjRadius >= OccMinX
-		and ProjX + ProjRadius <= OccMaxX
-		and ProjY - ProjRadius >= OccMinY
-		and ProjY + ProjRadius <= OccMaxY
-	then
-		return true
-	end
-
-	-- Register large close entities as the foreground occluder for subsequent checks
-	const InscribedRadius = math.min(SizeX, SizeY, SizeZ) * OCCLUDER_INSCRIBED_FACTOR * InvZ :: number
-	if InscribedRadius > OCCLUDER_MIN_PROJ_RADIUS and (not HasOccluder or ForwardZ < OccFarZ) then
-		HasOccluder = true
-		OccFarZ = ForwardZ + Radius
-		OccMinX = ProjX - InscribedRadius
-		OccMaxX = ProjX + InscribedRadius
-		OccMinY = ProjY - InscribedRadius
-		OccMaxY = ProjY + InscribedRadius
-	end
-
-	return false
-end
-
-return ViewCulling
-]]></string>
-              </Properties>
-            </Item>
           </Item>
-          <Item class="ModuleScript" referent="153">
-            <Properties>
-              <string name="Name">ECSStorage</string>
-              <string name="Source"><![CDATA[--!strict
---!native
---!optimize 2
-
--- Services --
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
-
--- Modules --
-const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
-
-return ECSMain.CreateStorage(false)
-]]></string>
-            </Properties>
-          </Item>
-          <Item class="Folder" referent="154">
-            <Properties>
-              <string name="Name">Scene</string>
-            </Properties>
-            <Item class="ModuleScript" referent="155">
-              <Properties>
-                <string name="Name">CleanerHelper</string>
-                <string name="Source"><![CDATA[--!strict
---!native
---!optimize 2
-
-local CleanerHelper = {}
-
--- ============================================================================
--- 1. RENDER ENTITY SLOT REMOVAL HELPER
--- ============================================================================
-
---[=[
-	Deletes a despawned entity from the active render ECS storage and updates the bidirectional slot mapping.
-	@param RenderECSData any -- Render ECS data component interface.
-	@param RenderCounts any -- Active render entity count table.
-	@param RenderSlotByObjectId buffer -- Mapping buffer from ObjectId to RenderSlot.
-	@param ObjectIdByRenderSlot buffer -- Mapping buffer from RenderSlot to ObjectId.
-	@param ObjectId number -- Server object ID being removed.
-	@param RenderSlot number -- Active client render slot being vacated.
-]=]
-function CleanerHelper.RemoveRenderEntity(
-	RenderECSData: any,
-	RenderCounts: any,
-	RenderSlotByObjectId: buffer,
-	ObjectIdByRenderSlot: buffer,
-	ObjectId: number,
-	RenderSlot: number
-)
-	const LastRenderSlot = RenderCounts.EntityECSCount :: number
-	const LastObjectId = buffer.readu32(ObjectIdByRenderSlot, LastRenderSlot * 4) :: number
-
-	RenderECSData.DeleteEntity(RenderSlot)
-
-	if RenderSlot ~= LastRenderSlot and LastObjectId > 0 then
-		buffer.writeu32(RenderSlotByObjectId, LastObjectId * 4, RenderSlot)
-		buffer.writeu32(ObjectIdByRenderSlot, RenderSlot * 4, LastObjectId)
-	end
-
-	buffer.writeu32(RenderSlotByObjectId, ObjectId * 4, 0)
-	buffer.writeu32(ObjectIdByRenderSlot, LastRenderSlot * 4, 0)
-end
-
-return CleanerHelper
-]]></string>
-              </Properties>
-            </Item>
-            <Item class="LocalScript" referent="156">
-              <Properties>
-                <string name="Name">RendererCleaner</string>
-                <string name="Source"><![CDATA[--!strict
---!native
---!optimize 2
-
--- Services --
-const Players = game:GetService("Players")
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
-
--- Static References --
-const LocalPlayer = Players.LocalPlayer :: Player
-const SelfActor = script:GetActor() :: Actor?
-const ObjectStorageModule = (SelfActor and SelfActor:WaitForChild("ObjectStorage"))
-	or LocalPlayer:WaitForChild("PlayerScripts")
-		:WaitForChild("Client")
-		:WaitForChild("Objects")
-		:WaitForChild("ObjectStorage")
-
--- Modules --
-const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
-const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
-const ObjectStorage = (require :: any)(ObjectStorageModule) :: ECSMain.ECSStorage
-const ObjectECSData = ObjectStorage.ECSData
-const ObjectPositionData = ObjectStorage.PositionData
-const ObjectOrientationData = ObjectStorage.OrientationData
-const ObjectVisualData = ObjectStorage.VisualData
-const ObjectSizeData = ObjectStorage.SizeData
-const ObjectDirectionsData = ObjectStorage.DirectionsData
-const ObjectPropertiesData = ObjectStorage.PropertiesData
-
-const RenderECSStorage = require(
-	ReplicatedStorage:WaitForChild("Shared")
-		:WaitForChild("Utilities")
-		:WaitForChild("Render")
-		:WaitForChild("ECSStorage")
-)
-const RenderECSData = RenderECSStorage.ECSData
-const RenderPositionData = RenderECSStorage.PositionData
-const RenderOrientationData = RenderECSStorage.OrientationData
-const RenderVisualData = RenderECSStorage.VisualData
-const RenderSizeData = RenderECSStorage.SizeData
-const RenderDirectionsData = RenderECSStorage.DirectionsData
-const RenderPropertiesData = RenderECSStorage.PropertiesData
-
-const ViewCulling = require(
-	ReplicatedStorage:WaitForChild("Shared")
-		:WaitForChild("Utilities")
-		:WaitForChild("Render")
-		:WaitForChild("Core")
-		:WaitForChild("ViewCulling")
-)
-
-const CleanerHelper = require(
-	ReplicatedStorage:WaitForChild("Shared")
-		:WaitForChild("Utilities")
-		:WaitForChild("Render")
-		:WaitForChild("Scene")
-		:WaitForChild("CleanerHelper")
-)
-
--- Configs --
-const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
-const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
-const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
-const CLEANER_TICK_INTERVAL = SystemsConfigs.CleanerTickInterval :: number
-
--- Buffers
-const ObjectPositions = ObjectPositionData.GetData() :: buffer
-const ObjectOrientations = ObjectOrientationData.GetData() :: buffer
-const ObjectVisuals = ObjectVisualData.GetData() :: buffer
-const ObjectSizes = ObjectSizeData.GetData() :: buffer
-const ObjectDirections = ObjectDirectionsData.GetData() :: buffer
-const ObjectProperties = ObjectPropertiesData.GetData() :: buffer
-const ObjectCounts = ObjectECSData.ECSDataTable
-
-const RenderPositions = RenderPositionData.GetData() :: buffer
-const RenderOrientations = RenderOrientationData.GetData() :: buffer
-const RenderVisuals = RenderVisualData.GetData() :: buffer
-const RenderSizes = RenderSizeData.GetData() :: buffer
-const RenderDirections = RenderDirectionsData.GetData() :: buffer
-const RenderProperties = RenderPropertiesData.GetData() :: buffer
-const RenderCounts = RenderECSData.ECSDataTable
-
-const MAX_ENTITIES = buffer.len(ObjectPositions) // COMPONENT_STRIDE :: number
-const RenderSlotByObjectId = buffer.create((MAX_ENTITIES + 1) * 4) :: buffer
-const ObjectIdByRenderSlot = buffer.create((MAX_ENTITIES + 1) * 4) :: buffer
-
--- ============================================================================
--- 1. CLEANER LOOP - POPULATES & CULLS RENDER ECS STORAGE FROM OBJECT STORAGE
--- ============================================================================
-
-while true do
-	const Head = ViewCulling.GetObserverHead(LocalPlayer) :: BasePart?
-	const ObjectEntityCount = math.min(ObjectCounts.EntityECSCount, MAX_ENTITIES) :: number
-
-	if Head and ObjectEntityCount > 0 then
-		ViewCulling.UpdateDynamicView(Head)
-
-		for i = 1, ObjectEntityCount do
-			const ObjectSlotOffset = i * 4 :: number
-			local RenderSlot = buffer.readu32(RenderSlotByObjectId, ObjectSlotOffset) :: number
-
-			if ViewCulling.IsEntityCulled(i, ObjectPositions, ObjectSizes) then
-				if RenderSlot > 0 then
-					CleanerHelper.RemoveRenderEntity(
-						RenderECSData,
-						RenderCounts,
-						RenderSlotByObjectId,
-						ObjectIdByRenderSlot,
-						i,
-						RenderSlot
-					)
-				end
-				continue
-			end
-
-			if RenderSlot == 0 then
-				RenderSlot = RenderECSData.RegisterEntity()
-				buffer.writeu32(RenderSlotByObjectId, ObjectSlotOffset, RenderSlot)
-				buffer.writeu32(ObjectIdByRenderSlot, RenderSlot * 4, i)
-			end
-
-			const SourceOffset = (i - 1) * COMPONENT_STRIDE :: number
-			const SourceDirOffset = (i - 1) * DIRECTION_STRIDE :: number
-			const SourcePropOffset = (i - 1) * PROPERTIES_STRIDE :: number
-			const TargetOffset = (RenderSlot - 1) * COMPONENT_STRIDE :: number
-			const TargetDirOffset = (RenderSlot - 1) * DIRECTION_STRIDE :: number
-			const TargetPropOffset = (RenderSlot - 1) * PROPERTIES_STRIDE :: number
-
-			buffer.copy(RenderPositions, TargetOffset, ObjectPositions, SourceOffset, COMPONENT_STRIDE)
-			buffer.copy(RenderOrientations, TargetOffset, ObjectOrientations, SourceOffset, COMPONENT_STRIDE)
-			buffer.copy(RenderVisuals, TargetOffset, ObjectVisuals, SourceOffset, COMPONENT_STRIDE)
-			buffer.copy(RenderSizes, TargetOffset, ObjectSizes, SourceOffset, COMPONENT_STRIDE)
-			buffer.copy(RenderDirections, TargetDirOffset, ObjectDirections, SourceDirOffset, DIRECTION_STRIDE)
-			buffer.copy(RenderProperties, TargetPropOffset, ObjectProperties, SourcePropOffset, PROPERTIES_STRIDE)
-		end
-	end
-
-	task.wait(CLEANER_TICK_INTERVAL)
-end
-]]></string>
-              </Properties>
-            </Item>
-            <Item class="LocalScript" referent="157">
-              <Properties>
-                <string name="Name">TextureCacher</string>
-                <string name="Source"><![CDATA[local TextureFolder = game.MaterialService :: MaterialService
-
-task.wait(0.1)
-
-for i = 1, TextureFolder:GetChildren() do
-end
-]]></string>
-              </Properties>
-            </Item>
-          </Item>
-          <Item class="Folder" referent="158">
+          <Item class="Folder" referent="163">
             <Properties>
               <string name="Name">Worker</string>
             </Properties>
-            <Item class="LocalScript" referent="159">
+            <Item class="LocalScript" referent="164">
               <Properties>
                 <string name="Name">ParallelWorker</string>
                 <string name="Source"><![CDATA[--!strict
@@ -20142,7 +20319,7 @@ const SelfActor = script.Parent :: Actor
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper)
 const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath)
-const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Core.TextureTable)
+const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Texture.TextureTable)
 
 -- Configs --
 const WIDTH = SystemsConfigs.RenderWidth :: number
@@ -20179,15 +20356,6 @@ SelfActor:BindToMessageParallel(
 	end
 )
 
-SelfActor:BindToMessageParallel(
-	"Set Texture",
-	function(NewTextureBuffer: buffer, NewWidth: number, NewHeight: number)
-		DefaultTextureBuffer = NewTextureBuffer
-		TextureWidth = NewWidth
-		TextureHeight = NewHeight
-	end
-)
-
 SelfActor:BindToMessageParallel("Execute Rendering", function(RenderBuffer: buffer, ByteCount: number, FrameId: number)
 	if DirtyMinY <= DirtyMaxY then
 		BufferHelper.ClearDirtyRows(WIDTH, DirtyMinY, DirtyMaxY, TOTAL_PIXELS, PixelBuffer, ZBuffer)
@@ -20210,7 +20378,7 @@ SelfActor:BindToMessageParallel("Execute Rendering", function(RenderBuffer: buff
 		)
 	end
 
-	ControllerActor:SendMessage("Return Render Calculations", PixelBuffer, ZBuffer, FrameId)
+	ControllerActor:SendMessage("Return Render Calculations", PixelBuffer, ZBuffer, FrameId, DirtyMinY, DirtyMaxY)
 end)
 ]]></string>
               </Properties>
@@ -20220,23 +20388,23 @@ end)
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="160">
+  <Item class="ServerScriptService" referent="165">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="161">
+    <Item class="Folder" referent="166">
       <Properties>
         <string name="Name">Server</string>
       </Properties>
-      <Item class="Folder" referent="162">
+      <Item class="Folder" referent="167">
         <Properties>
           <string name="Name">Objects</string>
         </Properties>
-        <Item class="Folder" referent="163">
+        <Item class="Folder" referent="168">
           <Properties>
             <string name="Name">ObjectsECS</string>
           </Properties>
-          <Item class="Script" referent="164">
+          <Item class="Script" referent="169">
             <Properties>
               <string name="Name">ECSBuilder</string>
               <token name="RunContext">0</token>
@@ -20288,7 +20456,7 @@ end
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="165">
+          <Item class="ModuleScript" referent="170">
             <Properties>
               <string name="Name">ECSBuilderHelper</string>
               <string name="Source"><![CDATA[--!strict
@@ -20304,7 +20472,8 @@ const Workspace = workspace :: Workspace
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
-const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Core.TextureTable)
+const VerticeFile = require(ReplicatedStorage.Shared.Utilities.Render.Core.VerticeFile)
+const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Texture.TextureTable)
 const Storage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
 const ECSData = Storage.ECSData
 const PositionData = Storage.PositionData
@@ -20343,7 +20512,7 @@ local ECSBuilderHelper = {}
 	@return number -- Assigned (or existing) TextureTable ID (0 if URL is empty).
 ]=]
 function ECSBuilderHelper.RegisterDecal(DecalInstance: Decal): number
-	const TextureId: number, IsNew: boolean = TextureTable.RegisterUrl(DecalInstance.Texture, DecalInstance.Name, true)
+	const TextureId: number, IsNew: boolean = TextureTable.RegisterUrl(DecalInstance.Texture, DecalInstance.Name, false)
 	if TextureId == 0 then
 		return 0
 	end
@@ -20459,15 +20628,45 @@ function ECSBuilderHelper.PopulatePart(Part: BasePart)
 		end
 	end
 
+	local ShapeId = VerticeFile.ShapeToId.Cube :: number
+	const ShapeIdAttr = Part:GetAttribute("ShapeId")
+	if typeof(ShapeIdAttr) == "number" then
+		ShapeId = math.clamp(math.floor(ShapeIdAttr), 0, 7)
+	else
+		const ShapeNameAttr = Part:GetAttribute("Shape")
+		if typeof(ShapeNameAttr) == "string" then
+			ShapeId = VerticeFile.GetShapeId(ShapeNameAttr)
+		elseif Part:IsA("WedgePart") or Part:IsA("CornerWedgePart") then
+			ShapeId = VerticeFile.ShapeToId.Triangle
+		elseif Part:IsA("Part") then
+			const PartShape = Part.Shape
+			if PartShape == Enum.PartType.Ball then
+				ShapeId = VerticeFile.ShapeToId.Sphere
+			elseif PartShape == Enum.PartType.Cylinder then
+				ShapeId = VerticeFile.ShapeToId.Cylinder
+			elseif PartShape == Enum.PartType.Wedge or PartShape == Enum.PartType.CornerWedge then
+				ShapeId = VerticeFile.ShapeToId.Triangle
+			end
+		end
+	end
+
 	const PropertiesOffset = (EntityId - 1) * PROPERTIES_STRIDE :: number
-	PropertiesData.CreateLayout(PropertiesOffset, Part.CanCollide, Part.Transparency < 1, Part.Anchored, 0, TextureId)
+	PropertiesData.CreateLayout(
+		PropertiesOffset,
+		Part.CanCollide,
+		Part.Transparency < 1,
+		Part.Anchored,
+		0,
+		TextureId,
+		ShapeId
+	)
 end
 
 return ECSBuilderHelper
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="166">
+          <Item class="ModuleScript" referent="171">
             <Properties>
               <string name="Name">Storage</string>
               <string name="Source"><![CDATA[--!strict
@@ -20485,15 +20684,15 @@ return ECSMain.CreateStorage(true)
             </Properties>
           </Item>
         </Item>
-        <Item class="Folder" referent="167">
+        <Item class="Folder" referent="172">
           <Properties>
             <string name="Name">Replication</string>
           </Properties>
-          <Item class="Folder" referent="168">
+          <Item class="Folder" referent="173">
             <Properties>
               <string name="Name">Controller</string>
             </Properties>
-            <Item class="Script" referent="169">
+            <Item class="Script" referent="174">
               <Properties>
                 <string name="Name">ReplicatorExecuter</string>
                 <token name="RunContext">0</token>
@@ -20561,11 +20760,11 @@ end
               </Properties>
             </Item>
           </Item>
-          <Item class="Folder" referent="170">
+          <Item class="Folder" referent="175">
             <Properties>
               <string name="Name">Core</string>
             </Properties>
-            <Item class="ModuleScript" referent="171">
+            <Item class="ModuleScript" referent="176">
               <Properties>
                 <string name="Name">PlayerCuller</string>
                 <string name="Source"><![CDATA[--!strict
@@ -20755,7 +20954,7 @@ return PlayerCuller
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="172">
+            <Item class="ModuleScript" referent="177">
               <Properties>
                 <string name="Name">PlayerFunctions</string>
                 <string name="Source"><![CDATA[--!strict
@@ -20943,15 +21142,15 @@ return PlayerFunctions
           </Item>
         </Item>
       </Item>
-      <Item class="Folder" referent="173">
+      <Item class="Folder" referent="178">
         <Properties>
           <string name="Name">Tests</string>
         </Properties>
-        <Item class="Folder" referent="174">
+        <Item class="Folder" referent="179">
           <Properties>
             <string name="Name">Specs</string>
           </Properties>
-          <Item class="ModuleScript" referent="175">
+          <Item class="ModuleScript" referent="180">
             <Properties>
               <string name="Name">BVH.spec</string>
               <string name="Source"><![CDATA[--!strict
@@ -21100,7 +21299,7 @@ end
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="176">
+          <Item class="ModuleScript" referent="181">
             <Properties>
               <string name="Name">ECS.spec</string>
               <string name="Source"><![CDATA[--!strict
@@ -21163,10 +21362,15 @@ return function()
 			expect(ECSMain.IsEntityVisible(UpdatedReg)).to.equal(false)
 			expect(ECSMain.IsEntityAnchored(UpdatedReg)).to.equal(true)
 
-			-- Updating DynamicId must also preserve TextureId
+			-- Updating DynamicId must also preserve TextureId and ShapeId
+			Storage.PropertiesData.CreateLayout(0, true, false, true, 77, 2, 3)
+			expect(ECSMain.GetEntityShapeId(buffer.readu32(PropsBuf, 0))).to.equal(3)
+			ECSMain.SetEntityShapeId(PropsBuf, EntityId, 4)
+			expect(ECSMain.GetEntityShapeId(buffer.readu32(PropsBuf, 0))).to.equal(4)
 			ECSMain.SetEntityDynamicId(PropsBuf, EntityId, 123)
 			const AfterDynReg = buffer.readu32(PropsBuf, 0)
 			expect(ECSMain.GetEntityTextureId(AfterDynReg)).to.equal(2)
+			expect(ECSMain.GetEntityShapeId(AfterDynReg)).to.equal(4)
 			expect(ECSMain.GetEntityDynamicId(AfterDynReg)).to.equal(123)
 		end)
 	end)
@@ -21228,7 +21432,7 @@ end
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="177">
+          <Item class="ModuleScript" referent="182">
             <Properties>
               <string name="Name">Physics.spec</string>
               <string name="Source"><![CDATA[--!strict
@@ -21378,7 +21582,7 @@ end
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="178">
+          <Item class="ModuleScript" referent="183">
             <Properties>
               <string name="Name">RenderMath.spec</string>
               <string name="Source"><![CDATA[--!strict
@@ -21400,8 +21604,9 @@ return function()
 
 	const MathModule = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("MathModule"))
 	const BufferHelper = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("BufferHelper"))
-	const TextureHelper = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("TextureHelper"))
-	const TextureTable = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("TextureTable"))
+	const VerticeFile = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("VerticeFile"))
+	const TextureHelper = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Texture"):WaitForChild("TextureHelper"))
+	const TextureTable = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Texture"):WaitForChild("TextureTable"))
 	const RenderMath = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("RenderMath"))
 
 	describe("1. 2D Edge Functions & Geometric Tests", function()
@@ -21429,13 +21634,13 @@ return function()
 		end)
 
 		it("should project 3D camera-space vertices onto integer 2D screen coordinates", function()
-			const OutBuffer = buffer.create(16)
+			const OutBuffer = buffer.create(20)
 			const Vertex = vector.create(2, 4, 10)
 			const FocalLength = 100 :: number
 			const HalfW = 160 :: number
 			const HalfH = 120 :: number
 
-			MathModule.ProjectVertex(OutBuffer, 0, Vertex, FocalLength, HalfW, HalfH)
+			MathModule.ProjectVertexUV(OutBuffer, 0, Vertex, 0, 0, FocalLength, HalfW, HalfH)
 
 			const ProjX = buffer.readf32(OutBuffer, 0)
 			const ProjY = buffer.readf32(OutBuffer, 4)
@@ -21451,16 +21656,16 @@ return function()
 
 	describe("3. Sutherland-Hodgman Polygon Clipping", function()
 		it("should clip a triangle straddling a plane and produce a quad", function()
-			const InputBuf = buffer.create(3 * 12)
-			const OutputBuf = buffer.create(6 * 12)
+			const InputBuf = buffer.create(3 * 20)
+			const OutputBuf = buffer.create(6 * 20)
 
 			-- Triangle vertices: (0, 0, 2), (2, 0, -2), (-2, 0, -2) straddling plane Z = 0
 			BufferHelper.WriteVec3(InputBuf, 0, vector.create(0, 0, 2))
-			BufferHelper.WriteVec3(InputBuf, 12, vector.create(2, 0, -2))
-			BufferHelper.WriteVec3(InputBuf, 24, vector.create(-2, 0, -2))
+			BufferHelper.WriteVec3(InputBuf, 20, vector.create(2, 0, -2))
+			BufferHelper.WriteVec3(InputBuf, 40, vector.create(-2, 0, -2))
 
 			-- Plane normal (0, 0, 1) offset 0 (keeps vertices with Z >= 0)
-			const ClippedCount = MathModule.ClipPolygon(InputBuf, 3, OutputBuf, vector.create(0, 0, 1), 0)
+			const ClippedCount = MathModule.ClipPolygonUV(InputBuf, 3, OutputBuf, vector.create(0, 0, 1), 0)
 			-- Triangle crossing plane creates 3 vertices inside half-space
 			expect(ClippedCount).to.equal(3)
 		end)
@@ -21536,9 +21741,9 @@ return function()
 			expect(buffer.readf32(OutputBuf, 40 + 12)).to.be.near(0.5, 1e-4)
 		end)
 
-		it("should generate a procedural template texture and rasterize textured triangles", function()
+		it("should generate a procedural stud texture and rasterize textured triangles", function()
 			const TexSize = 4 :: number
-			const TexBuf = TextureHelper.CreateProceduralTemplateTexture(TexSize)
+			const TexBuf = TextureHelper.CreateProceduralStudTexture(TexSize)
 			expect(buffer.len(TexBuf)).to.equal(TexSize * TexSize * 4)
 
 			-- Fill a 2x2 solid red texture to verify tinting + sampling
@@ -21652,15 +21857,26 @@ return function()
 			const CmdBuf = buffer.create(56)
 			const Area = 64 :: number
 			const InvArea = 1 / Area :: number
-			BufferHelper.CreateRenderBuffer(
-				CmdBuf,
-				0,
-				2, 2, InvArea, 0, 0,
-				2, 10, InvArea, 0, InvArea,
-				10, 2, InvArea, InvArea, 0,
-				0xFFFFFFFF,
-				2
-			)
+			local function WriteTriCmd(TexId: number, Color: number)
+				buffer.writei16(CmdBuf, 0, 2)
+				buffer.writei16(CmdBuf, 2, 2)
+				buffer.writef32(CmdBuf, 4, InvArea)
+				buffer.writef32(CmdBuf, 8, 0)
+				buffer.writef32(CmdBuf, 12, 0)
+				buffer.writei16(CmdBuf, 16, 2)
+				buffer.writei16(CmdBuf, 18, 10)
+				buffer.writef32(CmdBuf, 20, InvArea)
+				buffer.writef32(CmdBuf, 24, 0)
+				buffer.writef32(CmdBuf, 28, InvArea)
+				buffer.writei16(CmdBuf, 32, 10)
+				buffer.writei16(CmdBuf, 34, 2)
+				buffer.writef32(CmdBuf, 36, InvArea)
+				buffer.writef32(CmdBuf, 40, InvArea)
+				buffer.writef32(CmdBuf, 44, 0)
+				buffer.writeu32(CmdBuf, 48, Color)
+				buffer.writeu32(CmdBuf, 52, TexId)
+			end
+			WriteTriCmd(2, 0xFFFFFFFF)
 
 			const PixBuf = buffer.create(16 * 16 * 4)
 			const ZBuf = buffer.create(16 * 16 * 4)
@@ -21674,24 +21890,27 @@ return function()
 
 			-- Verify TextureId = 0 renders untextured solid PackedColor
 			BufferHelper.ClearBuffers(16 * 16, PixBuf, ZBuf)
-			BufferHelper.CreateRenderBuffer(
-				CmdBuf,
-				0,
-				2, 2, InvArea, 0, 0,
-				2, 10, InvArea, 0, InvArea,
-				10, 2, InvArea, InvArea, 0,
-				0xFF112233,
-				0
-			)
+			WriteTriCmd(0, 0xFF112233)
 			RenderMath.DrawTriangleBatch(CmdBuf, 56, BatchTextures, SolidGreen, 2, 2, 16, 16, PixBuf, ZBuf)
 			expect(buffer.readu32(PixBuf, (3 * 16 + 3) * 4)).to.equal(0xFF112233)
+		end)
+
+		it("should expose all 5 unit shape meshes from VerticeFile hashmap", function()
+			expect(VerticeFile.GetShapeName(0)).to.equal("Cube")
+			expect(VerticeFile.GetShapeName(1)).to.equal("Sphere")
+			expect(VerticeFile.GetShapeName(2)).to.equal("Cylinder")
+			expect(VerticeFile.GetShapeName(3)).to.equal("Triangle")
+			expect(VerticeFile.GetShapeName(4)).to.equal("Plane")
+			expect(VerticeFile.GetShapeData(0).IsAxisAligned).to.equal(true)
+			expect(VerticeFile.GetShapeData(1).IsAxisAligned).to.equal(false)
+			expect(VerticeFile.GetShapeData(4).IsAxisAligned).to.equal(true)
 		end)
 	end)
 end
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="179">
+          <Item class="ModuleScript" referent="184">
             <Properties>
               <string name="Name">Replication.spec</string>
               <string name="Source"><![CDATA[--!strict
@@ -21754,7 +21973,7 @@ end
             </Properties>
           </Item>
         </Item>
-        <Item class="ModuleScript" referent="180">
+        <Item class="ModuleScript" referent="185">
           <Properties>
             <string name="Name">TestHarness</string>
             <string name="Source"><![CDATA[--!strict
@@ -21961,7 +22180,7 @@ return TestHarness
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="181">
+        <Item class="ModuleScript" referent="186">
           <Properties>
             <string name="Name">TestHelper</string>
             <string name="Source"><![CDATA[--!strict
@@ -22080,7 +22299,7 @@ return TestHelper
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Script" referent="182">
+        <Item class="Script" referent="187">
           <Properties>
             <string name="Name">TestRunner</string>
             <token name="RunContext">0</token>
@@ -22148,49 +22367,49 @@ end)
       </Item>
     </Item>
   </Item>
-  <Item class="SoundService" referent="183">
+  <Item class="SoundService" referent="188">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>
     </Properties>
   </Item>
-  <Item class="StarterGui" referent="184">
+  <Item class="StarterGui" referent="189">
     <Properties>
       <string name="Name">StarterGui</string>
     </Properties>
-    <Item class="Folder" referent="185">
+    <Item class="Folder" referent="190">
       <Properties>
         <string name="Name">GuiScripts</string>
       </Properties>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="186">
+  <Item class="StarterPlayer" referent="191">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterCharacterScripts" referent="187">
+    <Item class="StarterCharacterScripts" referent="192">
       <Properties>
         <string name="Name">StarterCharacterScripts</string>
       </Properties>
-      <Item class="Folder" referent="188">
+      <Item class="Folder" referent="193">
         <Properties>
           <string name="Name">CharacterScripts</string>
         </Properties>
       </Item>
     </Item>
-    <Item class="StarterPlayerScripts" referent="189">
+    <Item class="StarterPlayerScripts" referent="194">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="190">
+      <Item class="Folder" referent="195">
         <Properties>
           <string name="Name">Client</string>
         </Properties>
-        <Item class="Folder" referent="191">
+        <Item class="Folder" referent="196">
           <Properties>
             <string name="Name">Objects</string>
           </Properties>
-          <Item class="ModuleScript" referent="192">
+          <Item class="ModuleScript" referent="197">
             <Properties>
               <string name="Name">ObjectStorage</string>
               <string name="Source"><![CDATA[--!strict
@@ -22207,11 +22426,11 @@ return ECSMain.CreateStorage(false)
 ]]></string>
             </Properties>
           </Item>
-          <Item class="Folder" referent="193">
+          <Item class="Folder" referent="198">
             <Properties>
               <string name="Name">Replication</string>
             </Properties>
-            <Item class="LocalScript" referent="194">
+            <Item class="LocalScript" referent="199">
               <Properties>
                 <string name="Name">ReplicationReceiver</string>
                 <string name="Source"><![CDATA[--!strict
@@ -22366,7 +22585,7 @@ ReplicateEvent.OnClientEvent:Connect(
             </Item>
           </Item>
         </Item>
-        <Item class="ModuleScript" referent="195">
+        <Item class="ModuleScript" referent="200">
           <Properties>
             <string name="Name">RenderBootstrap</string>
             <string name="Source"><![CDATA[--!strict
@@ -22444,7 +22663,7 @@ return RenderBootstrap
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="196">
+        <Item class="LocalScript" referent="201">
           <Properties>
             <string name="Name">Starter</string>
             <string name="Source"><![CDATA[--!strict
@@ -22458,11 +22677,11 @@ RenderBootstrap.CreateSetup()
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="197">
+        <Item class="Folder" referent="202">
           <Properties>
             <string name="Name">Tests</string>
           </Properties>
-          <Item class="LocalScript" referent="198">
+          <Item class="LocalScript" referent="203">
             <Properties>
               <string name="Name">ClientTestRunner</string>
               <string name="Source"><![CDATA[--!strict
@@ -22528,11 +22747,11 @@ end)
 ]]></string>
             </Properties>
           </Item>
-          <Item class="Folder" referent="199">
+          <Item class="Folder" referent="204">
             <Properties>
               <string name="Name">Specs</string>
             </Properties>
-            <Item class="ModuleScript" referent="200">
+            <Item class="ModuleScript" referent="205">
               <Properties>
                 <string name="Name">Camera.spec</string>
                 <string name="Source"><![CDATA[--!strict
@@ -22612,7 +22831,7 @@ end
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="201">
+            <Item class="ModuleScript" referent="206">
               <Properties>
                 <string name="Name">Cleaner.spec</string>
                 <string name="Source"><![CDATA[--!strict
@@ -22693,7 +22912,7 @@ end
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="202">
+            <Item class="ModuleScript" referent="207">
               <Properties>
                 <string name="Name">ClientInput.spec</string>
                 <string name="Source"><![CDATA[--!strict
@@ -22747,7 +22966,7 @@ end
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="203">
+            <Item class="ModuleScript" referent="208">
               <Properties>
                 <string name="Name">ReplicationReceiver.spec</string>
                 <string name="Source"><![CDATA[--!strict
@@ -22849,7 +23068,7 @@ end
               </Properties>
             </Item>
           </Item>
-          <Item class="ModuleScript" referent="204">
+          <Item class="ModuleScript" referent="209">
             <Properties>
               <string name="Name">TestHarness</string>
               <string name="Source"><![CDATA[--!strict
@@ -23056,7 +23275,7 @@ return TestHarness
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="205">
+          <Item class="ModuleScript" referent="210">
             <Properties>
               <string name="Name">TestHelper</string>
               <string name="Source"><![CDATA[--!strict
@@ -23142,7 +23361,7 @@ return TestHelper
             </Properties>
           </Item>
         </Item>
-        <Item class="LocalScript" referent="206">
+        <Item class="LocalScript" referent="211">
           <Properties>
             <string name="Name">main</string>
             <string name="Source"><![CDATA[--!strict
@@ -23189,7 +23408,7 @@ end
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="207">
+  <Item class="Workspace" referent="212">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>

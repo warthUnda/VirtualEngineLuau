@@ -85,7 +85,7 @@ end
 	@param GuardBandX number -- Horizontal guardband slope factor.
 	@param GuardBandY number -- Vertical guardband slope factor.
 ]=]
-function RenderControllerHelper.SubmitFaceQuad(
+function RenderControllerHelper.SubmitFace(
 	ScreenVertices: buffer,
 	ProjectedVertices: buffer,
 	ClipBufferA: buffer,
@@ -105,23 +105,40 @@ function RenderControllerHelper.SubmitFaceQuad(
 	GuardBandX: number,
 	GuardBandY: number
 )
-	const ClippedVertexCount = RenderMath.ClipAndProjectQuad(
-		ScreenVertices,
-		V0ByteOffset,
-		V1ByteOffset,
-		V2ByteOffset,
-		V3ByteOffset,
-		ScaleU,
-		ScaleV,
-		ProjectedVertices,
-		ClipBufferA,
-		ClipBufferB,
-		FocalLength,
-		GuardBandX,
-		GuardBandY,
-		HALF_WIDTH,
-		HALF_HEIGHT
-	) :: number
+	const ClippedVertexCount = if V3ByteOffset >= 0
+		then RenderMath.ClipAndProjectQuad(
+			ScreenVertices,
+			V0ByteOffset,
+			V1ByteOffset,
+			V2ByteOffset,
+			V3ByteOffset,
+			ScaleU,
+			ScaleV,
+			ProjectedVertices,
+			ClipBufferA,
+			ClipBufferB,
+			FocalLength,
+			GuardBandX,
+			GuardBandY,
+			HALF_WIDTH,
+			HALF_HEIGHT
+		)
+		else RenderMath.ClipAndProjectTriangleUV(
+			ScreenVertices,
+			V0ByteOffset,
+			V1ByteOffset,
+			V2ByteOffset,
+			ScaleU,
+			ScaleV,
+			ProjectedVertices,
+			ClipBufferA,
+			ClipBufferB,
+			FocalLength,
+			GuardBandX,
+			GuardBandY,
+			HALF_WIDTH,
+			HALF_HEIGHT
+		) :: number
 
 	if ClippedVertexCount < 3 then
 		return

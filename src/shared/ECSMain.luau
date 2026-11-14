@@ -25,8 +25,11 @@ const FLAG_HAS_DYNAMIC_ID = bit32.lshift(1, 4) :: number
 const TEXTURE_ID_SHIFT = 5 :: number
 const MAX_TEXTURE_ID = 255 :: number
 const TEXTURE_ID_MASK = bit32.lshift(MAX_TEXTURE_ID, TEXTURE_ID_SHIFT) :: number
-const DYNAMIC_ID_SHIFT = 20 :: number
-const LOWER_FLAGS_MASK = 0x000FFFFF :: number
+const SHAPE_ID_SHIFT = 13 :: number
+const MAX_SHAPE_ID = 7 :: number
+const SHAPE_ID_MASK = bit32.lshift(MAX_SHAPE_ID, SHAPE_ID_SHIFT) :: number
+const DYNAMIC_ID_SHIFT = 22 :: number
+const LOWER_FLAGS_MASK = 0x003FFFFF :: number
 
 export type ECSTable = {
 	OrientationECSCount: number,
@@ -76,7 +79,8 @@ export type PropertiesComponent = {
 		IsVisible: boolean?,
 		Anchored: boolean?,
 		DynamicId: number?,
-		TextureId: number?
+		TextureId: number?,
+		ShapeId: number?
 	) -> number,
 	GetData: () -> buffer,
 }
@@ -214,8 +218,9 @@ end
 	@param CanCollide boolean? -- Collision enabled flag.
 	@param IsVisible boolean? -- Visibility flag.
 	@param Anchored boolean? -- Anchored physics state flag.
-	@param DynamicId number? -- Bound dynamic OOP object ID.
+	@param DynamicId number? -- Bound dynamic OOP object ID (bits 22-31, 0-1023).
 	@param TextureId number? -- TextureTable ID (bits 5-12, 0-255).
+	@param ShapeId number? -- VerticeFile shape ID (bits 13-15, 0-7).
 	@return number -- Packed 32-bit register.
 ]=]
 function ECSMain.PackProperties(
@@ -223,7 +228,8 @@ function ECSMain.PackProperties(
 	IsVisible: boolean?,
 	Anchored: boolean?,
 	DynamicId: number?,
-	TextureId: number?
+	TextureId: number?,
+	ShapeId: number?
 ): number
 	const CollideBit = if CanCollide ~= false then 1 else 0 :: number
 	const VisibleBit = if IsVisible ~= false then 1 else 0 :: number
@@ -235,6 +241,9 @@ function ECSMain.PackProperties(
 	const ClampedTextureId = if TextureId and TextureId > 0
 		then math.clamp(math.floor(TextureId), 0, MAX_TEXTURE_ID)
 		else 0 :: number
+	const ClampedShapeId = if ShapeId and ShapeId > 0
+		then math.clamp(math.floor(ShapeId), 0, MAX_SHAPE_ID)
+		else 0 :: number
 
 	return bit32.bor(
 		0,
@@ -243,7 +252,8 @@ function ECSMain.PackProperties(
 		bit32.lshift(AnchoredBit, 3), -- Anchored
 		bit32.lshift(HasDynamicBit, 4), -- Has dynamic oop / object list id?
 		bit32.lshift(ClampedTextureId, TEXTURE_ID_SHIFT), -- TextureTable ID (bits 5-12)
-		bit32.lshift(ClampedDynamicId, DYNAMIC_ID_SHIFT) -- DYNAMIC OOP / OBJECTS LIST ID
+		bit32.lshift(ClampedShapeId, SHAPE_ID_SHIFT), -- VerticeFile Shape ID (bits 13-15)
+		bit32.lshift(ClampedDynamicId, DYNAMIC_ID_SHIFT) -- DYNAMIC OOP / OBJECTS LIST ID (bits 22-31)
 	)
 end
 
@@ -256,6 +266,7 @@ end
 	@param Anchored boolean? -- Anchored physics state flag.
 	@param DynamicId number? -- Bound dynamic OOP object ID.
 	@param TextureId number? -- TextureTable ID (0-255).
+	@param ShapeId number? -- VerticeFile shape ID (0-7).
 	@return number -- Next properties byte offset.
 ]=]
 function ECSMain.CreatePropertiesLayout(
@@ -265,9 +276,10 @@ function ECSMain.CreatePropertiesLayout(
 	IsVisible: boolean?,
 	Anchored: boolean?,
 	DynamicId: number?,
-	TextureId: number?
+	TextureId: number?,
+	ShapeId: number?
 ): number
-	const Register = ECSMain.PackProperties(CanCollide, IsVisible, Anchored, DynamicId, TextureId) :: number
+	const Register = ECSMain.PackProperties(CanCollide, IsVisible, Anchored, DynamicId, TextureId, ShapeId) :: number
 	buffer.writeu32(TargetBuffer, MemoryOffset, Register)
 
 	return MemoryOffset + PROPERTIES_STRIDE
@@ -307,6 +319,29 @@ end
 ]=]
 function ECSMain.HasEntityDynamicId(Register: number): boolean
 	return bit32.btest(Register, FLAG_HAS_DYNAMIC_ID)
+end
+
+--[=[
+	Extracts the 3-bit VerticeFile shape ID from a 32-bit property register.
+	@param Register number -- Packed 32-bit property register.
+	@return number -- Shape ID (0-7).
+]=]
+function ECSMain.GetEntityShapeId(Register: number): number
+	return bit32.band(bit32.rshift(Register, SHAPE_ID_SHIFT), MAX_SHAPE_ID)
+end
+
+--[=[
+	Updates an entity's 3-bit VerticeFile shape ID in-place inside the properties buffer without altering other flags.
+	@param PropertiesBuffer buffer -- Properties buffer.
+	@param EntityId number -- Target entity ID.
+	@param ShapeId number -- New Shape ID (0-7).
+]=]
+function ECSMain.SetEntityShapeId(PropertiesBuffer: buffer, EntityId: number, ShapeId: number)
+	const Offset = (EntityId - 1) * PROPERTIES_STRIDE :: number
+	const CurrentRegister = buffer.readu32(PropertiesBuffer, Offset) :: number
+	const BaseFlags = bit32.band(CurrentRegister, bit32.bnot(SHAPE_ID_MASK)) :: number
+	const ClampedShapeId = math.clamp(math.floor(ShapeId), 0, MAX_SHAPE_ID) :: number
+	buffer.writeu32(PropertiesBuffer, Offset, bit32.bor(BaseFlags, bit32.lshift(ClampedShapeId, SHAPE_ID_SHIFT)))
 end
 
 --[=[
@@ -582,10 +617,20 @@ function ECSMain.CreatePropertiesComponent(
 	IsVisible: boolean?,
 	Anchored: boolean?,
 	DynamicId: number?,
-	TextureId: number?
+	TextureId: number?,
+	ShapeId: number?
 ): any
 	if TargetBuffer and MemoryOffset then
-		return ECSMain.CreatePropertiesLayout(TargetBuffer, MemoryOffset, CanCollide, IsVisible, Anchored, DynamicId, TextureId)
+		return ECSMain.CreatePropertiesLayout(
+			TargetBuffer,
+			MemoryOffset,
+			CanCollide,
+			IsVisible,
+			Anchored,
+			DynamicId,
+			TextureId,
+			ShapeId
+		)
 	end
 
 	const PropertiesBuffer = buffer.create(PROPERTIES_BUFFER_SIZE) :: buffer
@@ -597,9 +642,10 @@ function ECSMain.CreatePropertiesComponent(
 		Visible: boolean?,
 		IsAnchored: boolean?,
 		DynId: number?,
-		TexId: number?
+		TexId: number?,
+		ShpId: number?
 	): number
-		return ECSMain.CreatePropertiesLayout(PropertiesBuffer, Offset, Collide, Visible, IsAnchored, DynId, TexId)
+		return ECSMain.CreatePropertiesLayout(PropertiesBuffer, Offset, Collide, Visible, IsAnchored, DynId, TexId, ShpId)
 	end
 
 	function PropertiesComponent.GetData(): buffer

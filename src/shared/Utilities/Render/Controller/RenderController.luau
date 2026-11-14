@@ -17,8 +17,9 @@ const Camera = workspace.CurrentCamera :: Camera
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
+const VerticeFile = require(ReplicatedStorage.Shared.Utilities.Render.Core.VerticeFile)
 const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath)
-const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Core.TextureTable)
+const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Texture.TextureTable)
 const RenderControllerHelper = require(script.Parent.RenderControllerHelper)
 
 const CameraStore = require(
@@ -95,7 +96,7 @@ const ECSSizeBuffer = SizeData.GetData() :: buffer
 const ECSDirectionsBuffer = DirectionsData.GetData() :: buffer
 const ECSVisualBuffer = VisualData.GetData() :: buffer
 const ECSPropertiesBuffer = PropertiesData.GetData() :: buffer
-local ScreenVertices = buffer.create(8 * 12) :: buffer
+local ScreenVertices = buffer.create(VerticeFile.MaxShapeVertices * 12) :: buffer
 local ProjectedVertices = buffer.create(12 * 20) :: buffer
 local ClipBufferA = buffer.create(12 * 20) :: buffer
 local ClipBufferB = buffer.create(12 * 20) :: buffer
@@ -142,7 +143,7 @@ function Renderer.Init()
 
 	SelfActor:BindToMessage(
 		"Return Render Calculations",
-		function(PixelBuffer: buffer, ZBuffer: buffer, FrameId: number)
+		function(PixelBuffer: buffer, ZBuffer: buffer, FrameId: number, DirtyMinY: number, DirtyMaxY: number)
 			if FrameId ~= CurrentFrame then -- ignore stale frames
 				return
 			end
@@ -150,8 +151,10 @@ function Renderer.Init()
 			if Received == 0 then
 				buffer.copy(FinalPixel, 0, PixelBuffer, 0, TOTAL_PIXELS * 4)
 				buffer.copy(FinalZ, 0, ZBuffer, 0, TOTAL_PIXELS * 4)
-			else
-				for i = 0, (TOTAL_PIXELS - 1) * 4, 4 do -- Overwrites the FinalZ and FinalPixel buffers
+			elseif DirtyMinY <= DirtyMaxY then
+				const StartOffset = DirtyMinY * WIDTH * 4 :: number
+				const EndOffset = ((DirtyMaxY + 1) * WIDTH - 1) * 4 :: number
+				for i = StartOffset, EndOffset, 4 do -- Overwrites only the worker's dirty scanline rows
 					const IncomingInverseZ = buffer.readf32(ZBuffer, i) :: number
 					if IncomingInverseZ > buffer.readf32(FinalZ, i) then
 						buffer.writef32(FinalZ, i, IncomingInverseZ)
@@ -270,25 +273,10 @@ function Renderer.DrawFrame()
 		const DirectionOffset = (i - 1) * ECS_DIRECTION_STRIDE :: number
 		const PropertiesOffset = (i - 1) * ECS_PROPERTIES_STRIDE :: number
 
-		const FaceMask = RenderMath.GetPartCameraVertices(
-			ECSPositionBuffer,
-			ECSDirectionsBuffer,
-			ECSSizeBuffer,
-			ComponentOffset,
-			DirectionOffset,
-			ScreenVertices,
-			CamPosVec,
-			CamRightVec,
-			CamUpVec,
-			CamLookVec
-		) :: number
-
-		if FaceMask == 0 then
-			continue
-		end
-
 		const PropertiesRegister = buffer.readu32(ECSPropertiesBuffer, PropertiesOffset) :: number
+		const EntityShapeId = ECSMain.GetEntityShapeId(PropertiesRegister) :: number
 		const EntityTextureId = ECSMain.GetEntityTextureId(PropertiesRegister) :: number
+		const ShapeMesh = VerticeFile.ShapeData[EntityShapeId] or VerticeFile.ShapeData[0]
 
 		-- If untextured (EntityTextureId == 0), shade with the part's color; if textured, use white base so the decal's colors are preserved
 		local PartColorR = 255 :: number
@@ -309,20 +297,43 @@ function Renderer.DrawFrame()
 			TileScaleZ = math.clamp(math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset + 8) * INV_TEXTURE_STUDS_PER_TILE + 0.5), 1, 8)
 		end
 
-		-- Back (+Look, bit 0) or Front (-Look, bit 1)
-		if bit32.btest(FaceMask, 3) then
-			const LookSunDot = vector.dot(
-				RenderControllerHelper.ReadDirectionVec(ECSDirectionsBuffer, DirectionOffset),
+		const IsVisible: boolean, LocalCameraPos: vector, HalfSize: vector, LocalSun: vector =
+			RenderMath.TransformShapeCameraVertices(
+				ECSPositionBuffer,
+				ECSDirectionsBuffer,
+				ECSSizeBuffer,
+				ComponentOffset,
+				DirectionOffset,
+				ShapeMesh.LocalVertices,
+				ShapeMesh.VertexCount,
+				ScreenVertices,
+				CamPosVec,
+				CamRightVec,
+				CamUpVec,
+				CamLookVec,
 				SUN_VEC
-			) :: number
-			if bit32.btest(FaceMask, 1) then
+			)
+
+		if not IsVisible then
+			continue
+		end
+
+		if ShapeMesh.IsAxisAligned then
+			for _, Face in ipairs(ShapeMesh.Faces) do
+				const ScaledPoint = Face.PointOnFace * HalfSize
+				if vector.dot(LocalCameraPos - ScaledPoint, Face.Normal) <= -1e-3 then
+					continue
+				end
+
+				const FaceSunDot = vector.dot(Face.Normal, LocalSun) :: number
 				const Color = RenderControllerHelper.PackShadedColor(
 					PartColorR,
 					PartColorG,
 					PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, LookSunDot)
+					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, FaceSunDot)
 				)
-				RenderControllerHelper.SubmitFaceQuad(
+
+				RenderControllerHelper.SubmitFace(
 					ScreenVertices,
 					ProjectedVertices,
 					ClipBufferA,
@@ -330,37 +341,10 @@ function Renderer.DrawFrame()
 					WorkerScores,
 					WorkerOffsets,
 					BufferTable,
-					0,
-					36,
-					24,
-					12,
-					TileScaleX,
-					TileScaleY,
-					Color,
-					EntityTextureId,
-					FocalLength,
-					GuardBandX,
-					GuardBandY
-				)
-			else
-				const Color = RenderControllerHelper.PackShadedColor(
-					PartColorR,
-					PartColorG,
-					PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, -LookSunDot)
-				)
-				RenderControllerHelper.SubmitFaceQuad(
-					ScreenVertices,
-					ProjectedVertices,
-					ClipBufferA,
-					ClipBufferB,
-					WorkerScores,
-					WorkerOffsets,
-					BufferTable,
-					48,
-					60,
-					72,
-					84,
+					Face.V0ByteOffset,
+					Face.V1ByteOffset,
+					Face.V2ByteOffset,
+					Face.V3ByteOffset,
 					TileScaleX,
 					TileScaleY,
 					Color,
@@ -370,85 +354,30 @@ function Renderer.DrawFrame()
 					GuardBandY
 				)
 			end
-		end
+		else
+			const InvHalfSize = vector.create(
+				if HalfSize.x > 1e-4 then 1 / HalfSize.x else 1,
+				if HalfSize.y > 1e-4 then 1 / HalfSize.y else 1,
+				if HalfSize.z > 1e-4 then 1 / HalfSize.z else 1
+			)
 
-		-- Bottom (-Up, bit 2) or Top (+Up, bit 3)
-		if bit32.btest(FaceMask, 12) then
-			const UpSunDot = vector.dot(
-				RenderControllerHelper.ReadDirectionVec(ECSDirectionsBuffer, DirectionOffset + 12),
-				SUN_VEC
-			) :: number
-			if bit32.btest(FaceMask, 4) then
-				const Color = RenderControllerHelper.PackShadedColor(
-					PartColorR,
-					PartColorG,
-					PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, -UpSunDot)
-				)
-				RenderControllerHelper.SubmitFaceQuad(
-					ScreenVertices,
-					ProjectedVertices,
-					ClipBufferA,
-					ClipBufferB,
-					WorkerScores,
-					WorkerOffsets,
-					BufferTable,
-					0,
-					12,
-					60,
-					48,
-					TileScaleZ,
-					TileScaleX,
-					Color,
-					EntityTextureId,
-					FocalLength,
-					GuardBandX,
-					GuardBandY
-				)
-			else
-				const Color = RenderControllerHelper.PackShadedColor(
-					PartColorR,
-					PartColorG,
-					PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, UpSunDot)
-				)
-				RenderControllerHelper.SubmitFaceQuad(
-					ScreenVertices,
-					ProjectedVertices,
-					ClipBufferA,
-					ClipBufferB,
-					WorkerScores,
-					WorkerOffsets,
-					BufferTable,
-					24,
-					36,
-					84,
-					72,
-					TileScaleZ,
-					TileScaleX,
-					Color,
-					EntityTextureId,
-					FocalLength,
-					GuardBandX,
-					GuardBandY
-				)
-			end
-		end
+			for _, Face in ipairs(ShapeMesh.Faces) do
+				const ScaledPoint = Face.PointOnFace * HalfSize
+				const ScaledLocalNormal = Face.Normal * InvHalfSize
+				if vector.dot(LocalCameraPos - ScaledPoint, ScaledLocalNormal) <= -1e-3 then
+					continue
+				end
 
-		-- Left (-Right, bit 4) or Right (+Right, bit 5)
-		if bit32.btest(FaceMask, 48) then
-			const RightSunDot = vector.dot(
-				RenderControllerHelper.ReadDirectionVec(ECSDirectionsBuffer, DirectionOffset + 24),
-				SUN_VEC
-			) :: number
-			if bit32.btest(FaceMask, 16) then
+				const WorldSpaceLocalNormal = vector.normalize(ScaledLocalNormal)
+				const FaceSunDot = vector.dot(WorldSpaceLocalNormal, LocalSun) :: number
 				const Color = RenderControllerHelper.PackShadedColor(
 					PartColorR,
 					PartColorG,
 					PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, -RightSunDot)
+					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, FaceSunDot)
 				)
-				RenderControllerHelper.SubmitFaceQuad(
+
+				RenderControllerHelper.SubmitFace(
 					ScreenVertices,
 					ProjectedVertices,
 					ClipBufferA,
@@ -456,38 +385,11 @@ function Renderer.DrawFrame()
 					WorkerScores,
 					WorkerOffsets,
 					BufferTable,
-					0,
-					48,
-					84,
-					36,
-					TileScaleY,
-					TileScaleZ,
-					Color,
-					EntityTextureId,
-					FocalLength,
-					GuardBandX,
-					GuardBandY
-				)
-			else
-				const Color = RenderControllerHelper.PackShadedColor(
-					PartColorR,
-					PartColorG,
-					PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, RightSunDot)
-				)
-				RenderControllerHelper.SubmitFaceQuad(
-					ScreenVertices,
-					ProjectedVertices,
-					ClipBufferA,
-					ClipBufferB,
-					WorkerScores,
-					WorkerOffsets,
-					BufferTable,
-					12,
-					24,
-					72,
-					60,
-					TileScaleZ,
+					Face.V0ByteOffset,
+					Face.V1ByteOffset,
+					Face.V2ByteOffset,
+					Face.V3ByteOffset,
+					TileScaleX,
 					TileScaleY,
 					Color,
 					EntityTextureId,
@@ -502,11 +404,7 @@ function Renderer.DrawFrame()
 	-- Sends the information to all workers
 	for i, TargetActor: Actor in ipairs(WorkerActors) do
 		const ByteCount = WorkerOffsets[i] :: number
-		local PayloadBuffer = EmptyPayload
-		if ByteCount > 0 then
-			PayloadBuffer = buffer.create(ByteCount)
-			buffer.copy(PayloadBuffer, 0, BufferTable[i], 0, ByteCount)
-		end
+		const PayloadBuffer = if ByteCount > 0 then BufferTable[i] else EmptyPayload
 
 		TargetActor:SendMessage(
 			"Execute Rendering",

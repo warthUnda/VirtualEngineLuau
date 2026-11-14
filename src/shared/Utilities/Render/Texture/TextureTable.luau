@@ -6,11 +6,11 @@
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- Modules --
-const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const RenderConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Configs"):WaitForChild("RenderConfig"))
 const TextureHelper = require(script.Parent.TextureHelper)
 
 -- Configs --
-const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
+const TEXTURE_SIZE = RenderConfig.TextureSize :: number
 
 -- Buffers
 const DefaultWoodBuffer = TextureHelper.CreateProceduralWoodTexture(TEXTURE_SIZE) :: buffer

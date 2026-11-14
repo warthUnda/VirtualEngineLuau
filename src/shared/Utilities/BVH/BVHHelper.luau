@@ -31,41 +31,10 @@ const MAX_BVH_NODES = MAX_ENTITIES * 2 :: number
 const MAX_NODE_BYTES = MAX_BVH_NODES * NODE_STRIDE :: number
 const SAFE_BALANCED_DEPTH = math.max(16, STACK_CAPACITY - 16) :: number
 
--- Types --
-type BoundsFieldSpec = {
-	Key: string,
-	Offset: number,
-	Update: (number, number) -> number,
-}
-
--- Helpers --
-local function UpdateMin(Current: number, Candidate: number): number
-	return if Candidate < Current then Candidate else Current
-end
-
-local function UpdateMax(Current: number, Candidate: number): number
-	return if Candidate > Current then Candidate else Current
-end
-
 -- Tables --
 local DefaultServerStorage: ECSMain.ECSStorage? = nil
 local DefaultClientStorage: ECSMain.ECSStorage? = nil
 local DefaultRenderStorage: ECSMain.ECSStorage? = nil
-
-const BOUNDS_DISPATCH = {
-	{ Key = "MinX", Offset = 0, Update = UpdateMin },
-	{ Key = "MinY", Offset = 4, Update = UpdateMin },
-	{ Key = "MinZ", Offset = 8, Update = UpdateMin },
-	{ Key = "MaxX", Offset = 12, Update = UpdateMax },
-	{ Key = "MaxY", Offset = 16, Update = UpdateMax },
-	{ Key = "MaxZ", Offset = 20, Update = UpdateMax },
-	{ Key = "CenterMinX", Offset = 24, Update = UpdateMin },
-	{ Key = "CenterMinY", Offset = 28, Update = UpdateMin },
-	{ Key = "CenterMinZ", Offset = 32, Update = UpdateMin },
-	{ Key = "CenterMaxX", Offset = 24, Update = UpdateMax },
-	{ Key = "CenterMaxY", Offset = 28, Update = UpdateMax },
-	{ Key = "CenterMaxZ", Offset = 32, Update = UpdateMax },
-} :: { BoundsFieldSpec }
 
 local BVHHelper = {}
 
@@ -264,37 +233,77 @@ function BVHHelper.BuildSubtree(
 	const NodeOffset = AllocatedNodeBytes :: number
 	local NextAllocatedBytes = AllocatedNodeBytes + NODE_STRIDE :: number
 
-	const Extents = {
-		MinX = math.huge,
-		MinY = math.huge,
-		MinZ = math.huge,
-		MaxX = -math.huge,
-		MaxY = -math.huge,
-		MaxZ = -math.huge,
-		CenterMinX = math.huge,
-		CenterMinY = math.huge,
-		CenterMinZ = math.huge,
-		CenterMaxX = -math.huge,
-		CenterMaxY = -math.huge,
-		CenterMaxZ = -math.huge,
-	} :: { [string]: number }
+	local MinX = math.huge :: number
+	local MinY = math.huge :: number
+	local MinZ = math.huge :: number
+	local MaxX = -math.huge :: number
+	local MaxY = -math.huge :: number
+	local MaxZ = -math.huge :: number
+	local CenterMinX = math.huge :: number
+	local CenterMinY = math.huge :: number
+	local CenterMinZ = math.huge :: number
+	local CenterMaxX = -math.huge :: number
+	local CenterMaxY = -math.huge :: number
+	local CenterMaxZ = -math.huge :: number
 
 	for i = StartIdx, EndIdx do
 		const EntityId = buffer.readu32(ItemIndicesBuffer, (i - 1) * 4) :: number
 		const BoundsOffset = (EntityId - 1) * ITEM_BOUNDS_STRIDE :: number
 
-		for _, Spec: BoundsFieldSpec in ipairs(BOUNDS_DISPATCH) do
-			const Value = buffer.readf32(ItemBoundsBuffer, BoundsOffset + Spec.Offset) :: number
-			Extents[Spec.Key] = Spec.Update(Extents[Spec.Key], Value)
+		const ItemMinX = buffer.readf32(ItemBoundsBuffer, BoundsOffset) :: number
+		const ItemMinY = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 4) :: number
+		const ItemMinZ = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 8) :: number
+		const ItemMaxX = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 12) :: number
+		const ItemMaxY = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 16) :: number
+		const ItemMaxZ = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 20) :: number
+		const ItemCenterX = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 24) :: number
+		const ItemCenterY = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 28) :: number
+		const ItemCenterZ = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 32) :: number
+
+		if ItemMinX < MinX then
+			MinX = ItemMinX
+		end
+		if ItemMinY < MinY then
+			MinY = ItemMinY
+		end
+		if ItemMinZ < MinZ then
+			MinZ = ItemMinZ
+		end
+		if ItemMaxX > MaxX then
+			MaxX = ItemMaxX
+		end
+		if ItemMaxY > MaxY then
+			MaxY = ItemMaxY
+		end
+		if ItemMaxZ > MaxZ then
+			MaxZ = ItemMaxZ
+		end
+		if ItemCenterX < CenterMinX then
+			CenterMinX = ItemCenterX
+		end
+		if ItemCenterY < CenterMinY then
+			CenterMinY = ItemCenterY
+		end
+		if ItemCenterZ < CenterMinZ then
+			CenterMinZ = ItemCenterZ
+		end
+		if ItemCenterX > CenterMaxX then
+			CenterMaxX = ItemCenterX
+		end
+		if ItemCenterY > CenterMaxY then
+			CenterMaxY = ItemCenterY
+		end
+		if ItemCenterZ > CenterMaxZ then
+			CenterMaxZ = ItemCenterZ
 		end
 	end
 
-	buffer.writef32(NodeBuffer, NodeOffset, Extents.MinX)
-	buffer.writef32(NodeBuffer, NodeOffset + 4, Extents.MinY)
-	buffer.writef32(NodeBuffer, NodeOffset + 8, Extents.MinZ)
-	buffer.writef32(NodeBuffer, NodeOffset + 16, Extents.MaxX)
-	buffer.writef32(NodeBuffer, NodeOffset + 20, Extents.MaxY)
-	buffer.writef32(NodeBuffer, NodeOffset + 24, Extents.MaxZ)
+	buffer.writef32(NodeBuffer, NodeOffset, MinX)
+	buffer.writef32(NodeBuffer, NodeOffset + 4, MinY)
+	buffer.writef32(NodeBuffer, NodeOffset + 8, MinZ)
+	buffer.writef32(NodeBuffer, NodeOffset + 16, MaxX)
+	buffer.writef32(NodeBuffer, NodeOffset + 20, MaxY)
+	buffer.writef32(NodeBuffer, NodeOffset + 24, MaxZ)
 
 	if StartIdx >= EndIdx or NextAllocatedBytes + (NODE_STRIDE * 2) > MAX_NODE_BYTES then
 		const LeafEntityId = buffer.readu32(ItemIndicesBuffer, (StartIdx - 1) * 4) :: number
@@ -303,22 +312,22 @@ function BVHHelper.BuildSubtree(
 		return NodeOffset, NextAllocatedBytes
 	end
 
-	const ExtentX = Extents.CenterMaxX - Extents.CenterMinX :: number
-	const ExtentY = Extents.CenterMaxY - Extents.CenterMinY :: number
-	const ExtentZ = Extents.CenterMaxZ - Extents.CenterMinZ :: number
+	const ExtentX = CenterMaxX - CenterMinX :: number
+	const ExtentY = CenterMaxY - CenterMinY :: number
+	const ExtentZ = CenterMaxZ - CenterMinZ :: number
 
 	local AxisOffset = 24 :: number
-	local SplitPosition = (Extents.CenterMinX + Extents.CenterMaxX) * 0.5 :: number
+	local SplitPosition = (CenterMinX + CenterMaxX) * 0.5 :: number
 	local MaxExtent = ExtentX :: number
 
 	if ExtentY > MaxExtent then
 		AxisOffset = 28
-		SplitPosition = (Extents.CenterMinY + Extents.CenterMaxY) * 0.5
+		SplitPosition = (CenterMinY + CenterMaxY) * 0.5
 		MaxExtent = ExtentY
 	end
 	if ExtentZ > MaxExtent then
 		AxisOffset = 32
-		SplitPosition = (Extents.CenterMinZ + Extents.CenterMaxZ) * 0.5
+		SplitPosition = (CenterMinZ + CenterMaxZ) * 0.5
 		MaxExtent = ExtentZ
 	end
 

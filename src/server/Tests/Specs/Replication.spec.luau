@@ -144,36 +144,77 @@ return function()
 			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, ForwardPayload, EntityId)
 			local TotalInitialSent = 0 :: number
 			for _ = 1, 64 do
-				const BatchPos, _, _, _, _, _, BatchCounts = PlayerCuller.CullObjects(MockPlayer)
-				if not BatchPos or not BatchCounts then
+				const BatchPacket = PlayerCuller.CullObjects(MockPlayer)
+				if not BatchPacket then
 					break
 				end
-				TotalInitialSent += BatchCounts.EntityECSCount
+				TotalInitialSent += buffer.readu16(BatchPacket, 0)
 			end
 			expect(TotalInitialSent >= 1).to.equal(true)
 
 			-- 2. Look away (culls entity; drain any remaining map parts in +Z)
 			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, BackwardPayload, EntityId)
 			for _ = 1, 64 do
-				const AwayPos = PlayerCuller.CullObjects(MockPlayer)
-				if not AwayPos then
+				const AwayPacket = PlayerCuller.CullObjects(MockPlayer)
+				if not AwayPacket then
 					break
 				end
 			end
 
 			-- 3. Look back without entity mutating -> must NOT re-send
 			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, ForwardPayload, EntityId)
-			const ReenterPos = PlayerCuller.CullObjects(MockPlayer)
-			expect(ReenterPos == nil).to.equal(true)
+			const ReenterPacket = PlayerCuller.CullObjects(MockPlayer)
+			expect(ReenterPacket == nil).to.equal(true)
 
-			-- 4. Mutate entity while visible -> must send updated delta
+			-- 4. Mutate entity while visible -> must send packed binary delta with count == 1
 			ServerStorage.PositionData.CreateLayout((EntityId - 1) * COMPONENT_STRIDE, 2, 0, -25)
-			const DeltaPos, _, _, _, _, _, DeltaCounts = PlayerCuller.CullObjects(MockPlayer)
-			expect(DeltaPos ~= nil).to.equal(true)
-			expect(DeltaCounts ~= nil and DeltaCounts.EntityECSCount == 1).to.equal(true)
+			const DeltaPacket = PlayerCuller.CullObjects(MockPlayer)
+			expect(DeltaPacket ~= nil).to.equal(true)
+			if DeltaPacket then
+				expect(buffer.readu16(DeltaPacket, 0)).to.equal(1)
+				expect(buffer.readu16(DeltaPacket, 8)).to.equal(EntityId)
+				expect(bit32.band(buffer.readu8(DeltaPacket, 10), 1)).to.equal(1)
+			end
+
+			-- 5. Deleting tail entity shrinks world entity count and emits header update
+			ServerStorage.ECSData.DeleteEntity(EntityId)
+			const ShrinkPacket = PlayerCuller.CullObjects(MockPlayer)
+			expect(ShrinkPacket ~= nil).to.equal(true)
+			if ShrinkPacket then
+				expect(buffer.readu16(ShrinkPacket, 2)).to.equal(ServerStorage.ECSData.GetCounts().EntityECSCount)
+			end
 
 			PlayerFunctions.RemovePlayerState(MockPlayer)
-			ServerStorage.ECSData.DeleteEntity(EntityId)
+			ViewCulling.UpdateObserverFromVectors(0, 0, 0, 0, 0, -1, 0, 1, 0, 1, 0, 0, 0, 70)
+		end)
+
+		it("should prepass dominant occluders regardless of entity ordering", function()
+			const PosBuf = buffer.create(COMPONENT_STRIDE * 2)
+			const SizeBuf = buffer.create(COMPONENT_STRIDE * 2)
+			const PropBuf = buffer.create(SystemsConfigs.ECSPropertiesStride * 2)
+
+			-- Entity 1: small target far behind Entity 2
+			buffer.writef32(PosBuf, 0, 0)
+			buffer.writef32(PosBuf, 4, 0)
+			buffer.writef32(PosBuf, 8, -60)
+			buffer.writef32(SizeBuf, 0, 2)
+			buffer.writef32(SizeBuf, 4, 2)
+			buffer.writef32(SizeBuf, 8, 2)
+			buffer.writeu32(PropBuf, 0, bit32.lshift(1, 2))
+
+			-- Entity 2 (higher ID): thick visible building block directly in front of target
+			buffer.writef32(PosBuf, COMPONENT_STRIDE, 0)
+			buffer.writef32(PosBuf, COMPONENT_STRIDE + 4, 0)
+			buffer.writef32(PosBuf, COMPONENT_STRIDE + 8, -15)
+			buffer.writef32(SizeBuf, COMPONENT_STRIDE, 24)
+			buffer.writef32(SizeBuf, COMPONENT_STRIDE + 4, 24)
+			buffer.writef32(SizeBuf, COMPONENT_STRIDE + 8, 24)
+			buffer.writeu32(PropBuf, SystemsConfigs.ECSPropertiesStride, bit32.lshift(1, 2))
+
+			ViewCulling.UpdateObserverFromVectors(0, 0, 0, 0, 0, -1, 0, 1, 0, 1, 0, 0, 0, 70)
+			ViewCulling.PrepassDominantOccluder(2, PosBuf, SizeBuf, PropBuf)
+			expect(ViewCulling.IsEntityCulled(1, PosBuf, SizeBuf)).to.equal(true)
+			expect(ViewCulling.IsEntityCulled(2, PosBuf, SizeBuf)).to.equal(false)
 			ViewCulling.UpdateObserverFromVectors(0, 0, 0, 0, 0, -1, 0, 1, 0, 1, 0, 0, 0, 70)
 		end)
 	end)

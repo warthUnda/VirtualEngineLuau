@@ -103,6 +103,47 @@ return function()
 			-- Slot 2 should now have the data of former slot 3 (X = 30)
 			expect(buffer.readf32(PosBuf, COMPONENT_STRIDE)).to.equal(30)
 		end)
+
+		it("should enforce exact capacity-multiple strides, dirty tracking, and swap-pop dynamic bindings", function()
+			expect(SystemsConfigs.ECSVisualStride).to.equal(4)
+			expect(SystemsConfigs.ECSComponentBufferSize).to.equal(SystemsConfigs.ECSMaxEntities * SystemsConfigs.ECSComponentStride)
+			expect(SystemsConfigs.ECSDirectionBufferSize).to.equal(SystemsConfigs.ECSMaxEntities * SystemsConfigs.ECSDirectionStride)
+			expect(SystemsConfigs.ECSVisualBufferSize).to.equal(SystemsConfigs.ECSMaxEntities * SystemsConfigs.ECSVisualStride)
+			expect(SystemsConfigs.ECSPropertiesBufferSize).to.equal(SystemsConfigs.ECSMaxEntities * SystemsConfigs.ECSPropertiesStride)
+
+			const Storage = ECSMain.CreateStorage(true)
+			const Entity1 = Storage.ECSData.RegisterEntity(false)
+			const Entity2 = Storage.ECSData.RegisterEntity(false)
+			const Entity3 = Storage.ECSData.RegisterEntity(false)
+
+			const Obj3 = { Tag = "TailObj" }
+			const Dyn3 = Storage.DynamicObjectsList.AddObject(Obj3, Entity3)
+			Storage.PropertiesData.CreateLayout((Entity3 - 1) * SystemsConfigs.ECSPropertiesStride, true, true, false, Dyn3)
+
+			const DirtyFlags = Storage.ECSData.GetDirtyFlags()
+			const VersionBuffer = Storage.ECSData.GetVersionBuffer()
+			expect(buffer.readu8(DirtyFlags, Entity1 - 1)).to.equal(1)
+			const InitialVer = buffer.readu32(VersionBuffer, (Entity1 - 1) * 4)
+			Storage.ECSData.ClearDirty(Entity1)
+			expect(buffer.readu8(DirtyFlags, Entity1 - 1)).to.equal(0)
+			Storage.ECSData.MarkDirty(Entity1)
+			expect(buffer.readu8(DirtyFlags, Entity1 - 1)).to.equal(1)
+			expect(buffer.readu32(VersionBuffer, (Entity1 - 1) * 4) > InitialVer).to.equal(true)
+
+			local CallbackDeleted = 0
+			local CallbackMovedFrom = 0
+			Storage.ECSData.SetSwapPopCallback(function(DeletedId: number, MovedId: number)
+				CallbackDeleted = DeletedId
+				CallbackMovedFrom = MovedId
+			end)
+
+			Storage.ECSData.DeleteEntity(Entity2)
+			expect(CallbackDeleted).to.equal(Entity2)
+			expect(CallbackMovedFrom).to.equal(Entity3)
+			expect(Storage.DynamicObjectsList.GetBoundEntityId(Dyn3)).to.equal(Entity2)
+			expect(Storage.DynamicObjectsList.GetObjectByEntityId(Entity2)).to.equal(Obj3)
+			expect(Storage.DynamicObjectsList.GetObjectByEntityId(Entity3)).to.equal(nil)
+		end)
 	end)
 
 	describe("3. Dynamic OOP Objects Registry", function()

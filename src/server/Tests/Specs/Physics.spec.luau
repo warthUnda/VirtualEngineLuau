@@ -20,6 +20,7 @@ return function()
 	const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
 	const PhysicsMath = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Physics"):WaitForChild("Core"):WaitForChild("PhysicsMath"))
 	const PlayerPhysics = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Physics"):WaitForChild("Core"):WaitForChild("PlayerPhysics"))
+	const PhysicsController = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Physics"):WaitForChild("Controller"):WaitForChild("PhysicsController"))
 	const PhysicsLibrary = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Physics"):WaitForChild("PhysicsLibrary"))
 	const ServerStorage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
 	const TestHelper = require(ServerScriptService.Server.Tests.TestHelper)
@@ -152,6 +153,15 @@ return function()
 
 			-- Unanchored entity must immediately start simulating with prepackaged defaults when parameters are nil
 			expect(PhysicsLibrary.SimulateInstance(UnanchoredId)).to.equal(true)
+
+			const PosOffset = (UnanchoredId - 1) * SystemsConfigs.ECSComponentStride :: number
+			const PosBuf = ServerStorage.PositionData.GetData()
+			const StartY = buffer.readf32(PosBuf, PosOffset + 4)
+			ServerStorage.ECSData.ClearDirty(UnanchoredId)
+
+			PhysicsController.SimulatePhysicsFrame(1 / 60)
+			expect(buffer.readf32(PosBuf, PosOffset + 4) ~= StartY).to.equal(true)
+			expect(buffer.readu8(ServerStorage.ECSData.GetDirtyFlags(), UnanchoredId - 1)).to.equal(1)
 
 			PhysicsLibrary.StopSimulatingInstance(UnanchoredId)
 			ServerStorage.ECSData.DeleteEntity(UnanchoredId)

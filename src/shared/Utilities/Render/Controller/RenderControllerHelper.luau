@@ -71,7 +71,7 @@ end
 	@param ProjectedVertices buffer -- Scratch buffer for projected 2D coordinates.
 	@param ClipBufferA buffer -- First polygon clipping scratch buffer.
 	@param ClipBufferB buffer -- Second polygon clipping scratch buffer.
-	@param WorkerScores { number } -- Workload score tracking per worker.
+	@param BandHeight number -- Vertical scanline height of each worker band.
 	@param WorkerOffsets { number } -- Buffer write offsets per worker.
 	@param BufferTable { buffer } -- Array of worker render command buffers.
 	@param V0ByteOffset number -- Byte offset for vertex 0.
@@ -91,7 +91,7 @@ function RenderControllerHelper.SubmitFace(
 	ProjectedVertices: buffer,
 	ClipBufferA: buffer,
 	ClipBufferB: buffer,
-	WorkerScores: { number },
+	BandHeight: number,
 	WorkerOffsets: { number },
 	BufferTable: { buffer },
 	V0ByteOffset: number,
@@ -182,55 +182,52 @@ function RenderControllerHelper.SubmitFace(
 			continue
 		end
 
-		const SpanHeightY = MaxY - MinY + 1 :: number
-		const TriangleCost = SignedDoubleTriangleArea * 0.5 + SpanHeightY * 6 + 24 :: number
-
-		local SmallestScore = WorkerScores[1] :: number
-		local BestWorkerIdx = 1 :: number
-
-		for WorkerIdx = 2, ACTOR_COUNT do
-			const CandidateScore = WorkerScores[WorkerIdx] :: number
-			if CandidateScore < SmallestScore then
-				SmallestScore = CandidateScore
-				BestWorkerIdx = WorkerIdx
-			end
-		end
-
-		const RenderBufferOffset = WorkerOffsets[BestWorkerIdx] :: number
-		if RenderBufferOffset + RENDER_BUFFER_LAYOUT_SIZE > WORKER_BUFFER_CAPACITY then
-			continue
-		end
-
-		WorkerScores[BestWorkerIdx] = SmallestScore + TriangleCost
-		WorkerOffsets[BestWorkerIdx] = RenderBufferOffset + RENDER_BUFFER_LAYOUT_SIZE
-
-		const RenderBuffer = BufferTable[BestWorkerIdx] :: buffer
 		const InverseTriangleArea = 1 / SignedDoubleTriangleArea :: number
 
 		const ScaledInverseZ0 = InverseZ0 * InverseTriangleArea :: number
 		const ScaledInverseZ1 = InverseZ1 * InverseTriangleArea :: number
 		const ScaledInverseZ2 = InverseZ2 * InverseTriangleArea :: number
 
-		buffer.writei16(RenderBuffer, RenderBufferOffset, Vertex0X)
-		buffer.writei16(RenderBuffer, RenderBufferOffset + 2, Vertex0Y)
-		buffer.writef32(RenderBuffer, RenderBufferOffset + 4, ScaledInverseZ0)
-		buffer.writef32(RenderBuffer, RenderBufferOffset + 8, ScaledInverseZ0 * TexCoordU0)
-		buffer.writef32(RenderBuffer, RenderBufferOffset + 12, ScaledInverseZ0 * TexCoordV0)
+		const ScaledU0 = ScaledInverseZ0 * TexCoordU0 :: number
+		const ScaledV0 = ScaledInverseZ0 * TexCoordV0 :: number
+		const ScaledU1 = ScaledInverseZ1 * TexCoordU1 :: number
+		const ScaledV1 = ScaledInverseZ1 * TexCoordV1 :: number
+		const ScaledU2 = ScaledInverseZ2 * TexCoordU2 :: number
+		const ScaledV2 = ScaledInverseZ2 * TexCoordV2 :: number
 
-		buffer.writei16(RenderBuffer, RenderBufferOffset + 16, Vertex1X)
-		buffer.writei16(RenderBuffer, RenderBufferOffset + 18, Vertex1Y)
-		buffer.writef32(RenderBuffer, RenderBufferOffset + 20, ScaledInverseZ1)
-		buffer.writef32(RenderBuffer, RenderBufferOffset + 24, ScaledInverseZ1 * TexCoordU1)
-		buffer.writef32(RenderBuffer, RenderBufferOffset + 28, ScaledInverseZ1 * TexCoordV1)
+		const FirstBand = math.clamp(math.floor(MinY / BandHeight) + 1, 1, ACTOR_COUNT) :: number
+		const LastBand = math.clamp(math.floor(MaxY / BandHeight) + 1, 1, ACTOR_COUNT) :: number
 
-		buffer.writei16(RenderBuffer, RenderBufferOffset + 32, Vertex2X)
-		buffer.writei16(RenderBuffer, RenderBufferOffset + 34, Vertex2Y)
-		buffer.writef32(RenderBuffer, RenderBufferOffset + 36, ScaledInverseZ2)
-		buffer.writef32(RenderBuffer, RenderBufferOffset + 40, ScaledInverseZ2 * TexCoordU2)
-		buffer.writef32(RenderBuffer, RenderBufferOffset + 44, ScaledInverseZ2 * TexCoordV2)
+		for WorkerIdx = FirstBand, LastBand do
+			const RenderBufferOffset = WorkerOffsets[WorkerIdx] :: number
+			if RenderBufferOffset + RENDER_BUFFER_LAYOUT_SIZE > WORKER_BUFFER_CAPACITY then
+				continue
+			end
 
-		buffer.writeu32(RenderBuffer, RenderBufferOffset + 48, PackedColor)
-		buffer.writeu32(RenderBuffer, RenderBufferOffset + 52, TextureId)
+			WorkerOffsets[WorkerIdx] = RenderBufferOffset + RENDER_BUFFER_LAYOUT_SIZE
+
+			const RenderBuffer = BufferTable[WorkerIdx] :: buffer
+			buffer.writei16(RenderBuffer, RenderBufferOffset, Vertex0X)
+			buffer.writei16(RenderBuffer, RenderBufferOffset + 2, Vertex0Y)
+			buffer.writef32(RenderBuffer, RenderBufferOffset + 4, ScaledInverseZ0)
+			buffer.writef32(RenderBuffer, RenderBufferOffset + 8, ScaledU0)
+			buffer.writef32(RenderBuffer, RenderBufferOffset + 12, ScaledV0)
+
+			buffer.writei16(RenderBuffer, RenderBufferOffset + 16, Vertex1X)
+			buffer.writei16(RenderBuffer, RenderBufferOffset + 18, Vertex1Y)
+			buffer.writef32(RenderBuffer, RenderBufferOffset + 20, ScaledInverseZ1)
+			buffer.writef32(RenderBuffer, RenderBufferOffset + 24, ScaledU1)
+			buffer.writef32(RenderBuffer, RenderBufferOffset + 28, ScaledV1)
+
+			buffer.writei16(RenderBuffer, RenderBufferOffset + 32, Vertex2X)
+			buffer.writei16(RenderBuffer, RenderBufferOffset + 34, Vertex2Y)
+			buffer.writef32(RenderBuffer, RenderBufferOffset + 36, ScaledInverseZ2)
+			buffer.writef32(RenderBuffer, RenderBufferOffset + 40, ScaledU2)
+			buffer.writef32(RenderBuffer, RenderBufferOffset + 44, ScaledV2)
+
+			buffer.writeu32(RenderBuffer, RenderBufferOffset + 48, PackedColor)
+			buffer.writeu32(RenderBuffer, RenderBufferOffset + 52, TextureId)
+		end
 	end
 end
 

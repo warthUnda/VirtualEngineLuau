@@ -11,9 +11,11 @@ const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForC
 -- Configs --
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+const VISUAL_STRIDE = (SystemsConfigs.ECSVisualStride or 4) :: number
 const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 const COMPONENT_BUFFER_SIZE = SystemsConfigs.ECSComponentBufferSize :: number
 const DIRECTION_BUFFER_SIZE = SystemsConfigs.ECSDirectionBufferSize :: number
+const VISUAL_BUFFER_SIZE = (SystemsConfigs.ECSVisualBufferSize or (SystemsConfigs.ECSMaxEntities * VISUAL_STRIDE)) :: number
 const PROPERTIES_BUFFER_SIZE = SystemsConfigs.ECSPropertiesBufferSize :: number
 const MAX_ENTITIES = SystemsConfigs.ECSMaxEntities :: number
 const MAX_DYNAMIC_ID = SystemsConfigs.DynamicObjectsMaxCount :: number
@@ -89,6 +91,11 @@ export type ECSDataComponent = {
 	ECSDataTable: ECSTable,
 	GetCounts: () -> ECSTable,
 	GetStaticData: () -> buffer,
+	GetDirtyFlags: () -> buffer,
+	GetVersionBuffer: () -> buffer,
+	MarkDirty: (EntityId: number) -> (),
+	ClearDirty: (EntityId: number) -> (),
+	SetSwapPopCallback: (Callback: ((DeletedEntityId: number, MovedFromEntityId: number) -> ())?) -> (),
 	RegisterEntity: (IsStatic: boolean?) -> number,
 	SetEntityCount: (EntityCount: number) -> (),
 	DeleteEntity: (EntityId: number) -> (),
@@ -161,13 +168,15 @@ function ECSMain.CreateVisualLayout(
 	MemoryOffset: number,
 	R: number,
 	G: number,
-	B: number
+	B: number,
+	A: number?
 ): number
 	buffer.writeu8(TargetBuffer, MemoryOffset, R)
 	buffer.writeu8(TargetBuffer, MemoryOffset + 1, G)
 	buffer.writeu8(TargetBuffer, MemoryOffset + 2, B)
+	buffer.writeu8(TargetBuffer, MemoryOffset + 3, A or 255)
 
-	return MemoryOffset + COMPONENT_STRIDE
+	return MemoryOffset + VISUAL_STRIDE
 end
 
 --[=[
@@ -414,7 +423,12 @@ end
 	@return number -- New unique EntityId.
 ]=]
 function ECSMain.RegisterEntity(Counts: ECSTable, StaticBuffer: buffer?, IsStatic: boolean?): number
-	const NextCount = Counts.EntityECSCount + 1 :: number
+	const CurrentCount = Counts.EntityECSCount :: number
+	if CurrentCount >= MAX_ENTITIES then
+		return 0
+	end
+
+	const NextCount = CurrentCount + 1 :: number
 
 	Counts.EntityECSCount = NextCount
 	Counts.OrientationECSCount = NextCount
@@ -424,7 +438,7 @@ function ECSMain.RegisterEntity(Counts: ECSTable, StaticBuffer: buffer?, IsStati
 	Counts.DirectionsECSCount = NextCount
 	Counts.PropertiesECSCount = NextCount
 
-	if StaticBuffer and NextCount <= MAX_ENTITIES then
+	if StaticBuffer then
 		buffer.writeu8(StaticBuffer, NextCount - 1, if IsStatic then 1 else 0)
 	end
 
@@ -462,7 +476,7 @@ function ECSMain.DeleteEntity(
 	EntityId: number,
 	Counts: ECSTable,
 	PositionBuffer: buffer,
-	OrientationBuffer: buffer,
+	OrientationBuffer: buffer?,
 	VisualBuffer: buffer,
 	SizeBuffer: buffer,
 	DirectionsBuffer: buffer,
@@ -479,8 +493,14 @@ function ECSMain.DeleteEntity(
 		const LastOffset = (LastEntityId - 1) * COMPONENT_STRIDE :: number
 
 		buffer.copy(PositionBuffer, TargetOffset, PositionBuffer, LastOffset, COMPONENT_STRIDE)
-		buffer.copy(OrientationBuffer, TargetOffset, OrientationBuffer, LastOffset, COMPONENT_STRIDE)
-		buffer.copy(VisualBuffer, TargetOffset, VisualBuffer, LastOffset, COMPONENT_STRIDE)
+		if OrientationBuffer and OrientationBuffer ~= DirectionsBuffer then
+			buffer.copy(OrientationBuffer, TargetOffset, OrientationBuffer, LastOffset, COMPONENT_STRIDE)
+		end
+
+		const TargetVisualOffset = (EntityId - 1) * VISUAL_STRIDE :: number
+		const LastVisualOffset = (LastEntityId - 1) * VISUAL_STRIDE :: number
+		buffer.copy(VisualBuffer, TargetVisualOffset, VisualBuffer, LastVisualOffset, VISUAL_STRIDE)
+
 		buffer.copy(SizeBuffer, TargetOffset, SizeBuffer, LastOffset, COMPONENT_STRIDE)
 
 		const TargetDirOffset = (EntityId - 1) * DIRECTION_STRIDE :: number
@@ -544,11 +564,11 @@ end
 	@return VisualComponent -- Initialized Visual component interface.
 ]=]
 function ECSMain.CreateVisualComponent(): VisualComponent
-	const VisualBuffer = buffer.create(COMPONENT_BUFFER_SIZE) :: buffer
+	const VisualBuffer = buffer.create(VISUAL_BUFFER_SIZE) :: buffer
 	local Component = {}
 
-	function Component.CreateLayout(MemoryOffset: number, R: number, G: number, B: number): number
-		return ECSMain.CreateVisualLayout(VisualBuffer, MemoryOffset, R, G, B)
+	function Component.CreateLayout(MemoryOffset: number, R: number, G: number, B: number, A: number?): number
+		return ECSMain.CreateVisualLayout(VisualBuffer, MemoryOffset, R, G, B, A)
 	end
 
 	function Component.GetData(): buffer
@@ -783,19 +803,35 @@ end
 ]=]
 function ECSMain.CreateStorage(IncludeStaticBuffer: boolean?): ECSStorage
 	const PositionData = ECSMain.CreateVector3Component()
-	const OrientationData = ECSMain.CreateVector3Component()
 	const VisualData = ECSMain.CreateVisualComponent()
 	const SizeData = ECSMain.CreateVector3Component()
 	const DirectionsData = ECSMain.CreateDirectionsComponent()
 	const PropertiesData = ECSMain.CreatePropertiesComponent() :: PropertiesComponent
 
 	const PositionBuffer = PositionData.GetData() :: buffer
-	const OrientationBuffer = OrientationData.GetData() :: buffer
 	const VisualBuffer = VisualData.GetData() :: buffer
 	const SizeBuffer = SizeData.GetData() :: buffer
 	const DirectionsBuffer = DirectionsData.GetData() :: buffer
 	const PropertiesBuffer = PropertiesData.GetData() :: buffer
 	const StaticBuffer = if IncludeStaticBuffer then buffer.create(MAX_ENTITIES) else nil :: buffer?
+	const DirtyFlags = buffer.create(MAX_ENTITIES) :: buffer
+	const VersionBuffer = buffer.create(MAX_ENTITIES * 4) :: buffer
+	const SwapPopCallbacks = {} :: { (DeletedEntityId: number, MovedFromEntityId: number) -> () }
+
+	-- Legacy shim: alias OrientationData onto DirectionsBuffer (LookVector bytes 0..11) at 0 extra memory cost
+	const OrientationData: Vector3Component = {
+		CreateLayout = function(MemoryOffset: number, X: number, Y: number, Z: number): number
+			const EntityIdx = MemoryOffset // COMPONENT_STRIDE :: number
+			const DirOffset = EntityIdx * DIRECTION_STRIDE :: number
+			buffer.writef32(DirectionsBuffer, DirOffset, X)
+			buffer.writef32(DirectionsBuffer, DirOffset + 4, Y)
+			buffer.writef32(DirectionsBuffer, DirOffset + 8, Z)
+			return MemoryOffset + COMPONENT_STRIDE
+		end,
+		GetData = function(): buffer
+			return DirectionsBuffer
+		end,
+	}
 
 	const ECSDataTable: ECSTable = {
 		OrientationECSCount = 0,
@@ -806,6 +842,8 @@ function ECSMain.CreateStorage(IncludeStaticBuffer: boolean?): ECSStorage
 		PropertiesECSCount = 0,
 		EntityECSCount = 0,
 	}
+
+	const DynamicObjectsList = ECSMain.CreateDynamicObjectsComponent(PropertiesBuffer)
 
 	local ECSData = {}
 	ECSData.ECSDataTable = ECSDataTable
@@ -818,8 +856,46 @@ function ECSMain.CreateStorage(IncludeStaticBuffer: boolean?): ECSStorage
 		return StaticBuffer :: buffer
 	end
 
+	function ECSData.GetDirtyFlags(): buffer
+		return DirtyFlags
+	end
+
+	function ECSData.GetVersionBuffer(): buffer
+		return VersionBuffer
+	end
+
+	function ECSData.MarkDirty(EntityId: number)
+		if EntityId < 1 or EntityId > MAX_ENTITIES then
+			return
+		end
+		buffer.writeu8(DirtyFlags, EntityId - 1, 1)
+		const VersionOffset = (EntityId - 1) * 4 :: number
+		buffer.writeu32(VersionBuffer, VersionOffset, buffer.readu32(VersionBuffer, VersionOffset) + 1)
+	end
+
+	function ECSData.ClearDirty(EntityId: number)
+		if EntityId < 1 or EntityId > MAX_ENTITIES then
+			return
+		end
+		buffer.writeu8(DirtyFlags, EntityId - 1, 0)
+	end
+
+	function ECSData.SetSwapPopCallback(Callback: ((DeletedEntityId: number, MovedFromEntityId: number) -> ())?)
+		if not Callback then
+			table.clear(SwapPopCallbacks)
+			return
+		end
+		if not table.find(SwapPopCallbacks, Callback) then
+			table.insert(SwapPopCallbacks, Callback)
+		end
+	end
+
 	function ECSData.RegisterEntity(IsStatic: boolean?): number
-		return ECSMain.RegisterEntity(ECSDataTable, StaticBuffer, IsStatic)
+		const NewId = ECSMain.RegisterEntity(ECSDataTable, StaticBuffer, IsStatic) :: number
+		if NewId > 0 then
+			ECSData.MarkDirty(NewId)
+		end
+		return NewId
 	end
 
 	function ECSData.SetEntityCount(EntityCount: number)
@@ -827,20 +903,46 @@ function ECSMain.CreateStorage(IncludeStaticBuffer: boolean?): ECSStorage
 	end
 
 	function ECSData.DeleteEntity(EntityId: number)
+		const LastEntityId = ECSDataTable.EntityECSCount :: number
+		if EntityId < 1 or EntityId > LastEntityId then
+			return
+		end
+
+		const DeletedProp = buffer.readu32(PropertiesBuffer, (EntityId - 1) * PROPERTIES_STRIDE) :: number
+		const DeletedDynId = ECSMain.GetEntityDynamicId(DeletedProp) :: number
+
 		ECSMain.DeleteEntity(
 			EntityId,
 			ECSDataTable,
 			PositionBuffer,
-			OrientationBuffer,
+			nil,
 			VisualBuffer,
 			SizeBuffer,
 			DirectionsBuffer,
 			StaticBuffer,
 			PropertiesBuffer
 		)
-	end
 
-	const DynamicObjectsList = ECSMain.CreateDynamicObjectsComponent(PropertiesBuffer)
+		if DeletedDynId > 0 then
+			DynamicObjectsList.RemoveObject(DeletedDynId)
+		end
+
+		if EntityId ~= LastEntityId then
+			const MovedProp = buffer.readu32(PropertiesBuffer, (EntityId - 1) * PROPERTIES_STRIDE) :: number
+			const MovedDynId = ECSMain.GetEntityDynamicId(MovedProp) :: number
+			if MovedDynId > 0 then
+				DynamicObjectsList.BindEntity(MovedDynId, EntityId)
+			end
+			ECSData.MarkDirty(EntityId)
+		end
+
+		buffer.writeu8(DirtyFlags, LastEntityId - 1, 0)
+		buffer.writeu32(VersionBuffer, (LastEntityId - 1) * 4, 0)
+
+		for _, Callback in SwapPopCallbacks do
+			Callback(EntityId, LastEntityId)
+		end
+	end
 
 	return {
 		PositionData = PositionData,

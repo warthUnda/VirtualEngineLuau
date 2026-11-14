@@ -27,7 +27,7 @@
 - Computes minimum translation distance (`MinOverlap`) and the surface normal (`BestNormal`) along the principal axis of least penetration.
 - **Position & Momentum Transfer:** Displaces intersecting bodies out of geometry and updates momentum according to inverse mass ratios (`PLAYER_INV_MASS`, `ObjectInvMassBuffer`).
 
-### 4. PhysicsLibrary & Dynamic Entity Management
+### 4. PhysicsLibrary & Awake-List Entity Management
 - Exposes a single unified entity simulation entry point `SimulateInstance(EntityId, Angle, Impulse, Speed, CustomMass)` that checks `FLAG_ANCHORED` and immediately applies physics (falling back to prepackaged `PhysicsConfig` defaults `ObjectDefaultLaunchAngle`, `ObjectDefaultImpulse`, and `ObjectDefaultSpeed` when parameters are `nil`), alongside `StopSimulatingInstance(EntityId)`.
 - Exposes high-level player state APIs: `SetPlayerPosition`, `GetPlayerPosition`, `SetPlayerVelocity`, and `GetPlayerVelocity`.
-- Manages wake/sleep states and rolling/tumbling angular velocity for dynamic ECS bodies (`DynamicFlags`: 0 = static, 1 = awake, 2 = sleeping).
+- Manages wake/sleep states and tumbling angular velocity via a dense `AwakeEntitiesBuffer` / `AwakeEntitySlotBuffer` (`O(AwakeCount)` iteration instead of scanning all entities), calls `BVH.EnsureFresh()` once per substep, wakes sleeping entities collided in `PhysicsMath`, marks mutated bodies via `ECSData.MarkDirty`, and stays synchronized across `DeleteEntity` swap-pops via `SetSwapPopCallback`.

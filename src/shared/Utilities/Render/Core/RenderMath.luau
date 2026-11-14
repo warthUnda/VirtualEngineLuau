@@ -55,7 +55,9 @@ function RenderMath.TransformShapeCameraVertices(
 	CamRight: vector,
 	CamUp: vector,
 	CamLook: vector,
-	SunVec: vector
+	SunVec: vector,
+	GuardBandX: number?,
+	GuardBandY: number?
 ): (boolean, vector, vector, vector)
 	const PartPosition = BufferHelper.ReadVec3(PositionBuffer, ComponentOffset)
 	const HalfSize = BufferHelper.ReadVec3(SizeBuffer, ComponentOffset) * 0.5
@@ -102,6 +104,23 @@ function RenderMath.TransformShapeCameraVertices(
 		vector.dot(WorldLookAxis, CamUp),
 		LookAxisCameraZ
 	)
+
+	if GuardBandX and GuardBandY then
+		const MaxDepth = math.max(CameraSpaceCenterZ + CameraSpaceExtentZ, NEAR_CLIP) :: number
+		const ExtentX =
+			math.abs(CameraSpaceRightAxis.X) + math.abs(CameraSpaceUpAxis.X) + math.abs(CameraSpaceLookAxis.X) :: number
+		const HalfFrustumX = MaxDepth * GuardBandX :: number
+		if CameraSpaceCenter.X + ExtentX < -HalfFrustumX or CameraSpaceCenter.X - ExtentX > HalfFrustumX then
+			return false, vector.zero, vector.zero, vector.zero
+		end
+
+		const ExtentY =
+			math.abs(CameraSpaceRightAxis.Y) + math.abs(CameraSpaceUpAxis.Y) + math.abs(CameraSpaceLookAxis.Y) :: number
+		const HalfFrustumY = MaxDepth * GuardBandY :: number
+		if CameraSpaceCenter.Y + ExtentY < -HalfFrustumY or CameraSpaceCenter.Y - ExtentY > HalfFrustumY then
+			return false, vector.zero, vector.zero, vector.zero
+		end
+	end
 
 	for VertexIndex = 1, VertexCount do
 		const LocalVertex = LocalVertices[VertexIndex]
@@ -345,7 +364,9 @@ function RenderMath.DrawTriangleBatch(
 	WIDTH: number,
 	HEIGHT: number,
 	PixelBuffer: buffer,
-	ZBuffer: buffer
+	ZBuffer: buffer,
+	BandStartY: number?,
+	BandEndY: number?
 ): (number, number)
 	const RowStride = WIDTH * 4 :: number
 	local DirtyMinY = HEIGHT :: number
@@ -380,7 +401,9 @@ function RenderMath.DrawTriangleBatch(
 			HEIGHT,
 			RowStride,
 			PixelBuffer,
-			ZBuffer
+			ZBuffer,
+			BandStartY,
+			BandEndY
 		)
 
 		if TriangleMinY < DirtyMinY then

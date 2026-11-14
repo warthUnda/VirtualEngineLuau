@@ -12,6 +12,7 @@ const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("E
 -- Configs --
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+const VISUAL_STRIDE = SystemsConfigs.ECSVisualStride :: number
 
 local TestHelper = {}
 
@@ -50,9 +51,9 @@ function TestHelper.PopulateEntity(
 	const EntityId = Storage.ECSData.RegisterEntity() :: number
 	const Offset = (EntityId - 1) * COMPONENT_STRIDE :: number
 	const DirOffset = (EntityId - 1) * DIRECTION_STRIDE :: number
+	const VisualOffset = (EntityId - 1) * VISUAL_STRIDE :: number
 
 	Storage.PositionData.CreateLayout(Offset, Pos.X, Pos.Y, Pos.Z)
-	Storage.OrientationData.CreateLayout(Offset, Look.X, Look.Y, Look.Z)
 	Storage.DirectionsData.CreateLayout(
 		DirOffset,
 		Look.X,
@@ -67,7 +68,7 @@ function TestHelper.PopulateEntity(
 	)
 	Storage.SizeData.CreateLayout(Offset, Size.X, Size.Y, Size.Z)
 	Storage.VisualData.CreateLayout(
-		Offset,
+		VisualOffset,
 		math.floor(Color.R * 255),
 		math.floor(Color.G * 255),
 		math.floor(Color.B * 255)

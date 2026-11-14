@@ -9,7 +9,15 @@ const ECSConfig = require(ConfigsFolder:WaitForChild("ECSConfig"))
 const PhysicsConfig = require(ConfigsFolder:WaitForChild("PhysicsConfig"))
 const BVHConfig = require(ConfigsFolder:WaitForChild("BVHConfig"))
 
-local SystemsConfigs = {} :: { [string]: any }
+export type SystemsConfigsType = {
+	Render: typeof(RenderConfig),
+	ECS: typeof(ECSConfig),
+	Physics: typeof(PhysicsConfig),
+	BVH: typeof(BVHConfig),
+	[string]: any,
+}
+
+local SystemsConfigs = {} :: SystemsConfigsType
 
 -- Re-export domain configs as a unified table for backward-compatible lookups
 for Key: string, Value: any in pairs(RenderConfig) do

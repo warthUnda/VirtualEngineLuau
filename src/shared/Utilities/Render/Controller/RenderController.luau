@@ -68,7 +68,9 @@ const DEFAULT_CAMERA_VIEW = SystemsConfigs.DefaultCameraView :: string
 
 const ECS_COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const ECS_DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+const ECS_VISUAL_STRIDE = SystemsConfigs.ECSVisualStride :: number
 const ECS_PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
+const BAND_HEIGHT = math.ceil(HEIGHT / ACTOR_COUNT) :: number
 const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
 const TEXTURE_STUDS_PER_TILE = SystemsConfigs.TextureStudsPerTile :: number
 const INV_TEXTURE_STUDS_PER_TILE = if TEXTURE_STUDS_PER_TILE > 0 then 1 / TEXTURE_STUDS_PER_TILE else 0 :: number
@@ -88,13 +90,11 @@ local LoadedTextureBuffers: { [number]: buffer }? = nil
 -- Tables --
 local WorkerActors = {} :: { Actor }
 local WorkerOffsets = table.create(ACTOR_COUNT, 0) :: { number }
-local WorkerScores = table.create(ACTOR_COUNT, 0) :: { number }
 local BufferTable = {} :: { buffer }
 
 -- Buffers
 const EmptyPayload = buffer.create(0) :: buffer
 const FinalPixel = buffer.create(TOTAL_PIXELS * 4) :: buffer
-const FinalZ = buffer.create(TOTAL_PIXELS * 4) :: buffer
 const ECSPositionBuffer = PositionData.GetData() :: buffer
 const ECSSizeBuffer = SizeData.GetData() :: buffer
 const ECSDirectionsBuffer = DirectionsData.GetData() :: buffer
@@ -126,8 +126,13 @@ function Renderer.Init()
 	-- Create Information Data for workers
 	for i = 1, ACTOR_COUNT do
 		BufferTable[i] = buffer.create(WORKER_BUFFER_CAPACITY)
-		WorkerScores[i] = 0
 		WorkerOffsets[i] = 0
+	end
+
+	for i, TargetActor: Actor in ipairs(WorkerActors) do
+		const BandStartY = (i - 1) * BAND_HEIGHT :: number
+		const BandEndY = math.min(i * BAND_HEIGHT - 1, HEIGHT - 1) :: number
+		TargetActor:SendMessage("Set Band Range", BandStartY, BandEndY)
 	end
 
 	-- Connecting Editable image to ImageLabel --
@@ -152,31 +157,19 @@ function Renderer.Init()
 
 	SelfActor:BindToMessage(
 		"Return Render Calculations",
-		function(DirtyPixelSlice: buffer, DirtyZSlice: buffer, FrameId: number, DirtyMinY: number, DirtyMaxY: number)
+		function(
+			WorkerPixelBuffer: buffer,
+			FrameId: number,
+			BandStartY: number,
+			BandEndY: number,
+			DirtyMinY: number,
+			DirtyMaxY: number
+		)
 			if FrameId ~= CurrentFrame then -- ignore stale frames
 				return
 			end
 
-			if Received == 0 then
-				BufferHelper.ClearBuffers(TOTAL_PIXELS, FinalPixel, FinalZ)
-				if DirtyMinY <= DirtyMaxY then
-					const DestOffset = DirtyMinY * WIDTH * 4 :: number
-					const SliceBytes = (DirtyMaxY - DirtyMinY + 1) * WIDTH * 4 :: number
-					buffer.copy(FinalPixel, DestOffset, DirtyPixelSlice, 0, SliceBytes)
-					buffer.copy(FinalZ, DestOffset, DirtyZSlice, 0, SliceBytes)
-				end
-			elseif DirtyMinY <= DirtyMaxY then
-				const DestBaseOffset = DirtyMinY * WIDTH * 4 :: number
-				const SliceBytes = (DirtyMaxY - DirtyMinY + 1) * WIDTH * 4 :: number
-				for SliceOffset = 0, SliceBytes - 4, 4 do
-					const IncomingInverseZ = buffer.readf32(DirtyZSlice, SliceOffset) :: number
-					const DestOffset = DestBaseOffset + SliceOffset :: number
-					if IncomingInverseZ > buffer.readf32(FinalZ, DestOffset) then
-						buffer.writef32(FinalZ, DestOffset, IncomingInverseZ)
-						buffer.writeu32(FinalPixel, DestOffset, buffer.readu32(DirtyPixelSlice, SliceOffset))
-					end
-				end
-			end
+			BufferHelper.CompositeWorkerBand(FinalPixel, WorkerPixelBuffer, WIDTH, BandStartY, BandEndY, DirtyMinY, DirtyMaxY)
 
 			Received += 1
 
@@ -260,7 +253,6 @@ function Renderer.DrawFrame()
 	end
 
 	for i = 1, ACTOR_COUNT do
-		WorkerScores[i] = 0
 		WorkerOffsets[i] = 0
 	end
 
@@ -268,9 +260,14 @@ function Renderer.DrawFrame()
 	for i = 1, EntityCount do
 		const ComponentOffset = (i - 1) * ECS_COMPONENT_STRIDE :: number
 		const DirectionOffset = (i - 1) * ECS_DIRECTION_STRIDE :: number
+		const VisualOffset = (i - 1) * ECS_VISUAL_STRIDE :: number
 		const PropertiesOffset = (i - 1) * ECS_PROPERTIES_STRIDE :: number
 
 		const PropertiesRegister = buffer.readu32(ECSPropertiesBuffer, PropertiesOffset) :: number
+		if not ECSMain.IsEntityVisible(PropertiesRegister) then
+			continue
+		end
+
 		const EntityShapeId = ECSMain.GetEntityShapeId(PropertiesRegister) :: number
 		const EntityTextureId = ECSMain.GetEntityTextureId(PropertiesRegister) :: number
 		const ShapeMesh = VerticeFile.ShapeData[EntityShapeId] or VerticeFile.ShapeData[0]
@@ -280,15 +277,15 @@ function Renderer.DrawFrame()
 		local PartColorG = 255 :: number
 		local PartColorB = 255 :: number
 		if EntityTextureId == 0 then
-			PartColorR = buffer.readu8(ECSVisualBuffer, ComponentOffset) :: number
-			PartColorG = buffer.readu8(ECSVisualBuffer, ComponentOffset + 1) :: number
-			PartColorB = buffer.readu8(ECSVisualBuffer, ComponentOffset + 2) :: number
+			PartColorR = buffer.readu8(ECSVisualBuffer, VisualOffset) :: number
+			PartColorG = buffer.readu8(ECSVisualBuffer, VisualOffset + 1) :: number
+			PartColorB = buffer.readu8(ECSVisualBuffer, VisualOffset + 2) :: number
 		end
 
 		local TileScaleX = 1 :: number
 		local TileScaleY = 1 :: number
 		local TileScaleZ = 1 :: number
-		if INV_TEXTURE_STUDS_PER_TILE > 0 then
+		if EntityTextureId > 0 and INV_TEXTURE_STUDS_PER_TILE > 0 then
 			TileScaleX = math.clamp(math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset) * INV_TEXTURE_STUDS_PER_TILE + 0.5), 1, 8)
 			TileScaleY = math.clamp(math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset + 4) * INV_TEXTURE_STUDS_PER_TILE + 0.5), 1, 8)
 			TileScaleZ = math.clamp(math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset + 8) * INV_TEXTURE_STUDS_PER_TILE + 0.5), 1, 8)
@@ -308,7 +305,9 @@ function Renderer.DrawFrame()
 				CamRightVec,
 				CamUpVec,
 				CamLookVec,
-				SUN_VEC
+				SUN_VEC,
+				GuardBandX,
+				GuardBandY
 			)
 
 		if not IsVisible then
@@ -329,21 +328,23 @@ function Renderer.DrawFrame()
 					PartColorB,
 					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, FaceSunDot)
 				)
+				const ScaleU = if Face.UAxisIndex == 1 then TileScaleX elseif Face.UAxisIndex == 2 then TileScaleY else TileScaleZ
+				const ScaleV = if Face.VAxisIndex == 1 then TileScaleX elseif Face.VAxisIndex == 2 then TileScaleY else TileScaleZ
 
 				RenderControllerHelper.SubmitFace(
 					ScreenVertices,
 					ProjectedVertices,
 					ClipBufferA,
 					ClipBufferB,
-					WorkerScores,
+					BAND_HEIGHT,
 					WorkerOffsets,
 					BufferTable,
 					Face.V0ByteOffset,
 					Face.V1ByteOffset,
 					Face.V2ByteOffset,
 					Face.V3ByteOffset,
-					TileScaleX,
-					TileScaleY,
+					ScaleU,
+					ScaleV,
 					Color,
 					EntityTextureId,
 					FocalLength,
@@ -352,20 +353,26 @@ function Renderer.DrawFrame()
 				)
 			end
 		else
-			const InvHalfSize = vector.create(
-				if HalfSize.x > 1e-4 then 1 / HalfSize.x else 1,
-				if HalfSize.y > 1e-4 then 1 / HalfSize.y else 1,
-				if HalfSize.z > 1e-4 then 1 / HalfSize.z else 1
-			)
+			const IsUniformScale = math.abs(HalfSize.x - HalfSize.y) < 1e-4
+				and math.abs(HalfSize.y - HalfSize.z) < 1e-4 :: boolean
+			const InvHalfSize = if not IsUniformScale
+				then vector.create(
+					if HalfSize.x > 1e-4 then 1 / HalfSize.x else 1,
+					if HalfSize.y > 1e-4 then 1 / HalfSize.y else 1,
+					if HalfSize.z > 1e-4 then 1 / HalfSize.z else 1
+				)
+				else vector.zero
 
 			for _, Face in ipairs(ShapeMesh.Faces) do
 				const ScaledPoint = Face.PointOnFace * HalfSize
-				const ScaledLocalNormal = Face.Normal * InvHalfSize
+				const ScaledLocalNormal = if IsUniformScale then Face.Normal else Face.Normal * InvHalfSize
 				if vector.dot(LocalCameraPos - ScaledPoint, ScaledLocalNormal) <= -1e-3 then
 					continue
 				end
 
-				const WorldSpaceLocalNormal = vector.normalize(ScaledLocalNormal)
+				const WorldSpaceLocalNormal = if IsUniformScale
+					then Face.Normal
+					else vector.normalize(ScaledLocalNormal)
 				const FaceSunDot = vector.dot(WorldSpaceLocalNormal, LocalSun) :: number
 				const Color = RenderControllerHelper.PackShadedColor(
 					PartColorR,
@@ -373,21 +380,23 @@ function Renderer.DrawFrame()
 					PartColorB,
 					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, FaceSunDot)
 				)
+				const ScaleU = if Face.UAxisIndex == 1 then TileScaleX elseif Face.UAxisIndex == 2 then TileScaleY else TileScaleZ
+				const ScaleV = if Face.VAxisIndex == 1 then TileScaleX elseif Face.VAxisIndex == 2 then TileScaleY else TileScaleZ
 
 				RenderControllerHelper.SubmitFace(
 					ScreenVertices,
 					ProjectedVertices,
 					ClipBufferA,
 					ClipBufferB,
-					WorkerScores,
+					BAND_HEIGHT,
 					WorkerOffsets,
 					BufferTable,
 					Face.V0ByteOffset,
 					Face.V1ByteOffset,
 					Face.V2ByteOffset,
 					Face.V3ByteOffset,
-					TileScaleX,
-					TileScaleY,
+					ScaleU,
+					ScaleV,
 					Color,
 					EntityTextureId,
 					FocalLength,

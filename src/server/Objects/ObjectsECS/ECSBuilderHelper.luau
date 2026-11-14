@@ -26,6 +26,7 @@ const PropertiesData = Storage.PropertiesData
 -- Configs --
 const ENTITY_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+const VISUAL_STRIDE = SystemsConfigs.ECSVisualStride :: number
 const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 const STATIC_FOLDER_NAME = SystemsConfigs.StaticObjectsFolderName :: string
 const CORE_EVENTS_FOLDER_NAME = SystemsConfigs.CoreEventsFolderName :: string
@@ -134,8 +135,13 @@ function ECSBuilderHelper.PopulatePart(Part: BasePart)
 
 	const IsStatic = if StaticFolder then Part:IsDescendantOf(StaticFolder) else false
 	const EntityId = ECSData.RegisterEntity(IsStatic) :: number
+	if EntityId <= 0 then
+		return
+	end
+
 	const Offset = (EntityId - 1) * ENTITY_STRIDE :: number
 	const DirectionOffset = (EntityId - 1) * DIRECTION_STRIDE :: number
+	const VisualOffset = (EntityId - 1) * VISUAL_STRIDE :: number
 
 	const PartPosition = Part.Position :: Vector3
 	PositionData.CreateLayout(Offset, PartPosition.X, PartPosition.Y, PartPosition.Z)
@@ -145,8 +151,6 @@ function ECSBuilderHelper.PopulatePart(Part: BasePart)
 	const UpVector = PartCFrame.UpVector :: Vector3
 	const RightVector = PartCFrame.RightVector :: Vector3
 
-	-- Orientation is stored as the part's facing direction (simplified 3-float layout).
-	OrientationData.CreateLayout(Offset, LookVector.X, LookVector.Y, LookVector.Z)
 	DirectionsData.CreateLayout(
 		DirectionOffset,
 		LookVector.X,
@@ -165,7 +169,7 @@ function ECSBuilderHelper.PopulatePart(Part: BasePart)
 
 	const PartColor = Part.Color :: Color3
 	VisualData.CreateLayout(
-		Offset,
+		VisualOffset,
 		math.floor(PartColor.R * 255),
 		math.floor(PartColor.G * 255),
 		math.floor(PartColor.B * 255)

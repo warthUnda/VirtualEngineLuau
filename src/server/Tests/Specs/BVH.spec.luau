@@ -138,6 +138,11 @@ return function()
 			expect(Count).to.equal(2)
 			expect(table.find(Results, Ent1) ~= nil).to.equal(true)
 			expect(table.find(Results, Ent2) ~= nil).to.equal(true)
+
+			const ScalarOut = buffer.create(16 * 4)
+			BVH.EnsureFresh(Storage)
+			const ScalarCount = BVH.QueryAABBScalar(-5, -5, -5, 5, 5, 5, ScalarOut, 16, Storage, true)
+			expect(ScalarCount).to.equal(2)
 		end)
 	end)
 end

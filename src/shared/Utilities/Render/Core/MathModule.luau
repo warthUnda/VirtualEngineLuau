@@ -163,7 +163,7 @@ end
 	@param SpanEndOffsetX number -- Current span end pixel offset.
 	@return (number, number) -- Clipped (SpanStartOffsetX, SpanEndOffsetX).
 ]=]
-function MathModule.ClipSpanEdge(
+local function ClipSpanEdge(
 	RowEdgeWeight: number,
 	EdgeStepX: number,
 	SpanStartOffsetX: number,
@@ -189,6 +189,8 @@ function MathModule.ClipSpanEdge(
 
 	return SpanStartOffsetX, math.min(SpanEndOffsetX, RowEdgeWeight // -EdgeStepX)
 end
+
+MathModule.ClipSpanEdge = ClipSpanEdge
 
 --[=[
 	Rasterizes a 2D screen-space triangle with perspective-correct texture mapping into the color pixel and Z depth buffers.
@@ -216,6 +218,8 @@ end
 	@param RowStride number -- Byte stride per horizontal scanline row.
 	@param PixelBuffer buffer -- Destination color pixel buffer.
 	@param ZBuffer buffer -- Destination 32-bit float Z-buffer.
+	@param BandStartY number? -- Optional inclusive scanline band start Y.
+	@param BandEndY number? -- Optional inclusive scanline band end Y.
 	@return (number, number) -- Modified scanline row range (MinY, MaxY).
 ]=]
 function MathModule.RasterizeTriangleSpan(
@@ -242,12 +246,16 @@ function MathModule.RasterizeTriangleSpan(
 	HEIGHT: number,
 	RowStride: number,
 	PixelBuffer: buffer,
-	ZBuffer: buffer
+	ZBuffer: buffer,
+	BandStartY: number?,
+	BandEndY: number?
 ): (number, number)
+	const EffectiveBandStartY = BandStartY or 0 :: number
+	const EffectiveBandEndY = BandEndY or (HEIGHT - 1) :: number
 	const MinX = math.max(0, math.min(Vertex0X, Vertex1X, Vertex2X)) :: number
 	const MaxX = math.min(WIDTH - 1, math.max(Vertex0X, Vertex1X, Vertex2X)) :: number
-	const MinY = math.max(0, math.min(Vertex0Y, Vertex1Y, Vertex2Y)) :: number
-	const MaxY = math.min(HEIGHT - 1, math.max(Vertex0Y, Vertex1Y, Vertex2Y)) :: number
+	const MinY = math.max(EffectiveBandStartY, math.min(Vertex0Y, Vertex1Y, Vertex2Y)) :: number
+	const MaxY = math.min(EffectiveBandEndY, math.max(Vertex0Y, Vertex1Y, Vertex2Y)) :: number
 
 	if MinX > MaxX or MinY > MaxY then
 		return HEIGHT, -1
@@ -274,7 +282,7 @@ function MathModule.RasterizeTriangleSpan(
 	local RowInverseZ = vector.dot(RowEdgeWeights, ScaledInverseZVector) :: number
 
 	const MaxSpanOffsetX = MaxX - MinX :: number
-	local RowOffset = (MinY * WIDTH + MinX) * 4 :: number
+	local RowOffset = ((MinY - EffectiveBandStartY) * WIDTH + MinX) * 4 :: number
 
 	if TextureBuffer then
 		const ScaledUOverZVector = vector.create(ScaledUOverZ0, ScaledUOverZ1, ScaledUOverZ2)
@@ -302,16 +310,18 @@ function MathModule.RasterizeTriangleSpan(
 			ShadeBlue += 1
 		end
 
+		const FullBrightTint = (ShadeRed >= 256 and ShadeGreen >= 256 and ShadeBlue >= 256) :: boolean
+
 		for _ = MinY, MaxY do
 			local SpanStartOffsetX: number, SpanEndOffsetX: number =
-				MathModule.ClipSpanEdge(RowEdgeWeights.x, Edge0StepX, 0, MaxSpanOffsetX)
+				ClipSpanEdge(RowEdgeWeights.x, Edge0StepX, 0, MaxSpanOffsetX)
 			if SpanStartOffsetX <= SpanEndOffsetX then
 				SpanStartOffsetX, SpanEndOffsetX =
-					MathModule.ClipSpanEdge(RowEdgeWeights.y, Edge1StepX, SpanStartOffsetX, SpanEndOffsetX)
+					ClipSpanEdge(RowEdgeWeights.y, Edge1StepX, SpanStartOffsetX, SpanEndOffsetX)
 			end
 			if SpanStartOffsetX <= SpanEndOffsetX then
 				SpanStartOffsetX, SpanEndOffsetX =
-					MathModule.ClipSpanEdge(RowEdgeWeights.z, Edge2StepX, SpanStartOffsetX, SpanEndOffsetX)
+					ClipSpanEdge(RowEdgeWeights.z, Edge2StepX, SpanStartOffsetX, SpanEndOffsetX)
 			end
 
 			if SpanStartOffsetX <= SpanEndOffsetX then
@@ -321,30 +331,53 @@ function MathModule.RasterizeTriangleSpan(
 				local InterpolatedUOverZ = RowUOverZ + SpanStartOffsetX * UOverZStepX :: number
 				local InterpolatedVOverZ = RowVOverZ + SpanStartOffsetX * VOverZStepX :: number
 
+				-- 8-pixel perspective-correct sub-span stepping (cuts per-pixel fdiv by ~87.5%)
 				while BufferOffset <= EndOffset do
-					if InterpolatedInverseZ > buffer.readf32(ZBuffer, BufferOffset) then
-						buffer.writef32(ZBuffer, BufferOffset, InterpolatedInverseZ)
+					const RemainingPixels = ((EndOffset - BufferOffset) // 4) + 1 :: number
+					const ChunkPixels = if RemainingPixels > 8 then 8 else RemainingPixels :: number
+					const DepthStart = 1 / InterpolatedInverseZ :: number
+					local CurU = InterpolatedUOverZ * DepthStart :: number
+					local CurV = InterpolatedVOverZ * DepthStart :: number
 
-						const DepthZ = 1 / InterpolatedInverseZ :: number
-						const TexelX = math.clamp(math.floor(InterpolatedUOverZ * DepthZ * TextureWidth), 0, TextureWidthMask) :: number
-						const TexelY = math.clamp(math.floor(InterpolatedVOverZ * DepthZ * TextureHeight), 0, TextureHeightMask) :: number
-						const TexelColor = buffer.readu32(TextureBuffer, (TexelY * TextureWidth + TexelX) * 4) :: number
+					const EndChunkInverseZ = InterpolatedInverseZ + ChunkPixels * InverseZStepX :: number
+					const DepthEnd = 1 / EndChunkInverseZ :: number
+					const EndU = (InterpolatedUOverZ + ChunkPixels * UOverZStepX) * DepthEnd :: number
+					const EndV = (InterpolatedVOverZ + ChunkPixels * VOverZStepX) * DepthEnd :: number
+					const InvChunk = if ChunkPixels == 8 then 0.125 else (1 / ChunkPixels) :: number
+					const StepU = (EndU - CurU) * InvChunk :: number
+					const StepV = (EndV - CurV) * InvChunk :: number
 
-						const OutRed = bit32.rshift(bit32.band(TexelColor, 0xFF) * ShadeRed, 8) :: number
-						const OutGreen = bit32.rshift(bit32.band(bit32.rshift(TexelColor, 8), 0xFF) * ShadeGreen, 8) :: number
-						const OutBlue = bit32.rshift(bit32.band(bit32.rshift(TexelColor, 16), 0xFF) * ShadeBlue, 8) :: number
+					for _ = 1, ChunkPixels do
+						if InterpolatedInverseZ > buffer.readf32(ZBuffer, BufferOffset) then
+							buffer.writef32(ZBuffer, BufferOffset, InterpolatedInverseZ)
 
-						buffer.writeu32(
-							PixelBuffer,
-							BufferOffset,
-							bit32.bor(OutRed, bit32.lshift(OutGreen, 8), bit32.lshift(OutBlue, 16), 0xFF000000)
-						)
+							const TexelX = math.clamp(math.floor(CurU * TextureWidth), 0, TextureWidthMask) :: number
+							const TexelY = math.clamp(math.floor(CurV * TextureHeight), 0, TextureHeightMask) :: number
+							const TexelColor = buffer.readu32(TextureBuffer, (TexelY * TextureWidth + TexelX) * 4) :: number
+
+							if FullBrightTint then
+								buffer.writeu32(PixelBuffer, BufferOffset, bit32.bor(TexelColor, 0xFF000000))
+							else
+								const OutRed = bit32.rshift(bit32.band(TexelColor, 0xFF) * ShadeRed, 8) :: number
+								const OutGreen = bit32.rshift(bit32.band(bit32.rshift(TexelColor, 8), 0xFF) * ShadeGreen, 8) :: number
+								const OutBlue = bit32.rshift(bit32.band(bit32.rshift(TexelColor, 16), 0xFF) * ShadeBlue, 8) :: number
+
+								buffer.writeu32(
+									PixelBuffer,
+									BufferOffset,
+									bit32.bor(OutRed, bit32.lshift(OutGreen, 8), bit32.lshift(OutBlue, 16), 0xFF000000)
+								)
+							end
+						end
+
+						InterpolatedInverseZ += InverseZStepX
+						CurU += StepU
+						CurV += StepV
+						BufferOffset += 4
 					end
 
-					InterpolatedInverseZ += InverseZStepX
-					InterpolatedUOverZ += UOverZStepX
-					InterpolatedVOverZ += VOverZStepX
-					BufferOffset += 4
+					InterpolatedUOverZ += ChunkPixels * UOverZStepX
+					InterpolatedVOverZ += ChunkPixels * VOverZStepX
 				end
 			end
 
@@ -357,14 +390,14 @@ function MathModule.RasterizeTriangleSpan(
 	else
 		for _ = MinY, MaxY do
 			local SpanStartOffsetX: number, SpanEndOffsetX: number =
-				MathModule.ClipSpanEdge(RowEdgeWeights.x, Edge0StepX, 0, MaxSpanOffsetX)
+				ClipSpanEdge(RowEdgeWeights.x, Edge0StepX, 0, MaxSpanOffsetX)
 			if SpanStartOffsetX <= SpanEndOffsetX then
 				SpanStartOffsetX, SpanEndOffsetX =
-					MathModule.ClipSpanEdge(RowEdgeWeights.y, Edge1StepX, SpanStartOffsetX, SpanEndOffsetX)
+					ClipSpanEdge(RowEdgeWeights.y, Edge1StepX, SpanStartOffsetX, SpanEndOffsetX)
 			end
 			if SpanStartOffsetX <= SpanEndOffsetX then
 				SpanStartOffsetX, SpanEndOffsetX =
-					MathModule.ClipSpanEdge(RowEdgeWeights.z, Edge2StepX, SpanStartOffsetX, SpanEndOffsetX)
+					ClipSpanEdge(RowEdgeWeights.z, Edge2StepX, SpanStartOffsetX, SpanEndOffsetX)
 			end
 
 			if SpanStartOffsetX <= SpanEndOffsetX then

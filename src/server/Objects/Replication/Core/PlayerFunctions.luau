@@ -12,8 +12,8 @@ const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForC
 const Storage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
 
 -- Storage Tables
+const ECSData = Storage.ECSData
 const PositionData = Storage.PositionData
-const OrientationData = Storage.OrientationData
 const VisualData = Storage.VisualData
 const SizeData = Storage.SizeData
 const DirectionsData = Storage.DirectionsData
@@ -21,6 +21,8 @@ const PropertiesData = Storage.PropertiesData
 
 -- Configs --
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
+const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+const VISUAL_STRIDE = SystemsConfigs.ECSVisualStride :: number
 const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 const DEFAULT_SPAWN = SystemsConfigs.PlayerDefaultSpawnPosition :: Vector3
 const PLAYER_EYE_OFFSET = SystemsConfigs.CameraPlayerEyeOffset :: number
@@ -29,16 +31,31 @@ const OBSERVER_PAYLOAD_BYTES = 56 :: number
 
 -- Buffers
 const PositionBuffer = PositionData.GetData() :: buffer
-const OrientationBuffer = OrientationData.GetData() :: buffer
 const VisualBuffer = VisualData.GetData() :: buffer
 const SizeBuffer = SizeData.GetData() :: buffer
 const DirectionsBuffer = DirectionsData.GetData() :: buffer
 const PropertiesBuffer = PropertiesData.GetData() :: buffer
+const VersionBuffer = ECSData.GetVersionBuffer() :: buffer
+const DirtyFlags = ECSData.GetDirtyFlags() :: buffer
 
 const COMPONENT_BUFFER_SIZE = buffer.len(PositionBuffer) :: number
+const VISUAL_BUFFER_SIZE = buffer.len(VisualBuffer) :: number
 const DIRECTION_BUFFER_SIZE = buffer.len(DirectionsBuffer) :: number
 const PROPERTIES_BUFFER_SIZE = buffer.len(PropertiesBuffer) :: number
 const MAX_ENTITIES = COMPONENT_BUFFER_SIZE // COMPONENT_STRIDE :: number
+
+-- Single server-wide shadow copy for change detection across all players
+const ShadowPositions = buffer.create(COMPONENT_BUFFER_SIZE) :: buffer
+const ShadowSizes = buffer.create(COMPONENT_BUFFER_SIZE) :: buffer
+const ShadowDirections = buffer.create(DIRECTION_BUFFER_SIZE) :: buffer
+const ShadowVisuals = buffer.create(VISUAL_BUFFER_SIZE) :: buffer
+const ShadowProperties = buffer.create(PROPERTIES_BUFFER_SIZE) :: buffer
+
+const PosVersions = buffer.create(MAX_ENTITIES * 4) :: buffer
+const SizeVersions = buffer.create(MAX_ENTITIES * 4) :: buffer
+const BasisVersions = buffer.create(MAX_ENTITIES * 4) :: buffer
+const VisualVersions = buffer.create(MAX_ENTITIES * 4) :: buffer
+const PropVersions = buffer.create(MAX_ENTITIES * 4) :: buffer
 
 export type PlayerDeltaState = {
 	ClientReady: boolean,
@@ -59,13 +76,7 @@ export type PlayerDeltaState = {
 	ExtraBackPadding: number,
 	FovDegrees: number,
 	LastEntityCount: number,
-	VisibleFlags: buffer,
-	Positions: buffer,
-	Orientations: buffer,
-	Visuals: buffer,
-	Sizes: buffer,
-	Directions: buffer,
-	Properties: buffer,
+	SentVersion: buffer,
 }
 
 -- Tables --
@@ -149,13 +160,7 @@ function PlayerFunctions.GetOrCreatePlayerState(PlayerObject: Player, EntityCoun
 			ExtraBackPadding = 0,
 			FovDegrees = DEFAULT_CAMERA_FOV,
 			LastEntityCount = EntityCount,
-			VisibleFlags = buffer.create(MAX_ENTITIES),
-			Positions = buffer.create(COMPONENT_BUFFER_SIZE),
-			Orientations = buffer.create(COMPONENT_BUFFER_SIZE),
-			Visuals = buffer.create(COMPONENT_BUFFER_SIZE),
-			Sizes = buffer.create(COMPONENT_BUFFER_SIZE),
-			Directions = buffer.create(DIRECTION_BUFFER_SIZE),
-			Properties = buffer.create(PROPERTIES_BUFFER_SIZE),
+			SentVersion = buffer.create(MAX_ENTITIES * 4),
 		}
 		PlayerFunctions.TrySeedObserverFromCharacter(NewState, PlayerObject.Character)
 		PlayerStates[PlayerObject] = NewState
@@ -167,22 +172,21 @@ function PlayerFunctions.GetOrCreatePlayerState(PlayerObject: Player, EntityCoun
 	end
 
 	if EntityCount < State.LastEntityCount then
-		buffer.fill(State.VisibleFlags, EntityCount, 0, State.LastEntityCount - EntityCount)
+		buffer.fill(State.SentVersion, EntityCount * 4, 0, (State.LastEntityCount - EntityCount) * 4)
 	end
 
-	State.LastEntityCount = EntityCount
 	return State
 end
 
 --[=[
-	Marks a player's Actor-hosted ReplicationReceiver as connected and clears VisibleFlags so a complete initial snapshot is delivered.
+	Marks a player's Actor-hosted ReplicationReceiver as connected and clears SentVersion so a complete initial snapshot is delivered.
 	@param PlayerObject Player -- Target replicating player.
 	@param EntityCount number -- Current total world entity count.
 ]=]
 function PlayerFunctions.MarkClientReady(PlayerObject: Player, EntityCount: number)
 	const State = PlayerFunctions.GetOrCreatePlayerState(PlayerObject, EntityCount)
 	State.ClientReady = true
-	buffer.fill(State.VisibleFlags, 0, 0, MAX_ENTITIES)
+	buffer.fill(State.SentVersion, 0, 0, MAX_ENTITIES * 4)
 end
 
 --[=[
@@ -261,71 +265,129 @@ function PlayerFunctions.UpdateObserverFromBuffer(PlayerObject: Player, PayloadB
 end
 
 --[=[
-	Checks whether an entity's position, orientation, visual, size, directions, or properties have changed since last replication.
-	@param Offset number -- Byte offset in component buffers.
-	@param DirectionOffset number -- Byte offset in directions buffers.
-	@param PropertiesOffset number -- Byte offset in properties buffers.
-	@param CachedPositions buffer -- Player's shadow position buffer.
-	@param CachedOrientations buffer -- Player's shadow orientation buffer.
-	@param CachedVisuals buffer -- Player's shadow visual buffer.
-	@param CachedSizes buffer -- Player's shadow size buffer.
-	@param CachedDirections buffer -- Player's shadow directions buffer.
-	@param CachedProperties buffer -- Player's shadow properties buffer.
-	@return boolean -- True if any component byte differs.
+	Scans active entities once per tick against the server-wide shadow copy to advance per-component
+	version numbers without duplicating shadow buffers per player.
+	@param EntityCount number -- Current total world entity count.
 ]=]
-function PlayerFunctions.HasEntityChanged(
-	Offset: number,
-	DirectionOffset: number,
-	PropertiesOffset: number,
-	CachedPositions: buffer,
-	CachedOrientations: buffer,
-	CachedVisuals: buffer,
-	CachedSizes: buffer,
-	CachedDirections: buffer,
-	CachedProperties: buffer
-): boolean
-	if
-		buffer.readu32(PositionBuffer, Offset) ~= buffer.readu32(CachedPositions, Offset)
-		or buffer.readu32(PositionBuffer, Offset + 4) ~= buffer.readu32(CachedPositions, Offset + 4)
-		or buffer.readu32(PositionBuffer, Offset + 8) ~= buffer.readu32(CachedPositions, Offset + 8)
-	then
-		return true
-	end
+function PlayerFunctions.SyncEntityVersions(EntityCount: number)
+	for i = 1, EntityCount do
+		const FlagOffset = i - 1 :: number
+		const VersionOffset = FlagOffset * 4 :: number
+		const CompOffset = FlagOffset * COMPONENT_STRIDE :: number
+		const DirOffset = FlagOffset * DIRECTION_STRIDE :: number
+		const VisOffset = FlagOffset * VISUAL_STRIDE :: number
+		const PropOffset = FlagOffset * PROPERTIES_STRIDE :: number
 
-	if
-		buffer.readu32(OrientationBuffer, Offset) ~= buffer.readu32(CachedOrientations, Offset)
-		or buffer.readu32(OrientationBuffer, Offset + 4) ~= buffer.readu32(CachedOrientations, Offset + 4)
-		or buffer.readu32(OrientationBuffer, Offset + 8) ~= buffer.readu32(CachedOrientations, Offset + 8)
-	then
-		return true
-	end
+		local CurrentVer = buffer.readu32(VersionBuffer, VersionOffset) :: number
+		local NextVer = CurrentVer :: number
+		local AnyChanged = false :: boolean
 
-	if buffer.readu32(VisualBuffer, Offset) ~= buffer.readu32(CachedVisuals, Offset) then
-		return true
-	end
-
-	if
-		buffer.readu32(SizeBuffer, Offset) ~= buffer.readu32(CachedSizes, Offset)
-		or buffer.readu32(SizeBuffer, Offset + 4) ~= buffer.readu32(CachedSizes, Offset + 4)
-		or buffer.readu32(SizeBuffer, Offset + 8) ~= buffer.readu32(CachedSizes, Offset + 8)
-	then
-		return true
-	end
-
-	for DirectionByte = 0, 32, 4 do
 		if
-			buffer.readu32(DirectionsBuffer, DirectionOffset + DirectionByte)
-			~= buffer.readu32(CachedDirections, DirectionOffset + DirectionByte)
+			buffer.readu32(PositionBuffer, CompOffset) ~= buffer.readu32(ShadowPositions, CompOffset)
+			or buffer.readu32(PositionBuffer, CompOffset + 4) ~= buffer.readu32(ShadowPositions, CompOffset + 4)
+			or buffer.readu32(PositionBuffer, CompOffset + 8) ~= buffer.readu32(ShadowPositions, CompOffset + 8)
 		then
-			return true
+			if not AnyChanged then
+				NextVer = CurrentVer + 1
+				AnyChanged = true
+			end
+			buffer.copy(ShadowPositions, CompOffset, PositionBuffer, CompOffset, COMPONENT_STRIDE)
+			buffer.writeu32(PosVersions, VersionOffset, NextVer)
+		end
+
+		if
+			buffer.readu32(SizeBuffer, CompOffset) ~= buffer.readu32(ShadowSizes, CompOffset)
+			or buffer.readu32(SizeBuffer, CompOffset + 4) ~= buffer.readu32(ShadowSizes, CompOffset + 4)
+			or buffer.readu32(SizeBuffer, CompOffset + 8) ~= buffer.readu32(ShadowSizes, CompOffset + 8)
+		then
+			if not AnyChanged then
+				NextVer = CurrentVer + 1
+				AnyChanged = true
+			end
+			buffer.copy(ShadowSizes, CompOffset, SizeBuffer, CompOffset, COMPONENT_STRIDE)
+			buffer.writeu32(SizeVersions, VersionOffset, NextVer)
+		end
+
+		for DirByte = 0, 32, 4 do
+			if
+				buffer.readu32(DirectionsBuffer, DirOffset + DirByte)
+				~= buffer.readu32(ShadowDirections, DirOffset + DirByte)
+			then
+				if not AnyChanged then
+					NextVer = CurrentVer + 1
+					AnyChanged = true
+				end
+				buffer.copy(ShadowDirections, DirOffset, DirectionsBuffer, DirOffset, DIRECTION_STRIDE)
+				buffer.writeu32(BasisVersions, VersionOffset, NextVer)
+				break
+			end
+		end
+
+		if buffer.readu32(VisualBuffer, VisOffset) ~= buffer.readu32(ShadowVisuals, VisOffset) then
+			if not AnyChanged then
+				NextVer = CurrentVer + 1
+				AnyChanged = true
+			end
+			buffer.writeu32(ShadowVisuals, VisOffset, buffer.readu32(VisualBuffer, VisOffset))
+			buffer.writeu32(VisualVersions, VersionOffset, NextVer)
+		end
+
+		if buffer.readu32(PropertiesBuffer, PropOffset) ~= buffer.readu32(ShadowProperties, PropOffset) then
+			if not AnyChanged then
+				NextVer = CurrentVer + 1
+				AnyChanged = true
+			end
+			buffer.writeu32(ShadowProperties, PropOffset, buffer.readu32(PropertiesBuffer, PropOffset))
+			buffer.writeu32(PropVersions, VersionOffset, NextVer)
+		end
+
+		if AnyChanged then
+			buffer.writeu32(VersionBuffer, VersionOffset, NextVer)
+			buffer.writeu8(DirtyFlags, FlagOffset, 0)
+		elseif CurrentVer == 0 then
+			buffer.writeu32(VersionBuffer, VersionOffset, 1)
+			buffer.writeu32(PosVersions, VersionOffset, 1)
+			buffer.writeu32(SizeVersions, VersionOffset, 1)
+			buffer.writeu32(BasisVersions, VersionOffset, 1)
+			buffer.writeu32(VisualVersions, VersionOffset, 1)
+			buffer.writeu32(PropVersions, VersionOffset, 1)
 		end
 	end
+end
 
-	if buffer.readu32(PropertiesBuffer, PropertiesOffset) ~= buffer.readu32(CachedProperties, PropertiesOffset) then
-		return true
+--[=[
+	Computes the 5-bit component delta mask for an entity relative to a player's SentVersion.
+	@param EntityId number -- 1-based entity ID.
+	@param SentVersion number -- Last entity version delivered to the player (0 if never sent).
+	@return (number, number) -- (ComponentMask, CurrentEntityVersion).
+]=]
+function PlayerFunctions.GetEntityDeltaMask(EntityId: number, SentVersion: number): (number, number)
+	const VersionOffset = (EntityId - 1) * 4 :: number
+	const CurrentVer = buffer.readu32(VersionBuffer, VersionOffset) :: number
+	if SentVersion == 0 then
+		return 0x1F, CurrentVer
+	end
+	if SentVersion >= CurrentVer then
+		return 0, CurrentVer
 	end
 
-	return false
+	local Mask = 0 :: number
+	if buffer.readu32(PosVersions, VersionOffset) > SentVersion then
+		Mask += 1
+	end
+	if buffer.readu32(SizeVersions, VersionOffset) > SentVersion then
+		Mask += 2
+	end
+	if buffer.readu32(BasisVersions, VersionOffset) > SentVersion then
+		Mask += 4
+	end
+	if buffer.readu32(VisualVersions, VersionOffset) > SentVersion then
+		Mask += 8
+	end
+	if buffer.readu32(PropVersions, VersionOffset) > SentVersion then
+		Mask += 16
+	end
+	return Mask, CurrentVer
 end
 
 return PlayerFunctions

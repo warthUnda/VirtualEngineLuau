@@ -74,25 +74,19 @@ end)
 -- ============================================================================
 
 while true do
+	const EntityCount = ECSData.GetCounts().EntityECSCount :: number
+	if EntityCount > 0 then
+		PlayerFunctions.SyncEntityVersions(EntityCount)
+	end
+
 	for _, Player: Player in ipairs(Players:GetPlayers()) do
 		if not PlayerFunctions.IsClientReady(Player) then
 			continue
 		end
 
-		const DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, DeltaProperties, Counts =
-			PlayerCuller.CullObjects(Player)
-
-		if DeltaPositions and Counts and Counts.EntityECSCount > 0 then
-			(ReplicateEvent :: RemoteEvent):FireClient(
-				Player,
-				DeltaPositions,
-				DeltaOrientations,
-				DeltaVisuals,
-				DeltaSizes,
-				DeltaDirections,
-				DeltaProperties,
-				Counts
-			)
+		const DeltaPacket = PlayerCuller.CullObjects(Player, true)
+		if DeltaPacket then
+			(ReplicateEvent :: RemoteEvent):FireClient(Player, DeltaPacket)
 		end
 	end
 

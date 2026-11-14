@@ -71,5 +71,25 @@ return function()
 			expect(buffer.readu32(RenderSlotByObjectId, 1 * 4)).to.equal(0)
 			expect(buffer.readu32(ObjectIdByRenderSlot, Slot3 * 4)).to.equal(0)
 		end)
+
+		it("should filter invisible entities via IsEntityVisible and reset dirty flags after sync", function()
+			const SourceStorage = ECSMain.CreateStorage(false)
+			const VisibleId = SourceStorage.ECSData.RegisterEntity(true)
+			const InvisibleId = SourceStorage.ECSData.RegisterEntity(true)
+
+			const PropsBuf = SourceStorage.PropertiesData.GetData()
+			SourceStorage.PropertiesData.CreateLayout(0, true, true, true, 0)
+			SourceStorage.PropertiesData.CreateLayout(4, true, false, true, 0)
+
+			expect(ECSMain.IsEntityVisible(buffer.readu32(PropsBuf, 0))).to.equal(true)
+			expect(ECSMain.IsEntityVisible(buffer.readu32(PropsBuf, 4))).to.equal(false)
+
+			const DirtyFlags = SourceStorage.ECSData.GetDirtyFlags()
+			expect(buffer.readu8(DirtyFlags, VisibleId - 1)).to.equal(1)
+			expect(buffer.readu8(DirtyFlags, InvisibleId - 1)).to.equal(1)
+
+			SourceStorage.ECSData.ClearDirty(VisibleId)
+			expect(buffer.readu8(DirtyFlags, VisibleId - 1)).to.equal(0)
+		end)
 	end)
 end

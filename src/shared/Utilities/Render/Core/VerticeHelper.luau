@@ -18,6 +18,8 @@ export type ShapeFace = {
 	V3ByteOffset: number,
 	Normal: vector,
 	PointOnFace: vector,
+	UAxisIndex: number,
+	VAxisIndex: number,
 }
 
 export type ShapeMesh = {
@@ -66,6 +68,19 @@ function VerticeHelper.CreateFace(
 		OutwardNormal = if CrossMag > 1e-6 then WindingCross / CrossMag else vector.create(0, 1, 0)
 	end
 
+	const AbsNormalX = math.abs(OutwardNormal.x) :: number
+	const AbsNormalY = math.abs(OutwardNormal.y) :: number
+	const AbsNormalZ = math.abs(OutwardNormal.z) :: number
+	local UAxisIndex = 1 :: number
+	local VAxisIndex = 2 :: number
+	if AbsNormalY >= AbsNormalX and AbsNormalY >= AbsNormalZ then
+		UAxisIndex = 1
+		VAxisIndex = 3
+	elseif AbsNormalX >= AbsNormalY and AbsNormalX >= AbsNormalZ then
+		UAxisIndex = 3
+		VAxisIndex = 2
+	end
+
 	-- In local (Right, Up, Look) space, (V2 - V0) x (V1 - V0) must align with OutwardNormal for positive screen area
 	if vector.dot(WindingCross, OutwardNormal) < 0 then
 		if Index3 then
@@ -76,6 +91,8 @@ function VerticeHelper.CreateFace(
 				V3ByteOffset = (Index1 - 1) * 12,
 				Normal = OutwardNormal,
 				PointOnFace = V0,
+				UAxisIndex = UAxisIndex,
+				VAxisIndex = VAxisIndex,
 			}
 		else
 			return {
@@ -85,6 +102,8 @@ function VerticeHelper.CreateFace(
 				V3ByteOffset = -1,
 				Normal = OutwardNormal,
 				PointOnFace = V0,
+				UAxisIndex = UAxisIndex,
+				VAxisIndex = VAxisIndex,
 			}
 		end
 	end
@@ -96,6 +115,8 @@ function VerticeHelper.CreateFace(
 		V3ByteOffset = if Index3 then (Index3 - 1) * 12 else -1,
 		Normal = OutwardNormal,
 		PointOnFace = V0,
+		UAxisIndex = UAxisIndex,
+		VAxisIndex = VAxisIndex,
 	}
 end
 

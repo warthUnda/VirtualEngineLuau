@@ -15,6 +15,7 @@ const PhysicsFolder = UtilitiesFolder:WaitForChild("Physics")
 
 -- Modules --
 const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
+const BVH = require(UtilitiesFolder:WaitForChild("BVH"))
 const PhysicsMath = require(PhysicsFolder:WaitForChild("Core"):WaitForChild("PhysicsMath"))
 const PlayerPhysics = require(PhysicsFolder:WaitForChild("Core"):WaitForChild("PlayerPhysics"))
 const PhysicsControllerHelper = require(script.Parent.PhysicsControllerHelper)
@@ -67,14 +68,16 @@ local PendingJumpRequested = false :: boolean
 local HostRootPart: BasePart? = nil
 local CharacterSeeded = false :: boolean
 local CharacterAddedConnection: RBXScriptConnection? = nil
+local ECSObjectStorage: any = nil
 local ECSDataModule: any = nil
 
 -- Buffers
 local ECSPositionBuffer: buffer? = nil
 local ECSSizeBuffer: buffer? = nil
 local ECSDirectionsBuffer: buffer? = nil
-local ECSOrientationBuffer: buffer? = nil
 local ECSPropertiesBuffer: buffer? = nil
+
+local AwakeEntityCount = 0 :: number
 
 const DynamicFlags = buffer.create(MAX_ENTITIES) :: buffer -- 0 = static, 1 = awake dynamic, 2 = sleeping dynamic
 const ObjectGroundedFlags = buffer.create(MAX_ENTITIES) :: buffer
@@ -83,6 +86,109 @@ const ObjectAngularVelocityBuffer = buffer.create(MAX_ENTITIES * COMPONENT_STRID
 const ObjectForceBuffer = buffer.create(MAX_ENTITIES * COMPONENT_STRIDE) :: buffer
 const ObjectInvMassBuffer = buffer.create(MAX_ENTITIES * 4) :: buffer
 const ActiveForceSlots = buffer.create(MAX_ENTITIES * 4) :: buffer
+const AwakeEntitiesBuffer = buffer.create(MAX_ENTITIES * 4) :: buffer
+const AwakeEntitySlotBuffer = buffer.create(MAX_ENTITIES * 4) :: buffer -- 1-based slot in AwakeEntitiesBuffer (0 = absent)
+
+local function AddAwakeEntity(EntityId: number)
+	if EntityId < 1 or EntityId > MAX_ENTITIES then
+		return
+	end
+
+	const SlotOffset = (EntityId - 1) * 4 :: number
+	if buffer.readu32(AwakeEntitySlotBuffer, SlotOffset) ~= 0 then
+		return
+	end
+
+	if AwakeEntityCount >= MAX_ENTITIES then
+		return
+	end
+
+	const SlotIndex = AwakeEntityCount :: number
+	buffer.writeu32(AwakeEntitiesBuffer, SlotIndex * 4, EntityId)
+	AwakeEntityCount = SlotIndex + 1
+	buffer.writeu32(AwakeEntitySlotBuffer, SlotOffset, AwakeEntityCount)
+end
+
+local function RemoveAwakeEntity(EntityId: number)
+	if EntityId < 1 or EntityId > MAX_ENTITIES then
+		return
+	end
+
+	const SlotOffset = (EntityId - 1) * 4 :: number
+	const SlotOneBased = buffer.readu32(AwakeEntitySlotBuffer, SlotOffset) :: number
+	if SlotOneBased == 0 then
+		return
+	end
+
+	const SlotIndex = SlotOneBased - 1 :: number
+	const LastSlotIndex = AwakeEntityCount - 1 :: number
+	if SlotIndex ~= LastSlotIndex then
+		const TailEntityId = buffer.readu32(AwakeEntitiesBuffer, LastSlotIndex * 4) :: number
+		buffer.writeu32(AwakeEntitiesBuffer, SlotIndex * 4, TailEntityId)
+		buffer.writeu32(AwakeEntitySlotBuffer, (TailEntityId - 1) * 4, SlotOneBased)
+	end
+
+	buffer.writeu32(AwakeEntitiesBuffer, LastSlotIndex * 4, 0)
+	buffer.writeu32(AwakeEntitySlotBuffer, SlotOffset, 0)
+	AwakeEntityCount = LastSlotIndex
+end
+
+local function ClearEntityPhysicsSlots(EntityId: number)
+	const FlagIndex = EntityId - 1 :: number
+	const CompOffset = FlagIndex * COMPONENT_STRIDE :: number
+
+	buffer.writeu8(DynamicFlags, FlagIndex, 0)
+	buffer.writeu8(ObjectGroundedFlags, FlagIndex, 0)
+	buffer.writef32(ObjectInvMassBuffer, FlagIndex * 4, 0)
+	buffer.writef32(ObjectVelocityBuffer, CompOffset, 0)
+	buffer.writef32(ObjectVelocityBuffer, CompOffset + 4, 0)
+	buffer.writef32(ObjectVelocityBuffer, CompOffset + 8, 0)
+	buffer.writef32(ObjectAngularVelocityBuffer, CompOffset, 0)
+	buffer.writef32(ObjectAngularVelocityBuffer, CompOffset + 4, 0)
+	buffer.writef32(ObjectAngularVelocityBuffer, CompOffset + 8, 0)
+	buffer.writef32(ObjectForceBuffer, CompOffset, 0)
+	buffer.writef32(ObjectForceBuffer, CompOffset + 4, 0)
+	buffer.writef32(ObjectForceBuffer, CompOffset + 8, 0)
+end
+
+local function OnEntitySwapPop(DeletedEntityId: number, MovedFromEntityId: number)
+	RemoveAwakeEntity(DeletedEntityId)
+
+	if DeletedEntityId ~= MovedFromEntityId then
+		const DestFlagIndex = DeletedEntityId - 1 :: number
+		const SrcFlagIndex = MovedFromEntityId - 1 :: number
+		const DestCompOffset = DestFlagIndex * COMPONENT_STRIDE :: number
+		const SrcCompOffset = SrcFlagIndex * COMPONENT_STRIDE :: number
+
+		const MovedDynamicState = buffer.readu8(DynamicFlags, SrcFlagIndex) :: number
+		buffer.writeu8(DynamicFlags, DestFlagIndex, MovedDynamicState)
+		buffer.writeu8(ObjectGroundedFlags, DestFlagIndex, buffer.readu8(ObjectGroundedFlags, SrcFlagIndex))
+		buffer.writef32(ObjectInvMassBuffer, DestFlagIndex * 4, buffer.readf32(ObjectInvMassBuffer, SrcFlagIndex * 4))
+		buffer.copy(ObjectVelocityBuffer, DestCompOffset, ObjectVelocityBuffer, SrcCompOffset, COMPONENT_STRIDE)
+		buffer.copy(
+			ObjectAngularVelocityBuffer,
+			DestCompOffset,
+			ObjectAngularVelocityBuffer,
+			SrcCompOffset,
+			COMPONENT_STRIDE
+		)
+		buffer.copy(ObjectForceBuffer, DestCompOffset, ObjectForceBuffer, SrcCompOffset, COMPONENT_STRIDE)
+
+		RemoveAwakeEntity(MovedFromEntityId)
+		if MovedDynamicState == 1 then
+			AddAwakeEntity(DeletedEntityId)
+		end
+	end
+
+	ClearEntityPhysicsSlots(MovedFromEntityId)
+end
+
+local function OnWakeCollisionEntity(EntityId: number)
+	AddAwakeEntity(EntityId)
+	if ECSDataModule then
+		ECSDataModule.MarkDirty(EntityId)
+	end
+end
 
 local PhysicsController = {}
 
@@ -113,13 +219,19 @@ function PhysicsController.InitializePhysics()
 	const ObjectStorageModule = PhysicsControllerHelper.ResolveObjectStorage()
 	if ObjectStorageModule then
 		const ObjectStorage = (require :: any)(ObjectStorageModule)
+		ECSObjectStorage = ObjectStorage
 		ECSDataModule = ObjectStorage.ECSData
 		ECSPositionBuffer = ObjectStorage.PositionData.GetData()
 		ECSSizeBuffer = ObjectStorage.SizeData.GetData()
 		ECSDirectionsBuffer = ObjectStorage.DirectionsData.GetData()
-		ECSOrientationBuffer = if ObjectStorage.OrientationData then ObjectStorage.OrientationData.GetData() else nil
 		ECSPropertiesBuffer = ObjectStorage.PropertiesData.GetData()
+
+		if ECSDataModule and ECSDataModule.SetSwapPopCallback then
+			ECSDataModule.SetSwapPopCallback(OnEntitySwapPop)
+		end
 	end
+
+	PhysicsMath.SetWakeEntityCallback(OnWakeCollisionEntity)
 
 	Initialized = true
 
@@ -206,6 +318,7 @@ function PhysicsController.AddObjectMovement(
 	const CompOffset = FlagIndex * COMPONENT_STRIDE :: number
 
 	buffer.writeu8(DynamicFlags, FlagIndex, 1)
+	AddAwakeEntity(EntityId)
 
 	if IsImpulse then
 		const DeltaVelocity = Magnitude * InverseMass :: number
@@ -285,6 +398,10 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 	local PendingJump = JumpRequested :: boolean
 
 	for _ = 1, SUBSTEPS do
+		if IS_CLIENT or AwakeEntityCount > 0 then
+			BVH.EnsureFresh(ECSObjectStorage)
+		end
+
 		if IS_CLIENT then
 			const WasGrounded = PlayerGrounded :: boolean
 			PlayerVelX, PlayerVelY, PlayerVelZ, PlayerGrounded = PlayerPhysics.StepPlayerVelocity(
@@ -327,27 +444,41 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 					DirectionsBuffer,
 					DynamicFlags,
 					ObjectVelocityBuffer,
-					ObjectInvMassBuffer
+					ObjectInvMassBuffer,
+					true
 				)
 		end
 
-		for EntityId = 1, EntityCount do
-			if buffer.readu8(DynamicFlags, EntityId - 1) == 1 then
-				PhysicsControllerHelper.StepSingleDynamicObject(
-					EntityId,
-					EntityCount,
-					StepDeltaTime,
-					PositionBuffer,
-					SizeBuffer,
-					DirectionsBuffer,
-					ECSOrientationBuffer,
-					DynamicFlags,
-					ObjectGroundedFlags,
-					ObjectVelocityBuffer,
-					ObjectAngularVelocityBuffer,
-					ObjectForceBuffer,
-					ObjectInvMassBuffer
-				)
+		local AwakeIndex = 0 :: number
+		while AwakeIndex < AwakeEntityCount do
+			const EntityId = buffer.readu32(AwakeEntitiesBuffer, AwakeIndex * 4) :: number
+			if EntityId < 1 or EntityId > EntityCount or buffer.readu8(DynamicFlags, EntityId - 1) ~= 1 then
+				RemoveAwakeEntity(EntityId)
+				continue
+			end
+
+			PhysicsControllerHelper.StepSingleDynamicObject(
+				EntityId,
+				EntityCount,
+				StepDeltaTime,
+				PositionBuffer,
+				SizeBuffer,
+				DirectionsBuffer,
+				nil,
+				DynamicFlags,
+				ObjectGroundedFlags,
+				ObjectVelocityBuffer,
+				ObjectAngularVelocityBuffer,
+				ObjectForceBuffer,
+				ObjectInvMassBuffer
+			)
+
+			ECSDataModule.MarkDirty(EntityId)
+
+			if buffer.readu8(DynamicFlags, EntityId - 1) ~= 1 then
+				RemoveAwakeEntity(EntityId)
+			else
+				AwakeIndex += 1
 			end
 		end
 	end
@@ -414,6 +545,7 @@ function PhysicsController.SimulateInstance(
 	const CompOffset = FlagIndex * COMPONENT_STRIDE :: number
 
 	buffer.writeu8(DynamicFlags, FlagIndex, 1)
+	AddAwakeEntity(EntityId)
 	buffer.writef32(ObjectVelocityBuffer, CompOffset, VelX)
 	buffer.writef32(ObjectVelocityBuffer, CompOffset + 4, VelY)
 	buffer.writef32(ObjectVelocityBuffer, CompOffset + 8, VelZ)
@@ -442,21 +574,8 @@ function PhysicsController.StopSimulatingInstance(EntityId: number)
 		return
 	end
 
-	const FlagIndex = EntityId - 1 :: number
-	const CompOffset = FlagIndex * COMPONENT_STRIDE :: number
-
-	buffer.writeu8(DynamicFlags, FlagIndex, 0)
-	buffer.writeu8(ObjectGroundedFlags, FlagIndex, 0)
-	buffer.writef32(ObjectInvMassBuffer, FlagIndex * 4, 0)
-	buffer.writef32(ObjectVelocityBuffer, CompOffset, 0)
-	buffer.writef32(ObjectVelocityBuffer, CompOffset + 4, 0)
-	buffer.writef32(ObjectVelocityBuffer, CompOffset + 8, 0)
-	buffer.writef32(ObjectAngularVelocityBuffer, CompOffset, 0)
-	buffer.writef32(ObjectAngularVelocityBuffer, CompOffset + 4, 0)
-	buffer.writef32(ObjectAngularVelocityBuffer, CompOffset + 8, 0)
-	buffer.writef32(ObjectForceBuffer, CompOffset, 0)
-	buffer.writef32(ObjectForceBuffer, CompOffset + 4, 0)
-	buffer.writef32(ObjectForceBuffer, CompOffset + 8, 0)
+	RemoveAwakeEntity(EntityId)
+	ClearEntityPhysicsSlots(EntityId)
 end
 
 function PhysicsController.SetEntityDynamic(EntityId: number, IsDynamic: boolean, CustomMass: number?)

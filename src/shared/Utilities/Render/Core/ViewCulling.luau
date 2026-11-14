@@ -9,6 +9,7 @@ const RunService = game:GetService("RunService")
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
 const CameraStore = if RunService:IsClient()
 	then require(
 		ReplicatedStorage:WaitForChild("Shared")
@@ -35,6 +36,7 @@ const FAR_CLIP = SystemsConfigs.CullingFarClip :: number
 const OCCLUDER_INSCRIBED_FACTOR = SystemsConfigs.OccluderInscribedRadiusFactor :: number
 const OCCLUDER_MIN_PROJ_RADIUS = SystemsConfigs.OccluderMinProjectedRadius :: number
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
+const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 const PLAYER_EYE_OFFSET = SystemsConfigs.CameraPlayerEyeOffset :: number
 const DEFAULT_CAMERA_FOV = SystemsConfigs.DefaultCameraFOV :: number
 const OBSERVER_PAYLOAD_BYTES = 56 :: number
@@ -339,6 +341,61 @@ function ViewCulling.UpdateDynamicView(Head: BasePart?)
 end
 
 --[=[
+	Pre-scans entities to select the closest dominant foreground occluder before per-entity culling,
+	eliminating entity-order dependence.
+	@param EntityCount number -- Number of entities to scan.
+	@param Positions buffer -- Positions buffer.
+	@param Sizes buffer -- Sizes buffer.
+	@param Properties buffer -- Properties buffer.
+]=]
+function ViewCulling.PrepassDominantOccluder(
+	EntityCount: number,
+	Positions: buffer,
+	Sizes: buffer,
+	Properties: buffer
+)
+	HasOccluder = false
+	local BestInscribedRadius = OCCLUDER_MIN_PROJ_RADIUS :: number
+
+	for EntityIndex = 1, EntityCount do
+		const PropertiesOffset = (EntityIndex - 1) * PROPERTIES_STRIDE :: number
+		const PropertiesRegister = buffer.readu32(Properties, PropertiesOffset) :: number
+		if not ECSMain.IsEntityVisible(PropertiesRegister) then
+			continue
+		end
+
+		const Offset = (EntityIndex - 1) * COMPONENT_STRIDE :: number
+		const RelX = buffer.readf32(Positions, Offset) - ViewOriginX :: number
+		const RelY = buffer.readf32(Positions, Offset + 4) - ViewOriginY :: number
+		const RelZ = buffer.readf32(Positions, Offset + 8) - ViewOriginZ :: number
+		const ForwardZ = RelX * ViewLookX + RelY * ViewLookY + RelZ * ViewLookZ :: number
+		if ForwardZ <= NEAR_CLIP or ForwardZ > FAR_CLIP then
+			continue
+		end
+
+		const SizeX = buffer.readf32(Sizes, Offset) :: number
+		const SizeY = buffer.readf32(Sizes, Offset + 4) :: number
+		const SizeZ = buffer.readf32(Sizes, Offset + 8) :: number
+		const InvZ = 1 / math.max(NEAR_CLIP, ForwardZ) :: number
+		const InscribedRadius = math.min(SizeX, SizeY, SizeZ) * OCCLUDER_INSCRIBED_FACTOR * InvZ :: number
+		if InscribedRadius > BestInscribedRadius then
+			const Radius = (SizeX + SizeY + SizeZ) * RADIUS_PADDING_FACTOR :: number
+			const LocalX = RelX * ViewRightX + RelY * ViewRightY + RelZ * ViewRightZ :: number
+			const LocalY = RelX * ViewUpX + RelY * ViewUpY + RelZ * ViewUpZ :: number
+			const ProjX = LocalX * InvZ :: number
+			const ProjY = LocalY * InvZ :: number
+			BestInscribedRadius = InscribedRadius
+			HasOccluder = true
+			OccFarZ = ForwardZ + Radius
+			OccMinX = ProjX - InscribedRadius
+			OccMaxX = ProjX + InscribedRadius
+			OccMinY = ProjY - InscribedRadius
+			OccMaxY = ProjY + InscribedRadius
+		end
+	end
+end
+
+--[=[
 	Evaluates whether an entity is outside the view frustum or occluded by a dominant occluder.
 	@param EntityIndex number -- 1-based ECS entity index.
 	@param Positions buffer -- Positions buffer.
@@ -395,7 +452,10 @@ function ViewCulling.IsEntityCulled(EntityIndex: number, Positions: buffer, Size
 
 	-- Register large close entities as the foreground occluder for subsequent checks
 	const InscribedRadius = math.min(SizeX, SizeY, SizeZ) * OCCLUDER_INSCRIBED_FACTOR * InvZ :: number
-	if InscribedRadius > OCCLUDER_MIN_PROJ_RADIUS and (not HasOccluder or ForwardZ < OccFarZ) then
+	if
+		InscribedRadius > OCCLUDER_MIN_PROJ_RADIUS
+		and (not HasOccluder or (ForwardZ + Radius < OccFarZ and InscribedRadius >= (OccMaxX - OccMinX) * 0.5))
+	then
 		HasOccluder = true
 		OccFarZ = ForwardZ + Radius
 		OccMinX = ProjX - InscribedRadius

@@ -12,14 +12,14 @@
 
 ### 1. Spatial Interest Management (`PlayerCuller.luau` & `PlayerFunctions.luau`)
 - Evaluates world entities relative to each connected player's standalone virtual observer state (`Origin`, `Look`, `Up`, `Right`, `FovDegrees`), seeded at most once from an initial character (or `PlayerDefaultSpawnPosition`) and continuously updated via compact 56-byte binary `ObserverStateEvent` (`UnreliableRemoteEvent`) buffers so replication remains active after `Character` / `Humanoid` deletion.
-- Entities outside the player's view distance or view-cone angle are skipped from network packet serialization while preserving their replicated state flag (`VisibleFlags`), so unchanged entities are never re-transmitted when re-entering the frustum.
+- Runs `ViewCulling.PrepassDominantOccluder` once per player view so static and dynamic occluders block entities regardless of entity ID order.
+- Static geometry streams incrementally within `ECSConfig.StaticStreamRadius` instead of forcing distant geometry on join; entities outside view bounds are skipped while preserving each player's compact 4B/entity `SentVersion` buffer so unchanged entities are never re-transmitted when re-entering the frustum.
 
 ### 2. Binary Delta Serialization (`ReplicatorExecuter.server.luau`)
-- Waits for each client's Actor-cloned `ReplicationReceiver` to signal readiness (`ReplicateEvent:FireServer()` -> `PlayerFunctions.MarkClientReady`) before marking `VisibleFlags` or broadcasting snapshots, preventing dropped initial world packets during client `Actor` bootstrap.
-- Packs visible/static entity transforms and properties into compact contiguous memory buffers (`DeltaPositions`, `DeltaOrientations`, `DeltaVisuals`, `DeltaSizes`, `DeltaDirections`, `DeltaProperties`).
-- Dispatches serialized delta packets across the network via `CoreEvents` at fixed synchronization ticks, capped per tick by `ECSConfig.MaxEntitiesPerReplicationPacket`.
+- Waits for each client's Actor-cloned `ReplicationReceiver` to signal readiness (`ReplicateEvent:FireServer()` -> `PlayerFunctions.MarkClientReady`) before broadcasting snapshots, preventing dropped initial world packets during client `Actor` bootstrap.
+- Runs `PlayerFunctions.SyncEntityVersions` once per tick against a shared server shadow copy and packs changed entity components into a **single binary delta payload buffer** (`8`-byte header `UpdatedCount / WorldEntityCount / Tick` + `u16 ServerId, u8 ComponentMask` + changed components, with `Right = Look × Up` reconstructed client-side to save 12 bytes per orientation update).
+- Dispatches serialized delta payloads across `CoreEvents.ReplicateEvent`, capped per tick by `ECSConfig.MaxEntitiesPerReplicationPacket`.
 
 ### 3. Client Ingestion & Entity Slot Mapping (`ReplicationReceiver.client.luau`)
-- Receives server delta buffers on each client.
-- Maintains a bidirectional lookup table (`ClientSlotByServerId`) mapping server IDs to persistent local client slots.
-- Automatically assigns new local slots for incoming entities and updates existing local buffers in-place without garbage generation.
+- Receives single binary delta payloads on each client and detects server despawn compactions when `WorldEntityCount` shrinks, evicting stale client slots.
+- Maintains bidirectional lookup buffers (`ClientSlotByServerId` / `ServerIdByClientSlot`) synchronized via `SetSwapPopCallback`, updating local buffers in-place, reconstructing `Right = Look × Up`, and flagging modified slots via `ECSData.MarkDirty`.

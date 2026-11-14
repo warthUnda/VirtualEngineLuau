@@ -22,10 +22,21 @@ const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
 const MAX_ENTITIES = SystemsConfigs.ECSMaxEntities :: number
 const BROADPHASE_PADDING = SystemsConfigs.PhysicsBroadphasePadding :: number
 
--- Tables --
-const BroadphaseCandidates = table.create(MAX_ENTITIES, 0) :: { number }
+-- Buffers --
+const BroadphaseCandidatesBuffer = buffer.create(MAX_ENTITIES * 4) :: buffer
+
+-- Callbacks --
+local WakeEntityCallback: ((EntityId: number) -> ())? = nil
 
 local PhysicsMath = {}
+
+--[=[
+	Registers a callback invoked when collision resolution wakes a sleeping dynamic entity.
+	@param Callback ((EntityId: number) -> ())? -- Optional callback receiving the woken EntityId.
+]=]
+function PhysicsMath.SetWakeEntityCallback(Callback: ((EntityId: number) -> ())?)
+	WakeEntityCallback = Callback
+end
 
 -- ============================================================================
 -- 1. VELOCITY & INERTIA INTEGRATION
@@ -274,7 +285,8 @@ function PhysicsMath.ResolveBodyWorldCollisions(
 	DirectionsBuffer: buffer,
 	DynamicFlags: buffer,
 	ObjectVelocityBuffer: buffer,
-	ObjectInvMassBuffer: buffer
+	ObjectInvMassBuffer: buffer,
+	SkipBVHNeedsRebuild: boolean?
 ): (number, number, number, number, number, number, boolean)
 	local NextX = BodyX :: number
 	local NextY = BodyY :: number
@@ -287,14 +299,21 @@ function PhysicsMath.ResolveBodyWorldCollisions(
 	const QueryPadX = BodyHalfSizeX + BROADPHASE_PADDING :: number
 	const QueryPadY = BodyHalfSizeY + BROADPHASE_PADDING :: number
 	const QueryPadZ = BodyHalfSizeZ + BROADPHASE_PADDING :: number
-	const CandidateCount = BVH.QueryAABB(
-		Vector3.new(NextX - QueryPadX, NextY - QueryPadY, NextZ - QueryPadZ),
-		Vector3.new(NextX + QueryPadX, NextY + QueryPadY, NextZ + QueryPadZ),
-		BroadphaseCandidates
+	const CandidateCount = BVH.QueryAABBScalar(
+		NextX - QueryPadX,
+		NextY - QueryPadY,
+		NextZ - QueryPadZ,
+		NextX + QueryPadX,
+		NextY + QueryPadY,
+		NextZ + QueryPadZ,
+		BroadphaseCandidatesBuffer,
+		MAX_ENTITIES,
+		nil,
+		SkipBVHNeedsRebuild
 	) :: number
 
-	for CandidateIdx = 1, CandidateCount do
-		const EntityId = BroadphaseCandidates[CandidateIdx] :: number
+	for CandidateIdx = 0, CandidateCount - 1 do
+		const EntityId = buffer.readu32(BroadphaseCandidatesBuffer, CandidateIdx * 4) :: number
 		if EntityId == IgnoreEntityId or EntityId < 1 or EntityId > EntityCount then
 			continue
 		end
@@ -346,6 +365,9 @@ function PhysicsMath.ResolveBodyWorldCollisions(
 					ObjectVelocityBuffer,
 					ObjectInvMassBuffer
 				)
+			if OtherDynamicState == 2 and WakeEntityCallback and buffer.readu8(DynamicFlags, EntityId - 1) == 1 then
+				WakeEntityCallback(EntityId)
+			end
 			continue
 		end
 

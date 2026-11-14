@@ -13,7 +13,11 @@
 ]=]
 
 -- Services --
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const UserInputService = game:GetService("UserInputService")
+
+-- Modules --
+const BVH = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities"):WaitForChild("BVH"))
 
 const CameraHelper = {}
 
@@ -137,38 +141,21 @@ end
 function CameraHelper.RaycastWorld(
 	Origin: Vector3,
 	Direction: Vector3,
-	CharacterModel: Model?,
-	ActiveHost: BasePart?
+	_CharacterModel: Model?,
+	_ActiveHost: BasePart?,
+	ProvidedStorage: any?
 ): Vector3
-	if Direction.Magnitude <= 1e-5 then
+	const DirMag = Direction.Magnitude :: number
+	if DirMag <= 1e-5 then
 		return Origin
 	end
 
-	const Params = RaycastParams.new()
-	Params.IgnoreWater = true
-	const FilterInstances = {} :: { Instance }
-	if CharacterModel and CharacterModel.Parent then
-		table.insert(FilterInstances, CharacterModel)
-	end
-	if ActiveHost and ActiveHost.Parent then
-		if ActiveHost.Parent ~= workspace and ActiveHost.Parent:IsA("Model") then
-			table.insert(FilterInstances, ActiveHost.Parent)
-		else
-			table.insert(FilterInstances, ActiveHost)
-		end
-	end
-	Params.FilterDescendantsInstances = FilterInstances
-
-	local AdjustedDirection = Direction
-	const LandRay = workspace:Raycast(Origin, AdjustedDirection, Params)
-	if LandRay and LandRay.Distance and LandRay.Instance then
-		const ScaleFactor = if LandRay.Instance:IsA("BasePart") or LandRay.Instance:IsA("UnionOperation")
-			then 0.9
-			else 0.95 :: number
-		AdjustedDirection *= (LandRay.Distance * ScaleFactor / AdjustedDirection.Magnitude)
+	const HitEntityId, _HitDyn, HitDistance = BVH.Raycast(ProvidedStorage, Origin, Direction, DirMag, nil)
+	if HitEntityId and HitDistance then
+		return Origin + Direction * ((HitDistance * 0.9) / DirMag)
 	end
 
-	return Origin + AdjustedDirection
+	return Origin + Direction
 end
 
 --[=[

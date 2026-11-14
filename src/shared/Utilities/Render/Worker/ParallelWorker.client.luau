@@ -19,10 +19,14 @@ const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Texture.T
 -- Configs --
 const WIDTH = SystemsConfigs.RenderWidth :: number
 const HEIGHT = SystemsConfigs.RenderHeight :: number
-const TOTAL_PIXELS = WIDTH * HEIGHT :: number
+const ACTOR_COUNT = SystemsConfigs.ActorCount :: number
+const MAX_BAND_ROWS = math.ceil(HEIGHT / ACTOR_COUNT) :: number
+const BAND_PIXELS = WIDTH * MAX_BAND_ROWS :: number
 const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
 
-local DirtyMinY = 0 :: number
+local BandStartY = 0 :: number
+local BandEndY = HEIGHT - 1 :: number
+local DirtyMinY = HEIGHT :: number
 local DirtyMaxY = -1 :: number
 local TextureBuffers = TextureTable.GetAllCachedBuffers() :: { [number]: buffer }
 local TextureWidth = TEXTURE_SIZE :: number
@@ -30,17 +34,27 @@ local TextureHeight = TEXTURE_SIZE :: number
 
 -- Buffers
 const EmptyPayload = buffer.create(0) :: buffer
-const PixelBuffer = buffer.create(TOTAL_PIXELS * 4) :: buffer
-const ZBuffer = buffer.create(TOTAL_PIXELS * 4) :: buffer
-const ROW_STRIDE = WIDTH * 4 :: number
+const PixelBuffer = buffer.create(BAND_PIXELS * 4) :: buffer
+const ZBuffer = buffer.create(BAND_PIXELS * 4) :: buffer
 
-BufferHelper.ClearBuffers(TOTAL_PIXELS, PixelBuffer, ZBuffer)
+BufferHelper.ClearBuffers(BAND_PIXELS, PixelBuffer, ZBuffer)
 
 task.desynchronize()
 
 -- ============================================================================
 -- 1. LISTENER - LISTENS TO RETURNING DATA AND COMPUTING IT
 -- ============================================================================
+
+SelfActor:BindToMessageParallel(
+	"Set Band Range",
+	function(NewBandStartY: number, NewBandEndY: number)
+		BandStartY = NewBandStartY
+		BandEndY = NewBandEndY
+		DirtyMinY = HEIGHT
+		DirtyMaxY = -1
+		BufferHelper.ClearBuffers(BAND_PIXELS, PixelBuffer, ZBuffer)
+	end
+)
 
 SelfActor:BindToMessageParallel(
 	"Set Texture Table",
@@ -53,7 +67,9 @@ SelfActor:BindToMessageParallel(
 
 SelfActor:BindToMessageParallel("Execute Rendering", function(RenderBuffer: buffer, ByteCount: number, FrameId: number)
 	if DirtyMinY <= DirtyMaxY then
-		BufferHelper.ClearDirtyRows(WIDTH, DirtyMinY, DirtyMaxY, TOTAL_PIXELS, PixelBuffer, ZBuffer)
+		const LocalMinY = DirtyMinY - BandStartY :: number
+		const LocalMaxY = DirtyMaxY - BandStartY :: number
+		BufferHelper.ClearDirtyRows(WIDTH, LocalMinY, LocalMaxY, BAND_PIXELS, PixelBuffer, ZBuffer)
 		DirtyMinY = HEIGHT
 		DirtyMaxY = -1
 	end
@@ -68,19 +84,31 @@ SelfActor:BindToMessageParallel("Execute Rendering", function(RenderBuffer: buff
 			WIDTH,
 			HEIGHT,
 			PixelBuffer,
-			ZBuffer
+			ZBuffer,
+			BandStartY,
+			BandEndY
 		)
 	end
 
 	if DirtyMinY <= DirtyMaxY then
-		const DirtyStartOffset = DirtyMinY * ROW_STRIDE :: number
-		const DirtyByteCount = (DirtyMaxY - DirtyMinY + 1) * ROW_STRIDE :: number
-		const DirtyPixelSlice = buffer.create(DirtyByteCount) :: buffer
-		const DirtyZSlice = buffer.create(DirtyByteCount) :: buffer
-		buffer.copy(DirtyPixelSlice, 0, PixelBuffer, DirtyStartOffset, DirtyByteCount)
-		buffer.copy(DirtyZSlice, 0, ZBuffer, DirtyStartOffset, DirtyByteCount)
-		ControllerActor:SendMessage("Return Render Calculations", DirtyPixelSlice, DirtyZSlice, FrameId, DirtyMinY, DirtyMaxY)
+		ControllerActor:SendMessage(
+			"Return Render Calculations",
+			PixelBuffer,
+			FrameId,
+			BandStartY,
+			BandEndY,
+			DirtyMinY,
+			DirtyMaxY
+		)
 	else
-		ControllerActor:SendMessage("Return Render Calculations", EmptyPayload, EmptyPayload, FrameId, DirtyMinY, DirtyMaxY)
+		ControllerActor:SendMessage(
+			"Return Render Calculations",
+			EmptyPayload,
+			FrameId,
+			BandStartY,
+			BandEndY,
+			DirtyMinY,
+			DirtyMaxY
+		)
 	end
 end)

@@ -387,7 +387,8 @@ function PhysicsControllerHelper.StepSingleDynamicObject(
 		DirectionsBuffer,
 		DynamicFlags,
 		ObjectVelocityBuffer,
-		ObjectInvMassBuffer
+		ObjectInvMassBuffer,
+		true
 	)
 
 	buffer.writef32(PositionBuffer, CompOffset, PosX)

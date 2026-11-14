@@ -20,7 +20,6 @@ const ViewCulling = require(
 
 -- Storage tables (ECS)
 const PositionData = Storage.PositionData
-const OrientationData = Storage.OrientationData
 const VisualData = Storage.VisualData
 const SizeData = Storage.SizeData
 const DirectionsData = Storage.DirectionsData
@@ -30,12 +29,16 @@ const ECSData = Storage.ECSData
 -- Configs --
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+const VISUAL_STRIDE = SystemsConfigs.ECSVisualStride :: number
 const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 const MAX_ENTITIES_PER_PACKET = math.max(1, SystemsConfigs.MaxEntitiesPerReplicationPacket or 256) :: number
+const STATIC_STREAM_RADIUS = (SystemsConfigs.StaticStreamRadius or 260) :: number
+const STATIC_STREAM_RADIUS_SQ = STATIC_STREAM_RADIUS * STATIC_STREAM_RADIUS :: number
+const HEADER_BYTES = 8 :: number
+const MAX_RECORD_BYTES = 59 :: number
 
 -- Buffers
 const PositionBuffer = PositionData.GetData() :: buffer
-const OrientationBuffer = OrientationData.GetData() :: buffer
 const VisualBuffer = VisualData.GetData() :: buffer
 const SizeBuffer = SizeData.GetData() :: buffer
 const DirectionsBuffer = DirectionsData.GetData() :: buffer
@@ -43,25 +46,11 @@ const PropertiesBuffer = PropertiesData.GetData() :: buffer
 const StaticBuffer = ECSData.GetStaticData() :: buffer
 
 const COMPONENT_BUFFER_SIZE = buffer.len(PositionBuffer) :: number
-const DIRECTION_BUFFER_SIZE = buffer.len(DirectionsBuffer) :: number
-const PROPERTIES_BUFFER_SIZE = buffer.len(PropertiesBuffer) :: number
 const MAX_ENTITIES = COMPONENT_BUFFER_SIZE // COMPONENT_STRIDE :: number
 
-const ScratchPositions = buffer.create(COMPONENT_BUFFER_SIZE) :: buffer
-const ScratchOrientations = buffer.create(COMPONENT_BUFFER_SIZE) :: buffer
-const ScratchVisuals = buffer.create(COMPONENT_BUFFER_SIZE) :: buffer
-const ScratchSizes = buffer.create(COMPONENT_BUFFER_SIZE) :: buffer
-const ScratchDirections = buffer.create(DIRECTION_BUFFER_SIZE) :: buffer
-const ScratchProperties = buffer.create(PROPERTIES_BUFFER_SIZE) :: buffer
+const ScratchPayload = buffer.create(HEADER_BYTES + MAX_ENTITIES_PER_PACKET * MAX_RECORD_BYTES) :: buffer
 
-export type ECSTable = {
-	OrientationECSCount: number,
-	PositionECSCount: number,
-	VisualECSCount: number,
-	SizeECSCount: number,
-	DirectionsECSCount: number,
-	EntityECSCount: number,
-}
+local ReplicationTick = 0 :: number
 
 local PlayerCuller = {}
 
@@ -72,32 +61,45 @@ PlayerCuller.RemovePlayerState = PlayerFunctions.RemovePlayerState
 -- ============================================================================
 
 --[=[
-	Culls world entities against a player's dynamic view cone, delta-checks mutations, and returns packed replication buffers.
+	Culls world entities against a player's dynamic view cone, delta-checks component versions,
+	and returns a single packed binary delta payload buffer.
 	@param PlayerObject Player -- Target replicating player.
-	@return (buffer?, buffer?, buffer?, buffer?, buffer?, buffer?, ECSTable?) -- DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, DeltaProperties, Counts.
+	@param SkipVersionSync boolean? -- Optional flag when SyncEntityVersions was already run this tick.
+	@return buffer? -- Packed replication delta payload, or nil if no updates/despawns occurred.
 ]=]
-function PlayerCuller.CullObjects(
-	PlayerObject: Player
-): (buffer?, buffer?, buffer?, buffer?, buffer?, buffer?, ECSTable?)
+function PlayerCuller.CullObjects(PlayerObject: Player, SkipVersionSync: boolean?): buffer?
 	const EntityCount = math.min(ECSData.GetCounts().EntityECSCount, MAX_ENTITIES) :: number
+	const State = PlayerFunctions.GetOrCreatePlayerState(PlayerObject, EntityCount)
+	const PreviousCount = State.LastEntityCount :: number
+	const WorldShrank = EntityCount < PreviousCount :: boolean
+
 	if EntityCount <= 0 then
-		return nil, nil, nil, nil, nil, nil, nil
+		State.LastEntityCount = 0
+		if not WorldShrank then
+			return nil
+		end
+
+		ReplicationTick += 1
+		const EmptyPacket = buffer.create(HEADER_BYTES) :: buffer
+		buffer.writeu16(EmptyPacket, 0, 0)
+		buffer.writeu16(EmptyPacket, 2, 0)
+		buffer.writeu32(EmptyPacket, 4, ReplicationTick)
+		return EmptyPacket
 	end
 
-	const State = PlayerFunctions.GetOrCreatePlayerState(PlayerObject, EntityCount)
+	if not SkipVersionSync then
+		PlayerFunctions.SyncEntityVersions(EntityCount)
+	end
 
-	const VisibleFlags = State.VisibleFlags :: buffer
-	const CachedPositions = State.Positions :: buffer
-	const CachedOrientations = State.Orientations :: buffer
-	const CachedVisuals = State.Visuals :: buffer
-	const CachedSizes = State.Sizes :: buffer
-	const CachedDirections = State.Directions :: buffer
-	const CachedProperties = State.Properties :: buffer
+	const SentVersion = State.SentVersion :: buffer
+	const OriginX = State.OriginX :: number
+	const OriginY = State.OriginY :: number
+	const OriginZ = State.OriginZ :: number
 
 	ViewCulling.UpdateObserverFromVectors(
-		State.OriginX,
-		State.OriginY,
-		State.OriginZ,
+		OriginX,
+		OriginY,
+		OriginZ,
 		State.LookX,
 		State.LookY,
 		State.LookZ,
@@ -110,39 +112,40 @@ function PlayerCuller.CullObjects(
 		State.ExtraBackPadding,
 		State.FovDegrees
 	)
+	ViewCulling.PrepassDominantOccluder(EntityCount, PositionBuffer, SizeBuffer, PropertiesBuffer)
 
-	local WriteOffset = 0 :: number
-	local DirectionWriteOffset = 0 :: number
-	local PropertiesWriteOffset = 0 :: number
+	local WriteOffset = HEADER_BYTES :: number
 	local PackedCount = 0 :: number
 
 	for i = 1, EntityCount do
 		const FlagOffset = i - 1 :: number
+		const VersionOffset = FlagOffset * 4 :: number
+		const SentVer = buffer.readu32(SentVersion, VersionOffset) :: number
 		const IsStatic = (buffer.readu8(StaticBuffer, FlagOffset) == 1) :: boolean
 
-		if not IsStatic and ViewCulling.IsEntityCulled(i, PositionBuffer, SizeBuffer) then
-			continue
+		if IsStatic then
+			if SentVer > 0 then
+				const Mask, _ = PlayerFunctions.GetEntityDeltaMask(i, SentVer)
+				if Mask == 0 then
+					continue
+				end
+			else
+				const PosOffset = FlagOffset * COMPONENT_STRIDE :: number
+				const Dx = buffer.readf32(PositionBuffer, PosOffset) - OriginX :: number
+				const Dy = buffer.readf32(PositionBuffer, PosOffset + 4) - OriginY :: number
+				const Dz = buffer.readf32(PositionBuffer, PosOffset + 8) - OriginZ :: number
+				if Dx * Dx + Dy * Dy + Dz * Dz > STATIC_STREAM_RADIUS_SQ then
+					continue
+				end
+			end
+		else
+			if ViewCulling.IsEntityCulled(i, PositionBuffer, SizeBuffer) then
+				continue
+			end
 		end
 
-		const ReadOffset = FlagOffset * COMPONENT_STRIDE :: number
-		const DirectionReadOffset = FlagOffset * DIRECTION_STRIDE :: number
-		const PropertiesReadOffset = FlagOffset * PROPERTIES_STRIDE :: number
-		const HasReplicated = buffer.readu8(VisibleFlags, FlagOffset) :: number
-
-		if
-			HasReplicated == 1
-			and not PlayerFunctions.HasEntityChanged(
-				ReadOffset,
-				DirectionReadOffset,
-				PropertiesReadOffset,
-				CachedPositions,
-				CachedOrientations,
-				CachedVisuals,
-				CachedSizes,
-				CachedDirections,
-				CachedProperties
-			)
-		then
+		const Mask, CurrentVer = PlayerFunctions.GetEntityDeltaMask(i, SentVer)
+		if Mask == 0 then
 			continue
 		end
 
@@ -151,59 +154,58 @@ function PlayerCuller.CullObjects(
 			break
 		end
 
-		buffer.writeu8(VisibleFlags, FlagOffset, 1)
+		buffer.writeu32(SentVersion, VersionOffset, CurrentVer)
+		buffer.writeu16(ScratchPayload, WriteOffset, i)
+		buffer.writeu8(ScratchPayload, WriteOffset + 2, Mask)
+		WriteOffset += 3
 
-		buffer.copy(CachedPositions, ReadOffset, PositionBuffer, ReadOffset, COMPONENT_STRIDE)
-		buffer.copy(CachedOrientations, ReadOffset, OrientationBuffer, ReadOffset, COMPONENT_STRIDE)
-		buffer.copy(CachedVisuals, ReadOffset, VisualBuffer, ReadOffset, COMPONENT_STRIDE)
-		buffer.copy(CachedSizes, ReadOffset, SizeBuffer, ReadOffset, COMPONENT_STRIDE)
-		buffer.copy(CachedDirections, DirectionReadOffset, DirectionsBuffer, DirectionReadOffset, DIRECTION_STRIDE)
-		buffer.copy(CachedProperties, PropertiesReadOffset, PropertiesBuffer, PropertiesReadOffset, PROPERTIES_STRIDE)
+		const CompOffset = FlagOffset * COMPONENT_STRIDE :: number
+		if bit32.band(Mask, 1) ~= 0 then
+			buffer.copy(ScratchPayload, WriteOffset, PositionBuffer, CompOffset, COMPONENT_STRIDE)
+			WriteOffset += COMPONENT_STRIDE
+		end
 
-		buffer.copy(ScratchPositions, WriteOffset, PositionBuffer, ReadOffset, COMPONENT_STRIDE)
-		buffer.copy(ScratchOrientations, WriteOffset, OrientationBuffer, ReadOffset, COMPONENT_STRIDE)
-		buffer.copy(ScratchVisuals, WriteOffset, VisualBuffer, ReadOffset, COMPONENT_STRIDE)
-		buffer.writeu32(ScratchVisuals, WriteOffset + 4, i)
-		buffer.copy(ScratchSizes, WriteOffset, SizeBuffer, ReadOffset, COMPONENT_STRIDE)
-		buffer.copy(ScratchDirections, DirectionWriteOffset, DirectionsBuffer, DirectionReadOffset, DIRECTION_STRIDE)
-		buffer.copy(ScratchProperties, PropertiesWriteOffset, PropertiesBuffer, PropertiesReadOffset, PROPERTIES_STRIDE)
+		if bit32.band(Mask, 2) ~= 0 then
+			buffer.copy(ScratchPayload, WriteOffset, SizeBuffer, CompOffset, COMPONENT_STRIDE)
+			WriteOffset += COMPONENT_STRIDE
+		end
 
-		WriteOffset += COMPONENT_STRIDE
-		DirectionWriteOffset += DIRECTION_STRIDE
-		PropertiesWriteOffset += PROPERTIES_STRIDE
+		if bit32.band(Mask, 4) ~= 0 then
+			const DirOffset = FlagOffset * DIRECTION_STRIDE :: number
+			-- Directions layout: Look (0..11), Up (12..23), Right (24..35); client reconstructs Right = Look x Up
+			buffer.copy(ScratchPayload, WriteOffset, DirectionsBuffer, DirOffset, 24)
+			WriteOffset += 24
+		end
+
+		if bit32.band(Mask, 8) ~= 0 then
+			const VisOffset = FlagOffset * VISUAL_STRIDE :: number
+			buffer.copy(ScratchPayload, WriteOffset, VisualBuffer, VisOffset, VISUAL_STRIDE)
+			WriteOffset += VISUAL_STRIDE
+		end
+
+		if bit32.band(Mask, 16) ~= 0 then
+			const PropOffset = FlagOffset * PROPERTIES_STRIDE :: number
+			buffer.copy(ScratchPayload, WriteOffset, PropertiesBuffer, PropOffset, PROPERTIES_STRIDE)
+			WriteOffset += PROPERTIES_STRIDE
+		end
+
 		PackedCount += 1
 	end
 
-	if WriteOffset == 0 then
-		return nil, nil, nil, nil, nil, nil, nil
+	State.LastEntityCount = EntityCount
+
+	if PackedCount == 0 and not WorldShrank then
+		return nil
 	end
 
-	const DeltaPositions = buffer.create(WriteOffset) :: buffer
-	const DeltaOrientations = buffer.create(WriteOffset) :: buffer
-	const DeltaVisuals = buffer.create(WriteOffset) :: buffer
-	const DeltaSizes = buffer.create(WriteOffset) :: buffer
-	const DeltaDirections = buffer.create(DirectionWriteOffset) :: buffer
-	const DeltaProperties = buffer.create(PropertiesWriteOffset) :: buffer
+	ReplicationTick += 1
+	buffer.writeu16(ScratchPayload, 0, PackedCount)
+	buffer.writeu16(ScratchPayload, 2, EntityCount)
+	buffer.writeu32(ScratchPayload, 4, ReplicationTick)
 
-	buffer.copy(DeltaPositions, 0, ScratchPositions, 0, WriteOffset)
-	buffer.copy(DeltaOrientations, 0, ScratchOrientations, 0, WriteOffset)
-	buffer.copy(DeltaVisuals, 0, ScratchVisuals, 0, WriteOffset)
-	buffer.copy(DeltaSizes, 0, ScratchSizes, 0, WriteOffset)
-	buffer.copy(DeltaDirections, 0, ScratchDirections, 0, DirectionWriteOffset)
-	buffer.copy(DeltaProperties, 0, ScratchProperties, 0, PropertiesWriteOffset)
-
-	const VisibleCount = WriteOffset // COMPONENT_STRIDE :: number
-
-	const Counts: ECSTable = {
-		OrientationECSCount = VisibleCount,
-		PositionECSCount = VisibleCount,
-		VisualECSCount = VisibleCount,
-		SizeECSCount = VisibleCount,
-		DirectionsECSCount = VisibleCount,
-		EntityECSCount = VisibleCount,
-	}
-
-	return DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, DeltaProperties, Counts
+	const Packet = buffer.create(WriteOffset) :: buffer
+	buffer.copy(Packet, 0, ScratchPayload, 0, WriteOffset)
+	return Packet
 end
 
 return PlayerCuller

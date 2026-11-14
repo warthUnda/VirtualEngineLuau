@@ -55,7 +55,6 @@ function TestHelper.SpawnBoxEntity(
 	const Right = BoxCFrame.RightVector
 
 	Storage.PositionData.CreateLayout(CompOffset, Pos.X, Pos.Y, Pos.Z)
-	Storage.OrientationData.CreateLayout(CompOffset, Look.X, Look.Y, Look.Z)
 	Storage.SizeData.CreateLayout(CompOffset, Size.X, Size.Y, Size.Z)
 	Storage.DirectionsData.CreateLayout(
 		DirOffset,
@@ -95,7 +94,6 @@ function TestHelper.MoveEntity(Storage: ECSMain.ECSStorage, EntityId: number, Ne
 	const Right = NewCFrame.RightVector
 
 	Storage.PositionData.CreateLayout(CompOffset, Pos.X, Pos.Y, Pos.Z)
-	Storage.OrientationData.CreateLayout(CompOffset, Look.X, Look.Y, Look.Z)
 	Storage.DirectionsData.CreateLayout(
 		DirOffset,
 		Look.X,

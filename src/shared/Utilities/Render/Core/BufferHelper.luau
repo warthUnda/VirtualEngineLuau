@@ -115,4 +115,55 @@ function BufferHelper.ClearDirtyRows(
 	buffer.fill(ZBuffer, StartOffset, 0, DirtyByteLength)
 end
 
+--[=[
+	Composites a worker's disjoint scanline band into FinalPixel in O(rows) native buffer.copy calls,
+	copying dirty rasterized rows from WorkerPixelBuffer and template-clearing clean rows in [BandStartY..BandEndY].
+	@param FinalPixel buffer -- Full-screen destination pixel buffer.
+	@param WorkerPixelBuffer buffer -- Worker band-local pixel buffer.
+	@param Width number -- Screen width in pixels.
+	@param BandStartY number -- Inclusive screen Y start of the worker band.
+	@param BandEndY number -- Inclusive screen Y end of the worker band.
+	@param DirtyMinY number -- First screen Y touched by triangles in this band.
+	@param DirtyMaxY number -- Last screen Y touched by triangles in this band.
+]=]
+function BufferHelper.CompositeWorkerBand(
+	FinalPixel: buffer,
+	WorkerPixelBuffer: buffer,
+	Width: number,
+	BandStartY: number,
+	BandEndY: number,
+	DirtyMinY: number,
+	DirtyMaxY: number
+)
+	if BandStartY > BandEndY then
+		return
+	end
+
+	const RowStride = Width * 4 :: number
+	const BandByteLength = (BandEndY - BandStartY + 1) * RowStride :: number
+	const Template = BufferHelper.EnsureClearTemplate(BandByteLength)
+
+	if DirtyMinY > DirtyMaxY or DirtyMaxY < BandStartY or DirtyMinY > BandEndY then
+		buffer.copy(FinalPixel, BandStartY * RowStride, Template, 0, BandByteLength)
+		return
+	end
+
+	const ClampedMinY = math.max(BandStartY, DirtyMinY) :: number
+	const ClampedMaxY = math.min(BandEndY, DirtyMaxY) :: number
+
+	if ClampedMinY > BandStartY then
+		const TopClearBytes = (ClampedMinY - BandStartY) * RowStride :: number
+		buffer.copy(FinalPixel, BandStartY * RowStride, Template, 0, TopClearBytes)
+	end
+
+	const DirtyBytes = (ClampedMaxY - ClampedMinY + 1) * RowStride :: number
+	const SourceOffset = (ClampedMinY - BandStartY) * RowStride :: number
+	buffer.copy(FinalPixel, ClampedMinY * RowStride, WorkerPixelBuffer, SourceOffset, DirtyBytes)
+
+	if ClampedMaxY < BandEndY then
+		const BottomClearBytes = (BandEndY - ClampedMaxY) * RowStride :: number
+		buffer.copy(FinalPixel, (ClampedMaxY + 1) * RowStride, Template, 0, BottomClearBytes)
+	end
+end
+
 return BufferHelper

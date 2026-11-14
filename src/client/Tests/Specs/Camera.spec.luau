@@ -70,5 +70,34 @@ return function()
 			expect(Right.Magnitude > 0.9).to.equal(true)
 			expect(Up.Magnitude > 0.9).to.equal(true)
 		end)
+
+		it("should resolve camera occlusion via BVH.Raycast without Workspace part queries", function()
+			const Players = game:GetService("Players")
+			const LocalPlayer = Players.LocalPlayer :: Player?
+			if not LocalPlayer then
+				return
+			end
+
+			const ClientTestHelper = require(LocalPlayer.PlayerScripts.Client.Tests.TestHelper)
+			const TestStorage = ClientTestHelper.CreateTestStorage()
+			const EntityId = ClientTestHelper.PopulateEntity(
+				TestStorage,
+				Vector3.new(0, 500, -10),
+				Vector3.new(0, 0, -1),
+				Vector3.new(0, 1, 0),
+				Vector3.new(1, 0, 0),
+				Vector3.new(6, 6, 4),
+				Color3.new(1, 1, 1)
+			)
+			TestStorage.PropertiesData.CreateLayout((EntityId - 1) * 4, true, true, true, 0)
+
+			const Origin = Vector3.new(0, 500, 0)
+			const RayVec = Vector3.new(0, 0, -20)
+			const ClampedPos = CameraHelper.RaycastWorld(Origin, RayVec, nil, nil, TestStorage)
+			-- Box spans Z = [-12, -8]; ray from Z=0 in -Z hits at distance 8, clamped to 8 * 0.9 = 7.2 (-Z)
+			expect(ClampedPos.Z).to.be.near(-7.2, 0.25)
+
+			TestStorage.ECSData.DeleteEntity(EntityId)
+		end)
 	end)
 end

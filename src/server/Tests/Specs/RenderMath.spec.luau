@@ -300,17 +300,89 @@ return function()
 			WriteTriCmd(0, 0xFF112233)
 			RenderMath.DrawTriangleBatch(CmdBuf, 56, BatchTextures, 2, 2, 16, 16, PixBuf, ZBuf)
 			expect(buffer.readu32(PixBuf, (3 * 16 + 3) * 4)).to.equal(0xFF112233)
+
+			-- Verify band-clamped rasterization + CompositeWorkerBand only touches band rows
+			const WorkerBandPix = buffer.create(16 * 8 * 4)
+			const WorkerBandZ = buffer.create(16 * 8 * 4)
+			BufferHelper.ClearBuffers(16 * 8, WorkerBandPix, WorkerBandZ)
+			RenderMath.DrawTriangleBatch(CmdBuf, 56, BatchTextures, 2, 2, 16, 16, WorkerBandPix, WorkerBandZ, 4, 11)
+
+			const FinalPix = buffer.create(16 * 16 * 4)
+			buffer.fill(FinalPix, 0, 0)
+			BufferHelper.CompositeWorkerBand(FinalPix, WorkerBandPix, 16, 4, 11, 4, 11)
+			expect(buffer.readu32(FinalPix, (5 * 16 + 3) * 4)).to.equal(0xFF112233)
+			expect(buffer.readu32(FinalPix, (3 * 16 + 3) * 4)).to.equal(0)
 		end)
 
-		it("should expose all 5 unit shape meshes from VerticeFile hashmap", function()
+		it("should expose all 5 unit shape meshes and face UV axis indices from VerticeFile", function()
 			expect(VerticeFile.GetShapeName(0)).to.equal("Cube")
 			expect(VerticeFile.GetShapeName(1)).to.equal("Sphere")
 			expect(VerticeFile.GetShapeName(2)).to.equal("Cylinder")
 			expect(VerticeFile.GetShapeName(3)).to.equal("Triangle")
 			expect(VerticeFile.GetShapeName(4)).to.equal("Plane")
-			expect(VerticeFile.GetShapeData(0).IsAxisAligned).to.equal(true)
+			const CubeShape = VerticeFile.GetShapeData(0)
+			expect(CubeShape.IsAxisAligned).to.equal(true)
 			expect(VerticeFile.GetShapeData(1).IsAxisAligned).to.equal(false)
 			expect(VerticeFile.GetShapeData(4).IsAxisAligned).to.equal(true)
+			for _, Face in CubeShape.Faces do
+				expect(Face.UAxisIndex >= 1 and Face.UAxisIndex <= 3).to.equal(true)
+				expect(Face.VAxisIndex >= 1 and Face.VAxisIndex <= 3).to.equal(true)
+				expect(Face.UAxisIndex ~= Face.VAxisIndex).to.equal(true)
+			end
+		end)
+
+		it("should reject OBBs outside camera-space X/Y frustum guardband", function()
+			const CubeShape = VerticeFile.GetShapeData(0)
+			const VertexCount = #CubeShape.LocalVertices
+			const PosBuf = buffer.create(12)
+			const SizeBuf = buffer.create(12)
+			const DirBuf = buffer.create(36)
+			const CamVertsBuf = buffer.create(VertexCount * 12)
+
+			BufferHelper.WriteVec3(PosBuf, 0, vector.create(0, 0, -20))
+			BufferHelper.WriteVec3(SizeBuf, 0, vector.create(2, 2, 2))
+			BufferHelper.WriteVec3(DirBuf, 0, vector.create(0, 0, -1))
+			BufferHelper.WriteVec3(DirBuf, 12, vector.create(0, 1, 0))
+			BufferHelper.WriteVec3(DirBuf, 24, vector.create(1, 0, 0))
+
+			const OnScreen = RenderMath.TransformShapeCameraVertices(
+				PosBuf,
+				DirBuf,
+				SizeBuf,
+				0,
+				0,
+				CubeShape.LocalVertices,
+				VertexCount,
+				CamVertsBuf,
+				vector.create(0, 0, 0),
+				vector.create(1, 0, 0),
+				vector.create(0, 1, 0),
+				vector.create(0, 0, -1),
+				vector.create(0, 1, 0),
+				1.0,
+				1.0
+			)
+			expect(OnScreen).to.equal(true)
+
+			BufferHelper.WriteVec3(PosBuf, 0, vector.create(100, 0, -20))
+			const OffScreenRight = RenderMath.TransformShapeCameraVertices(
+				PosBuf,
+				DirBuf,
+				SizeBuf,
+				0,
+				0,
+				CubeShape.LocalVertices,
+				VertexCount,
+				CamVertsBuf,
+				vector.create(0, 0, 0),
+				vector.create(1, 0, 0),
+				vector.create(0, 1, 0),
+				vector.create(0, 0, -1),
+				vector.create(0, 1, 0),
+				1.0,
+				1.0
+			)
+			expect(OffScreenRight).to.equal(false)
 		end)
 	end)
 end

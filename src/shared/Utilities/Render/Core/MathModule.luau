@@ -283,7 +283,7 @@ end
 	@param ScaledUOverZ2 number -- Pre-scaled U/Z coordinate for vertex 2.
 	@param ScaledVOverZ2 number -- Pre-scaled V/Z coordinate for vertex 2.
 	@param PackedColor number -- Packed 32-bit RGBA shade/tint color.
-	@param TextureBuffer buffer -- Source RGBA texture buffer (power-of-two dimensions).
+	@param TextureBuffer buffer? -- Optional source RGBA texture buffer (nil renders untextured solid PackedColor).
 	@param TextureWidth number -- Texture width in texels.
 	@param TextureHeight number -- Texture height in texels.
 	@param WIDTH number -- Target framebuffer width.
@@ -310,7 +310,7 @@ function MathModule.RasterizeTriangleSpan(
 	ScaledUOverZ2: number,
 	ScaledVOverZ2: number,
 	PackedColor: number,
-	TextureBuffer: buffer,
+	TextureBuffer: buffer?,
 	TextureWidth: number,
 	TextureHeight: number,
 	WIDTH: number,
@@ -391,33 +391,46 @@ function MathModule.RasterizeTriangleSpan(
 			local BufferOffset = RowOffset + SpanStartOffsetX * 4 :: number
 			const EndOffset = RowOffset + SpanEndOffsetX * 4 :: number
 			local InterpolatedInverseZ = RowInverseZ + SpanStartOffsetX * InverseZStepX :: number
-			local InterpolatedUOverZ = RowUOverZ + SpanStartOffsetX * UOverZStepX :: number
-			local InterpolatedVOverZ = RowVOverZ + SpanStartOffsetX * VOverZStepX :: number
 
-			while BufferOffset <= EndOffset do
-				if InterpolatedInverseZ > buffer.readf32(ZBuffer, BufferOffset) then
-					buffer.writef32(ZBuffer, BufferOffset, InterpolatedInverseZ)
+			if TextureBuffer then
+				local InterpolatedUOverZ = RowUOverZ + SpanStartOffsetX * UOverZStepX :: number
+				local InterpolatedVOverZ = RowVOverZ + SpanStartOffsetX * VOverZStepX :: number
 
-					const DepthZ = 1 / InterpolatedInverseZ :: number
-					const TexelX = bit32.band(math.floor(InterpolatedUOverZ * DepthZ * TextureWidth), TextureWidthMask) :: number
-					const TexelY = bit32.band(math.floor(InterpolatedVOverZ * DepthZ * TextureHeight), TextureHeightMask) :: number
-					const TexelColor = buffer.readu32(TextureBuffer, (TexelY * TextureWidth + TexelX) * 4) :: number
+				while BufferOffset <= EndOffset do
+					if InterpolatedInverseZ > buffer.readf32(ZBuffer, BufferOffset) then
+						buffer.writef32(ZBuffer, BufferOffset, InterpolatedInverseZ)
 
-					const OutRed = bit32.rshift(bit32.band(TexelColor, 0xFF) * ShadeRed, 8) :: number
-					const OutGreen = bit32.rshift(bit32.band(bit32.rshift(TexelColor, 8), 0xFF) * ShadeGreen, 8) :: number
-					const OutBlue = bit32.rshift(bit32.band(bit32.rshift(TexelColor, 16), 0xFF) * ShadeBlue, 8) :: number
+						const DepthZ = 1 / InterpolatedInverseZ :: number
+						const TexelX = math.clamp(math.floor(InterpolatedUOverZ * DepthZ * TextureWidth), 0, TextureWidthMask) :: number
+						const TexelY = math.clamp(math.floor(InterpolatedVOverZ * DepthZ * TextureHeight), 0, TextureHeightMask) :: number
+						const TexelColor = buffer.readu32(TextureBuffer, (TexelY * TextureWidth + TexelX) * 4) :: number
 
-					buffer.writeu32(
-						PixelBuffer,
-						BufferOffset,
-						bit32.bor(OutRed, bit32.lshift(OutGreen, 8), bit32.lshift(OutBlue, 16), 0xFF000000)
-					)
+						const OutRed = bit32.rshift(bit32.band(TexelColor, 0xFF) * ShadeRed, 8) :: number
+						const OutGreen = bit32.rshift(bit32.band(bit32.rshift(TexelColor, 8), 0xFF) * ShadeGreen, 8) :: number
+						const OutBlue = bit32.rshift(bit32.band(bit32.rshift(TexelColor, 16), 0xFF) * ShadeBlue, 8) :: number
+
+						buffer.writeu32(
+							PixelBuffer,
+							BufferOffset,
+							bit32.bor(OutRed, bit32.lshift(OutGreen, 8), bit32.lshift(OutBlue, 16), 0xFF000000)
+						)
+					end
+
+					InterpolatedInverseZ += InverseZStepX
+					InterpolatedUOverZ += UOverZStepX
+					InterpolatedVOverZ += VOverZStepX
+					BufferOffset += 4
 				end
+			else
+				while BufferOffset <= EndOffset do
+					if InterpolatedInverseZ > buffer.readf32(ZBuffer, BufferOffset) then
+						buffer.writef32(ZBuffer, BufferOffset, InterpolatedInverseZ)
+						buffer.writeu32(PixelBuffer, BufferOffset, PackedColor)
+					end
 
-				InterpolatedInverseZ += InverseZStepX
-				InterpolatedUOverZ += UOverZStepX
-				InterpolatedVOverZ += VOverZStepX
-				BufferOffset += 4
+					InterpolatedInverseZ += InverseZStepX
+					BufferOffset += 4
+				end
 			end
 		end
 

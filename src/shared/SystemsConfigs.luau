@@ -32,17 +32,23 @@ SystemsConfigs.ActorCount = 3 :: number
 SystemsConfigs.WorkerBufferMultiplier = 4 :: number
 -- Per-pixel byte multiplier used to allocate each worker's triangle command buffer.
 
-SystemsConfigs.RenderBufferLayoutSize = 52 :: number
--- Byte stride of a single serialized textured triangle in the worker render buffer (three 16-byte vertices and one 4-byte packed RGBA color).
+SystemsConfigs.RenderBufferLayoutSize = 56 :: number
+-- Byte stride of a single serialized textured triangle in the worker render buffer (three 16-byte vertices, one 4-byte packed RGBA color, and one 4-byte texture ID).
 
 SystemsConfigs.TextureSize = 64 :: number
--- Power-of-two width and height in texels for the software renderer's cached texture buffer.
+-- Power-of-two width and height in texels for the software renderer's cached texture buffers.
 
-SystemsConfigs.TextureStudsPerTile = 8 :: number
--- World-space studs covered by one texture tile on part faces (set <= 0 to stretch 1x1 across each face).
+SystemsConfigs.TextureStudsPerTile = 0 :: number
+-- World-space studs covered by one texture tile on part faces (set <= 0 to stretch 1x1 across each face instead of repeating).
+
+SystemsConfigs.DefaultEntityTextureId = 0 :: number
+-- Default TextureTable ID used when an ECS entity has no Decal or texture attribute (0 = untextured solid part color).
+
+SystemsConfigs.TextureRegistryFolderName = "TextureRegistry" :: string
+-- Name of the ReplicatedStorage folder where ECSBuilder publishes discovered Decal URLs for client 64x64 decoding.
 
 SystemsConfigs.DefaultTextureUri = "" :: string
--- Optional Roblox asset URI override for textures; leave empty to use the procedural blood texture.
+-- Optional Roblox asset URI override for textures; leave empty to populate from Workspace Decals via ECSBuilder.
 
 SystemsConfigs.ClearColorR = 15 :: number
 -- Red channel (0-255) of the background clear color filled into the pixel buffer each frame.

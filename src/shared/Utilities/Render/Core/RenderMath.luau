@@ -396,7 +396,8 @@ end
 	Iterates and rasterizes a packed batch of textured triangles from a render command buffer.
 	@param RenderBuffer buffer -- Source render command queue buffer.
 	@param ByteCount number -- Total byte length of queued commands.
-	@param TextureBuffer buffer -- Source RGBA texture buffer.
+	@param TextureBuffers { [number]: buffer } -- Cached 64x64 RGBA texture buffers keyed by TextureId.
+	@param DefaultTextureBuffer buffer -- Fallback 64x64 RGBA texture buffer.
 	@param TextureWidth number -- Texture width in texels.
 	@param TextureHeight number -- Texture height in texels.
 	@param WIDTH number -- Screen width in pixels.
@@ -408,7 +409,8 @@ end
 function RenderMath.DrawTriangleBatch(
 	RenderBuffer: buffer,
 	ByteCount: number,
-	TextureBuffer: buffer,
+	TextureBuffers: { [number]: buffer },
+	DefaultTextureBuffer: buffer,
 	TextureWidth: number,
 	TextureHeight: number,
 	WIDTH: number,
@@ -422,6 +424,9 @@ function RenderMath.DrawTriangleBatch(
 	local ReadOffset = 0 :: number
 
 	while ReadOffset < ByteCount do
+		const TextureId = buffer.readu32(RenderBuffer, ReadOffset + 52) :: number
+		const TriangleTextureBuffer: buffer? = if TextureId > 0 then (TextureBuffers[TextureId] or DefaultTextureBuffer) else nil
+
 		const TriangleMinY: number, TriangleMaxY: number = MathModule.RasterizeTriangleSpan(
 			buffer.readi16(RenderBuffer, ReadOffset),
 			buffer.readi16(RenderBuffer, ReadOffset + 2),
@@ -439,7 +444,7 @@ function RenderMath.DrawTriangleBatch(
 			buffer.readf32(RenderBuffer, ReadOffset + 40),
 			buffer.readf32(RenderBuffer, ReadOffset + 44),
 			buffer.readu32(RenderBuffer, ReadOffset + 48),
-			TextureBuffer,
+			TriangleTextureBuffer,
 			TextureWidth,
 			TextureHeight,
 			WIDTH,

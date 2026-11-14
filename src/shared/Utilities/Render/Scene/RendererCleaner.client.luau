@@ -25,6 +25,7 @@ const ObjectOrientationData = ObjectStorage.OrientationData
 const ObjectVisualData = ObjectStorage.VisualData
 const ObjectSizeData = ObjectStorage.SizeData
 const ObjectDirectionsData = ObjectStorage.DirectionsData
+const ObjectPropertiesData = ObjectStorage.PropertiesData
 
 const RenderECSStorage = require(
 	ReplicatedStorage:WaitForChild("Shared")
@@ -38,6 +39,7 @@ const RenderOrientationData = RenderECSStorage.OrientationData
 const RenderVisualData = RenderECSStorage.VisualData
 const RenderSizeData = RenderECSStorage.SizeData
 const RenderDirectionsData = RenderECSStorage.DirectionsData
+const RenderPropertiesData = RenderECSStorage.PropertiesData
 
 const ViewCulling = require(
 	ReplicatedStorage:WaitForChild("Shared")
@@ -58,6 +60,7 @@ const CleanerHelper = require(
 -- Configs --
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 const CLEANER_TICK_INTERVAL = SystemsConfigs.CleanerTickInterval :: number
 
 -- Buffers
@@ -66,6 +69,7 @@ const ObjectOrientations = ObjectOrientationData.GetData() :: buffer
 const ObjectVisuals = ObjectVisualData.GetData() :: buffer
 const ObjectSizes = ObjectSizeData.GetData() :: buffer
 const ObjectDirections = ObjectDirectionsData.GetData() :: buffer
+const ObjectProperties = ObjectPropertiesData.GetData() :: buffer
 const ObjectCounts = ObjectECSData.ECSDataTable
 
 const RenderPositions = RenderPositionData.GetData() :: buffer
@@ -73,6 +77,7 @@ const RenderOrientations = RenderOrientationData.GetData() :: buffer
 const RenderVisuals = RenderVisualData.GetData() :: buffer
 const RenderSizes = RenderSizeData.GetData() :: buffer
 const RenderDirections = RenderDirectionsData.GetData() :: buffer
+const RenderProperties = RenderPropertiesData.GetData() :: buffer
 const RenderCounts = RenderECSData.ECSDataTable
 
 const MAX_ENTITIES = buffer.len(ObjectPositions) // COMPONENT_STRIDE :: number
@@ -116,14 +121,17 @@ while true do
 
 			const SourceOffset = (i - 1) * COMPONENT_STRIDE :: number
 			const SourceDirOffset = (i - 1) * DIRECTION_STRIDE :: number
+			const SourcePropOffset = (i - 1) * PROPERTIES_STRIDE :: number
 			const TargetOffset = (RenderSlot - 1) * COMPONENT_STRIDE :: number
 			const TargetDirOffset = (RenderSlot - 1) * DIRECTION_STRIDE :: number
+			const TargetPropOffset = (RenderSlot - 1) * PROPERTIES_STRIDE :: number
 
 			buffer.copy(RenderPositions, TargetOffset, ObjectPositions, SourceOffset, COMPONENT_STRIDE)
 			buffer.copy(RenderOrientations, TargetOffset, ObjectOrientations, SourceOffset, COMPONENT_STRIDE)
 			buffer.copy(RenderVisuals, TargetOffset, ObjectVisuals, SourceOffset, COMPONENT_STRIDE)
 			buffer.copy(RenderSizes, TargetOffset, ObjectSizes, SourceOffset, COMPONENT_STRIDE)
 			buffer.copy(RenderDirections, TargetDirOffset, ObjectDirections, SourceDirOffset, DIRECTION_STRIDE)
+			buffer.copy(RenderProperties, TargetPropOffset, ObjectProperties, SourcePropOffset, PROPERTIES_STRIDE)
 		end
 	end
 

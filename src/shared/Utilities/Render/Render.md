@@ -25,9 +25,10 @@
 - **Perspective-Correct Texture Mapping (`MathModule.RasterizeTriangleSpan`)**: Interpolates $1/Z$, $U/Z$, and $V/Z$ across horizontal spans, recovering true perspective-correct $(U, V)$ per visible fragment after the Z-test and modulating sampled texels from a power-of-two RGBA texture buffer (`TextureHelper`) by the face's shaded `PackedColor`.
 - **Depth Buffering:** Rejects occluded fragments via 32-bit floating-point Z-buffer comparisons before texture sampling.
 
-### 4. Texture Management (`TextureHelper`)
-- **`TextureHelper.LoadRobloxTemplateTexture`**: Asynchronously loads `SystemsConfigs.DefaultTextureUri` via `AssetService:CreateEditableImageAsync`, resamples it to `SystemsConfigs.TextureSize` (power-of-two for bitmask UV wrapping), and falls back to `TextureHelper.CreateProceduralTemplateTexture` (a classic Roblox stud template) if asset loading is unavailable.
-- **`RenderController.Init`**: Loads the template texture once and broadcasts it to all worker actors via `"Set Texture"` so zero texture data is transferred per frame.
+### 4. Texture Management (`TextureTable`, `TextureHelper`)
+- **`TextureTable`**: Acts as the ID/name/URL translator (`IdToName`, `NameToId`, `IdToUrl`, `UrlToId`), deduplicated URL decoder (`DecodeRawUrl`, `RegisterUrl` ignoring duplicate URLs), and `64×64` RGBA `buffer` cache (`TextureTable.CachedBuffers[TextureId]`).
+- **Workspace Decal Discovery (`ECSBuilderHelper`)**: Scans `Workspace` for `Decal` instances before populating parts, registers unique `Decal.Texture` URLs into `TextureTable`, publishes them to `ReplicatedStorage.TextureRegistry` for client `64×64` decoding, and assigns matching or random `TextureId`s to parts.
+- **ECS Bitfield Integration (`ECSMain`)**: Stores each entity's `TextureId` in bits `5..12` of the 32-bit `Properties` register, replicated to clients and read per-entity in `RenderController.DrawFrame` so different parts render with different cached `64×64` textures in the same frame.
 
 ### 4. Parallel Worker Distribution
 - Dispatches screen slices or render batches to multi-threaded Roblox `Actor` instances via `SendMessage`.

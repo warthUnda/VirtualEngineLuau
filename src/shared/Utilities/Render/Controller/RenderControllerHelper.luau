@@ -80,6 +80,7 @@ end
 	@param ScaleU number -- Horizontal UV tile scale for the face quad.
 	@param ScaleV number -- Vertical UV tile scale for the face quad.
 	@param PackedColor number -- Shaded 32-bit RGBA color.
+	@param TextureId number -- TextureTable numeric ID.
 	@param FocalLength number -- Camera focal length.
 	@param GuardBandX number -- Horizontal guardband slope factor.
 	@param GuardBandY number -- Vertical guardband slope factor.
@@ -99,6 +100,7 @@ function RenderControllerHelper.SubmitFaceQuad(
 	ScaleU: number,
 	ScaleV: number,
 	PackedColor: number,
+	TextureId: number,
 	FocalLength: number,
 	GuardBandX: number,
 	GuardBandY: number
@@ -210,6 +212,7 @@ function RenderControllerHelper.SubmitFaceQuad(
 		buffer.writef32(RenderBuffer, RenderBufferOffset + 44, ScaledInverseZ2 * TexCoordV2)
 
 		buffer.writeu32(RenderBuffer, RenderBufferOffset + 48, PackedColor)
+		buffer.writeu32(RenderBuffer, RenderBufferOffset + 52, TextureId)
 	end
 end
 

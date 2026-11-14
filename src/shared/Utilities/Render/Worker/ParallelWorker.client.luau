@@ -14,16 +14,20 @@ const SelfActor = script.Parent :: Actor
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper)
 const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath)
-const TextureHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.TextureHelper)
+const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Core.TextureTable)
 
 -- Configs --
 const WIDTH = SystemsConfigs.RenderWidth :: number
 const HEIGHT = SystemsConfigs.RenderHeight :: number
 const TOTAL_PIXELS = WIDTH * HEIGHT :: number
+const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
 
 local DirtyMinY = 0 :: number
 local DirtyMaxY = -1 :: number
-local ActiveTextureBuffer: buffer, TextureWidth: number, TextureHeight: number = TextureHelper.GetDefaultTexture()
+local TextureBuffers = TextureTable.GetAllCachedBuffers() :: { [number]: buffer }
+local DefaultTextureBuffer = TextureTable.GetTextureBuffer(1) :: buffer
+local TextureWidth = TEXTURE_SIZE :: number
+local TextureHeight = TEXTURE_SIZE :: number
 
 -- Buffers
 const PixelBuffer = buffer.create(TOTAL_PIXELS * 4) :: buffer
@@ -38,9 +42,19 @@ task.desynchronize()
 -- ============================================================================
 
 SelfActor:BindToMessageParallel(
+	"Set Texture Table",
+	function(NewTextureBuffers: { [number]: buffer }, NewWidth: number, NewHeight: number)
+		TextureBuffers = NewTextureBuffers
+		DefaultTextureBuffer = NewTextureBuffers[1] or DefaultTextureBuffer
+		TextureWidth = NewWidth
+		TextureHeight = NewHeight
+	end
+)
+
+SelfActor:BindToMessageParallel(
 	"Set Texture",
 	function(NewTextureBuffer: buffer, NewWidth: number, NewHeight: number)
-		ActiveTextureBuffer = NewTextureBuffer
+		DefaultTextureBuffer = NewTextureBuffer
 		TextureWidth = NewWidth
 		TextureHeight = NewHeight
 	end
@@ -57,7 +71,8 @@ SelfActor:BindToMessageParallel("Execute Rendering", function(RenderBuffer: buff
 		DirtyMinY, DirtyMaxY = RenderMath.DrawTriangleBatch(
 			RenderBuffer,
 			ByteCount,
-			ActiveTextureBuffer,
+			TextureBuffers,
+			DefaultTextureBuffer,
 			TextureWidth,
 			TextureHeight,
 			WIDTH,

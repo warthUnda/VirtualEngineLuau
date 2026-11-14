@@ -15,9 +15,11 @@ const OrientationData = Storage.OrientationData
 const VisualData = Storage.VisualData
 const SizeData = Storage.SizeData
 const DirectionsData = Storage.DirectionsData
+const PropertiesData = Storage.PropertiesData
 
 -- Configs --
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
+const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 
 -- Buffers
 const PositionBuffer = PositionData.GetData() :: buffer
@@ -25,9 +27,11 @@ const OrientationBuffer = OrientationData.GetData() :: buffer
 const VisualBuffer = VisualData.GetData() :: buffer
 const SizeBuffer = SizeData.GetData() :: buffer
 const DirectionsBuffer = DirectionsData.GetData() :: buffer
+const PropertiesBuffer = PropertiesData.GetData() :: buffer
 
 const COMPONENT_BUFFER_SIZE = buffer.len(PositionBuffer) :: number
 const DIRECTION_BUFFER_SIZE = buffer.len(DirectionsBuffer) :: number
+const PROPERTIES_BUFFER_SIZE = buffer.len(PropertiesBuffer) :: number
 const MAX_ENTITIES = COMPONENT_BUFFER_SIZE // COMPONENT_STRIDE :: number
 
 export type PlayerDeltaState = {
@@ -39,6 +43,7 @@ export type PlayerDeltaState = {
 	Visuals: buffer,
 	Sizes: buffer,
 	Directions: buffer,
+	Properties: buffer,
 }
 
 -- Tables --
@@ -83,6 +88,7 @@ function PlayerFunctions.GetOrCreatePlayerState(
 			Visuals = buffer.create(COMPONENT_BUFFER_SIZE),
 			Sizes = buffer.create(COMPONENT_BUFFER_SIZE),
 			Directions = buffer.create(DIRECTION_BUFFER_SIZE),
+			Properties = buffer.create(PROPERTIES_BUFFER_SIZE),
 		}
 		PlayerStates[PlayerObject] = NewState
 		return NewState
@@ -113,11 +119,13 @@ end
 function PlayerFunctions.HasEntityChanged(
 	Offset: number,
 	DirectionOffset: number,
+	PropertiesOffset: number,
 	CachedPositions: buffer,
 	CachedOrientations: buffer,
 	CachedVisuals: buffer,
 	CachedSizes: buffer,
-	CachedDirections: buffer
+	CachedDirections: buffer,
+	CachedProperties: buffer
 ): boolean
 	if
 		buffer.readu32(PositionBuffer, Offset) ~= buffer.readu32(CachedPositions, Offset)
@@ -158,6 +166,10 @@ function PlayerFunctions.HasEntityChanged(
 		or buffer.readu32(DirectionsBuffer, DirectionOffset + 28) ~= buffer.readu32(CachedDirections, DirectionOffset + 28)
 		or buffer.readu32(DirectionsBuffer, DirectionOffset + 32) ~= buffer.readu32(CachedDirections, DirectionOffset + 32)
 	then
+		return true
+	end
+
+	if buffer.readu32(PropertiesBuffer, PropertiesOffset) ~= buffer.readu32(CachedProperties, PropertiesOffset) then
 		return true
 	end
 

@@ -91,6 +91,7 @@ end
 	@param ScaledUOverZ2 number -- Pre-scaled U/Z coordinate for vertex 2.
 	@param ScaledVOverZ2 number -- Pre-scaled V/Z coordinate for vertex 2.
 	@param PackedColor number -- Packed 32-bit RGBA color.
+	@param TextureId number -- TextureTable numeric ID.
 	@return number -- Next byte offset in render command buffer.
 ]=]
 function BufferHelper.CreateRenderBuffer(
@@ -111,9 +112,10 @@ function BufferHelper.CreateRenderBuffer(
 	ScaledInverseZ2: number,
 	ScaledUOverZ2: number,
 	ScaledVOverZ2: number,
-	PackedColor: number
+	PackedColor: number,
+	TextureId: number
 ): number
-	-- Three 16-byte vertices (X, Y, InvZ, U/Z, V/Z) and one 4-byte packed RGBA u32 color (52 bytes total).
+	-- Three 16-byte vertices (X, Y, InvZ, U/Z, V/Z), one 4-byte packed RGBA u32 color, and one 4-byte u32 TextureId (56 bytes total).
 	buffer.writei16(TargetBuffer, MemoryOffset, Vertex0X)
 	buffer.writei16(TargetBuffer, MemoryOffset + 2, Vertex0Y)
 	buffer.writef32(TargetBuffer, MemoryOffset + 4, ScaledInverseZ0)
@@ -133,6 +135,7 @@ function BufferHelper.CreateRenderBuffer(
 	buffer.writef32(TargetBuffer, MemoryOffset + 44, ScaledVOverZ2)
 
 	buffer.writeu32(TargetBuffer, MemoryOffset + 48, PackedColor)
+	buffer.writeu32(TargetBuffer, MemoryOffset + 52, TextureId)
 
 	return MemoryOffset + RENDER_BUFFER_LAYOUT_SIZE
 end

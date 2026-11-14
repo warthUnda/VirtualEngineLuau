@@ -25,12 +25,14 @@ const OrientationData = ObjectStorage.OrientationData
 const VisualData = ObjectStorage.VisualData
 const SizeData = ObjectStorage.SizeData
 const DirectionsData = ObjectStorage.DirectionsData
+const PropertiesData = ObjectStorage.PropertiesData
 
 -- Configs --
 const CORE_EVENTS_FOLDER_NAME = SystemsConfigs.CoreEventsFolderName :: string
 const REPLICATE_REMOTE_EVENT_NAME = SystemsConfigs.ReplicateRemoteEventName :: string
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 
 const CoreEvents = ReplicatedStorage:WaitForChild(CORE_EVENTS_FOLDER_NAME) :: Folder
 const ReplicateEvent = CoreEvents:WaitForChild(REPLICATE_REMOTE_EVENT_NAME) :: RemoteEvent
@@ -41,6 +43,7 @@ const LocalOrientationBuffer = OrientationData.GetData() :: buffer
 const LocalVisualBuffer = VisualData.GetData() :: buffer
 const LocalSizeBuffer = SizeData.GetData() :: buffer
 const LocalDirectionsBuffer = DirectionsData.GetData() :: buffer
+const LocalPropertiesBuffer = PropertiesData.GetData() :: buffer
 
 -- The local ECS buffers have a fixed size, so a snapshot holding more entities than they can store
 -- is clamped instead of erroring out on an out of bounds write and dropping every later packet.
@@ -76,8 +79,15 @@ ReplicateEvent.OnClientEvent:Connect(
 		VisualBuffer: buffer,
 		SizeBuffer: buffer,
 		DirectionsBuffer: buffer,
-		ECSDataTable: ECSTable
+		PropertiesOrCounts: any,
+		MaybeCounts: ECSTable?
 	)
+		const PropertiesBuffer = if typeof(PropertiesOrCounts) == "buffer" then PropertiesOrCounts :: buffer else nil
+		const ECSDataTable = (if PropertiesBuffer then MaybeCounts else PropertiesOrCounts) :: ECSTable
+		if not ECSDataTable then
+			return
+		end
+
 		const DeltaCount = math.min(ECSDataTable.EntityECSCount, MAX_ENTITIES) :: number
 		if DeltaCount <= 0 then
 			return
@@ -88,6 +98,7 @@ ReplicateEvent.OnClientEvent:Connect(
 		for i = 1, DeltaCount do
 			const ReadOffset = (i - 1) * COMPONENT_STRIDE :: number
 			const DirectionReadOffset = (i - 1) * DIRECTION_STRIDE :: number
+			const PropertiesReadOffset = (i - 1) * PROPERTIES_STRIDE :: number
 
 			const ServerId = buffer.readu32(VisualBuffer, ReadOffset + 4) :: number
 			local TargetSlot = if ServerId > 0 and ServerId <= MAX_ENTITIES
@@ -109,6 +120,7 @@ ReplicateEvent.OnClientEvent:Connect(
 
 			const WriteOffset = (TargetSlot - 1) * COMPONENT_STRIDE :: number
 			const DirectionWriteOffset = (TargetSlot - 1) * DIRECTION_STRIDE :: number
+			const PropertiesWriteOffset = (TargetSlot - 1) * PROPERTIES_STRIDE :: number
 
 			buffer.copy(LocalPositionBuffer, WriteOffset, PositionBuffer, ReadOffset, COMPONENT_STRIDE)
 			buffer.copy(LocalOrientationBuffer, WriteOffset, OrientationBuffer, ReadOffset, COMPONENT_STRIDE)
@@ -121,6 +133,15 @@ ReplicateEvent.OnClientEvent:Connect(
 				DirectionReadOffset,
 				DIRECTION_STRIDE
 			)
+			if PropertiesBuffer then
+				buffer.copy(
+					LocalPropertiesBuffer,
+					PropertiesWriteOffset,
+					PropertiesBuffer,
+					PropertiesReadOffset,
+					PROPERTIES_STRIDE
+				)
+			end
 		end
 	end
 )

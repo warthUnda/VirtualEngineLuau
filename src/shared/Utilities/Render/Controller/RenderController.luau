@@ -16,8 +16,9 @@ const Camera = workspace.CurrentCamera :: Camera
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
 const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath)
-const TextureHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.TextureHelper)
+const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Core.TextureTable)
 const RenderControllerHelper = require(script.Parent.RenderControllerHelper)
 
 const CameraStore = require(
@@ -48,6 +49,7 @@ const PositionData = ECSStorage.PositionData
 const SizeData = ECSStorage.SizeData
 const DirectionsData = ECSStorage.DirectionsData
 const VisualData = ECSStorage.VisualData
+const PropertiesData = ECSStorage.PropertiesData
 
 -- Configs --
 const WIDTH = SystemsConfigs.RenderWidth :: number
@@ -66,16 +68,17 @@ const DEFAULT_CAMERA_VIEW = SystemsConfigs.DefaultCameraView :: string
 
 const ECS_COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const ECS_DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+const ECS_PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
+const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
 const TEXTURE_STUDS_PER_TILE = SystemsConfigs.TextureStudsPerTile :: number
 const INV_TEXTURE_STUDS_PER_TILE = if TEXTURE_STUDS_PER_TILE > 0 then 1 / TEXTURE_STUDS_PER_TILE else 0 :: number
+const TEXTURE_REGISTRY_FOLDER_NAME = SystemsConfigs.TextureRegistryFolderName :: string
 
 local Initialized = false :: boolean
 local Received = 0 :: number
 local CurrentFrame = 0 :: number
 local PendingTextureSyncFrames = 0 :: number
-local LoadedTextureBuffer: buffer? = nil
-local LoadedTextureWidth = 0 :: number
-local LoadedTextureHeight = 0 :: number
+local LoadedTextureBuffers: { [number]: buffer }? = nil
 
 -- Tables --
 local WorkerActors = {} :: { Actor }
@@ -91,6 +94,7 @@ const ECSPositionBuffer = PositionData.GetData() :: buffer
 const ECSSizeBuffer = SizeData.GetData() :: buffer
 const ECSDirectionsBuffer = DirectionsData.GetData() :: buffer
 const ECSVisualBuffer = VisualData.GetData() :: buffer
+const ECSPropertiesBuffer = PropertiesData.GetData() :: buffer
 local ScreenVertices = buffer.create(8 * 12) :: buffer
 local ProjectedVertices = buffer.create(12 * 20) :: buffer
 local ClipBufferA = buffer.create(12 * 20) :: buffer
@@ -166,14 +170,51 @@ function Renderer.Init()
 		end
 	)
 
-	-- Load the Roblox template texture asynchronously and push it to all worker actors
-	task.spawn(function()
-		const TextureBuffer: buffer, TexWidth: number, TexHeight: number = TextureHelper.LoadRobloxTemplateTexture()
-		LoadedTextureBuffer = TextureBuffer
-		LoadedTextureWidth = TexWidth
-		LoadedTextureHeight = TexHeight
-		PendingTextureSyncFrames = 3
-	end)
+	-- Decode replicated Decal URLs from TextureRegistry into 64x64 buffers inside TextureTable and push them to workers
+	local function DecodeRegistryEntry(Entry: Instance)
+		if not Entry:IsA("StringValue") then
+			return
+		end
+
+		const TextureId = tonumber(Entry.Name) :: number?
+		if not TextureId then
+			return
+		end
+
+		const RawUrl = Entry.Value :: string
+		const TextureNameAttr = Entry:GetAttribute("TextureName")
+		const TextureName = if typeof(TextureNameAttr) == "string" then TextureNameAttr else nil
+
+		task.spawn(function()
+			const _Buf: buffer, Updated: boolean = TextureTable.RegisterEntryWithId(TextureId, RawUrl, TextureName)
+			if Updated or not LoadedTextureBuffers then
+				LoadedTextureBuffers = TextureTable.GetAllCachedBuffers()
+				PendingTextureSyncFrames = 3
+			end
+		end)
+	end
+
+	local function HookTextureRegistry(RegistryFolder: Instance)
+		for _, Entry: Instance in ipairs(RegistryFolder:GetChildren()) do
+			DecodeRegistryEntry(Entry)
+		end
+
+		RegistryFolder.ChildAdded:Connect(DecodeRegistryEntry)
+	end
+
+	const ExistingRegistry = ReplicatedStorage:FindFirstChild(TEXTURE_REGISTRY_FOLDER_NAME)
+	if ExistingRegistry then
+		HookTextureRegistry(ExistingRegistry)
+	else
+		ReplicatedStorage.ChildAdded:Connect(function(Child: Instance)
+			if Child.Name == TEXTURE_REGISTRY_FOLDER_NAME then
+				HookTextureRegistry(Child)
+			end
+		end)
+	end
+
+	LoadedTextureBuffers = TextureTable.GetAllCachedBuffers()
+	PendingTextureSyncFrames = 3
 
 	Initialized = true
 end
@@ -211,10 +252,10 @@ function Renderer.DrawFrame()
 	CurrentFrame += 1
 	Received = 0
 
-	if PendingTextureSyncFrames > 0 and LoadedTextureBuffer then
+	if PendingTextureSyncFrames > 0 and LoadedTextureBuffers then
 		PendingTextureSyncFrames -= 1
 		for _, TargetActor: Actor in ipairs(WorkerActors) do
-			TargetActor:SendMessage("Set Texture", LoadedTextureBuffer :: buffer, LoadedTextureWidth, LoadedTextureHeight)
+			TargetActor:SendMessage("Set Texture Table", LoadedTextureBuffers :: { [number]: buffer }, TEXTURE_SIZE, TEXTURE_SIZE)
 		end
 	end
 
@@ -227,6 +268,7 @@ function Renderer.DrawFrame()
 	for i = 1, EntityCount do
 		const ComponentOffset = (i - 1) * ECS_COMPONENT_STRIDE :: number
 		const DirectionOffset = (i - 1) * ECS_DIRECTION_STRIDE :: number
+		const PropertiesOffset = (i - 1) * ECS_PROPERTIES_STRIDE :: number
 
 		const FaceMask = RenderMath.GetPartCameraVertices(
 			ECSPositionBuffer,
@@ -245,10 +287,18 @@ function Renderer.DrawFrame()
 			continue
 		end
 
-		-- Use neutral white base color so the blood texture's crimson/clot palette renders accurately on every part
-		const PartColorR = 255 :: number
-		const PartColorG = 255 :: number
-		const PartColorB = 255 :: number
+		const PropertiesRegister = buffer.readu32(ECSPropertiesBuffer, PropertiesOffset) :: number
+		const EntityTextureId = ECSMain.GetEntityTextureId(PropertiesRegister) :: number
+
+		-- If untextured (EntityTextureId == 0), shade with the part's color; if textured, use white base so the decal's colors are preserved
+		local PartColorR = 255 :: number
+		local PartColorG = 255 :: number
+		local PartColorB = 255 :: number
+		if EntityTextureId == 0 then
+			PartColorR = buffer.readu8(ECSVisualBuffer, ComponentOffset) :: number
+			PartColorG = buffer.readu8(ECSVisualBuffer, ComponentOffset + 1) :: number
+			PartColorB = buffer.readu8(ECSVisualBuffer, ComponentOffset + 2) :: number
+		end
 
 		local TileScaleX = 1 :: number
 		local TileScaleY = 1 :: number
@@ -287,6 +337,7 @@ function Renderer.DrawFrame()
 					TileScaleX,
 					TileScaleY,
 					Color,
+					EntityTextureId,
 					FocalLength,
 					GuardBandX,
 					GuardBandY
@@ -313,6 +364,7 @@ function Renderer.DrawFrame()
 					TileScaleX,
 					TileScaleY,
 					Color,
+					EntityTextureId,
 					FocalLength,
 					GuardBandX,
 					GuardBandY
@@ -348,6 +400,7 @@ function Renderer.DrawFrame()
 					TileScaleZ,
 					TileScaleX,
 					Color,
+					EntityTextureId,
 					FocalLength,
 					GuardBandX,
 					GuardBandY
@@ -374,6 +427,7 @@ function Renderer.DrawFrame()
 					TileScaleZ,
 					TileScaleX,
 					Color,
+					EntityTextureId,
 					FocalLength,
 					GuardBandX,
 					GuardBandY
@@ -409,6 +463,7 @@ function Renderer.DrawFrame()
 					TileScaleY,
 					TileScaleZ,
 					Color,
+					EntityTextureId,
 					FocalLength,
 					GuardBandX,
 					GuardBandY
@@ -435,6 +490,7 @@ function Renderer.DrawFrame()
 					TileScaleZ,
 					TileScaleY,
 					Color,
+					EntityTextureId,
 					FocalLength,
 					GuardBandX,
 					GuardBandY

@@ -11763,6 +11763,9 @@ const FLAG_CAN_COLLIDE = bit32.lshift(1, 1) :: number
 const FLAG_IS_VISIBLE = bit32.lshift(1, 2) :: number
 const FLAG_ANCHORED = bit32.lshift(1, 3) :: number
 const FLAG_HAS_DYNAMIC_ID = bit32.lshift(1, 4) :: number
+const TEXTURE_ID_SHIFT = 5 :: number
+const MAX_TEXTURE_ID = 255 :: number
+const TEXTURE_ID_MASK = bit32.lshift(MAX_TEXTURE_ID, TEXTURE_ID_SHIFT) :: number
 const DYNAMIC_ID_SHIFT = 20 :: number
 const LOWER_FLAGS_MASK = 0x000FFFFF :: number
 
@@ -11813,7 +11816,8 @@ export type PropertiesComponent = {
 		CanCollide: boolean?,
 		IsVisible: boolean?,
 		Anchored: boolean?,
-		DynamicId: number?
+		DynamicId: number?,
+		TextureId: number?
 	) -> number,
 	GetData: () -> buffer,
 }
@@ -11947,18 +11951,20 @@ function ECSMain.CreateDirectionsLayout(
 end
 
 --[=[
-	Packs boolean flags and dynamic object ID into a single 32-bit property register.
+	Packs boolean flags, texture ID, and dynamic object ID into a single 32-bit property register.
 	@param CanCollide boolean? -- Collision enabled flag.
 	@param IsVisible boolean? -- Visibility flag.
 	@param Anchored boolean? -- Anchored physics state flag.
 	@param DynamicId number? -- Bound dynamic OOP object ID.
+	@param TextureId number? -- TextureTable ID (bits 5-12, 0-255).
 	@return number -- Packed 32-bit register.
 ]=]
 function ECSMain.PackProperties(
 	CanCollide: boolean?,
 	IsVisible: boolean?,
 	Anchored: boolean?,
-	DynamicId: number?
+	DynamicId: number?,
+	TextureId: number?
 ): number
 	const CollideBit = if CanCollide ~= false then 1 else 0 :: number
 	const VisibleBit = if IsVisible ~= false then 1 else 0 :: number
@@ -11967,6 +11973,9 @@ function ECSMain.PackProperties(
 		then math.min(DynamicId, MAX_DYNAMIC_ID)
 		else 0 :: number
 	const HasDynamicBit = if ClampedDynamicId > 0 then 1 else 0 :: number
+	const ClampedTextureId = if TextureId and TextureId > 0
+		then math.clamp(math.floor(TextureId), 0, MAX_TEXTURE_ID)
+		else 0 :: number
 
 	return bit32.bor(
 		0,
@@ -11974,6 +11983,7 @@ function ECSMain.PackProperties(
 		bit32.lshift(VisibleBit, 2), -- IsVisible
 		bit32.lshift(AnchoredBit, 3), -- Anchored
 		bit32.lshift(HasDynamicBit, 4), -- Has dynamic oop / object list id?
+		bit32.lshift(ClampedTextureId, TEXTURE_ID_SHIFT), -- TextureTable ID (bits 5-12)
 		bit32.lshift(ClampedDynamicId, DYNAMIC_ID_SHIFT) -- DYNAMIC OOP / OBJECTS LIST ID
 	)
 end
@@ -11986,6 +11996,7 @@ end
 	@param IsVisible boolean? -- Visibility flag.
 	@param Anchored boolean? -- Anchored physics state flag.
 	@param DynamicId number? -- Bound dynamic OOP object ID.
+	@param TextureId number? -- TextureTable ID (0-255).
 	@return number -- Next properties byte offset.
 ]=]
 function ECSMain.CreatePropertiesLayout(
@@ -11994,9 +12005,10 @@ function ECSMain.CreatePropertiesLayout(
 	CanCollide: boolean?,
 	IsVisible: boolean?,
 	Anchored: boolean?,
-	DynamicId: number?
+	DynamicId: number?,
+	TextureId: number?
 ): number
-	const Register = ECSMain.PackProperties(CanCollide, IsVisible, Anchored, DynamicId) :: number
+	const Register = ECSMain.PackProperties(CanCollide, IsVisible, Anchored, DynamicId, TextureId) :: number
 	buffer.writeu32(TargetBuffer, MemoryOffset, Register)
 
 	return MemoryOffset + PROPERTIES_STRIDE
@@ -12070,6 +12082,30 @@ function ECSMain.SetEntityDynamicId(PropertiesBuffer: buffer, EntityId: number, 
 	const ClampedId = math.min(DynamicId, MAX_DYNAMIC_ID) :: number
 	const UpdatedRegister = bit32.bor(BaseFlags, FLAG_HAS_DYNAMIC_ID, bit32.lshift(ClampedId, DYNAMIC_ID_SHIFT)) :: number
 	buffer.writeu32(PropertiesBuffer, Offset, UpdatedRegister)
+end
+
+--[=[
+	Extracts the TextureTable ID (bits 5-12) from a 32-bit property register.
+	@param Register number -- 32-bit property register.
+	@return number -- Extracted texture ID (0-255).
+]=]
+function ECSMain.GetEntityTextureId(Register: number): number
+	return bit32.band(bit32.rshift(Register, TEXTURE_ID_SHIFT), MAX_TEXTURE_ID)
+end
+
+--[=[
+	Updates an entity's TextureTable ID in-place inside the properties buffer without altering other flags or DynamicId.
+	@param PropertiesBuffer buffer -- Properties buffer.
+	@param EntityId number -- Target entity ID.
+	@param TextureId number -- New TextureTable ID (0-255).
+]=]
+function ECSMain.SetEntityTextureId(PropertiesBuffer: buffer, EntityId: number, TextureId: number)
+	const Offset = (EntityId - 1) * PROPERTIES_STRIDE :: number
+	const CurrentRegister = buffer.readu32(PropertiesBuffer, Offset) :: number
+	const ClearedRegister = bit32.band(CurrentRegister, bit32.bnot(TEXTURE_ID_MASK)) :: number
+	const ClampedTextureId = math.clamp(math.floor(TextureId), 0, MAX_TEXTURE_ID) :: number
+
+	buffer.writeu32(PropertiesBuffer, Offset, bit32.bor(ClearedRegister, bit32.lshift(ClampedTextureId, TEXTURE_ID_SHIFT)))
 end
 
 -- ============================================================================
@@ -12286,10 +12322,11 @@ function ECSMain.CreatePropertiesComponent(
 	CanCollide: boolean?,
 	IsVisible: boolean?,
 	Anchored: boolean?,
-	DynamicId: number?
+	DynamicId: number?,
+	TextureId: number?
 ): any
 	if TargetBuffer and MemoryOffset then
-		return ECSMain.CreatePropertiesLayout(TargetBuffer, MemoryOffset, CanCollide, IsVisible, Anchored, DynamicId)
+		return ECSMain.CreatePropertiesLayout(TargetBuffer, MemoryOffset, CanCollide, IsVisible, Anchored, DynamicId, TextureId)
 	end
 
 	const PropertiesBuffer = buffer.create(PROPERTIES_BUFFER_SIZE) :: buffer
@@ -12300,9 +12337,10 @@ function ECSMain.CreatePropertiesComponent(
 		Collide: boolean?,
 		Visible: boolean?,
 		IsAnchored: boolean?,
-		DynId: number?
+		DynId: number?,
+		TexId: number?
 	): number
-		return ECSMain.CreatePropertiesLayout(PropertiesBuffer, Offset, Collide, Visible, IsAnchored, DynId)
+		return ECSMain.CreatePropertiesLayout(PropertiesBuffer, Offset, Collide, Visible, IsAnchored, DynId, TexId)
 	end
 
 	function PropertiesComponent.GetData(): buffer
@@ -12552,17 +12590,23 @@ SystemsConfigs.ActorCount = 3 :: number
 SystemsConfigs.WorkerBufferMultiplier = 4 :: number
 -- Per-pixel byte multiplier used to allocate each worker's triangle command buffer.
 
-SystemsConfigs.RenderBufferLayoutSize = 52 :: number
--- Byte stride of a single serialized textured triangle in the worker render buffer (three 16-byte vertices and one 4-byte packed RGBA color).
+SystemsConfigs.RenderBufferLayoutSize = 56 :: number
+-- Byte stride of a single serialized textured triangle in the worker render buffer (three 16-byte vertices, one 4-byte packed RGBA color, and one 4-byte texture ID).
 
 SystemsConfigs.TextureSize = 64 :: number
--- Power-of-two width and height in texels for the software renderer's cached texture buffer.
+-- Power-of-two width and height in texels for the software renderer's cached texture buffers.
 
-SystemsConfigs.TextureStudsPerTile = 8 :: number
--- World-space studs covered by one texture tile on part faces (set <= 0 to stretch 1x1 across each face).
+SystemsConfigs.TextureStudsPerTile = 0 :: number
+-- World-space studs covered by one texture tile on part faces (set <= 0 to stretch 1x1 across each face instead of repeating).
+
+SystemsConfigs.DefaultEntityTextureId = 0 :: number
+-- Default TextureTable ID used when an ECS entity has no Decal or texture attribute (0 = untextured solid part color).
+
+SystemsConfigs.TextureRegistryFolderName = "TextureRegistry" :: string
+-- Name of the ReplicatedStorage folder where ECSBuilder publishes discovered Decal URLs for client 64x64 decoding.
 
 SystemsConfigs.DefaultTextureUri = "" :: string
--- Optional Roblox asset URI override for textures; leave empty to use the procedural blood texture.
+-- Optional Roblox asset URI override for textures; leave empty to populate from Workspace Decals via ECSBuilder.
 
 SystemsConfigs.ClearColorR = 15 :: number
 -- Red channel (0-255) of the background clear color filled into the pixel buffer each frame.
@@ -12768,11 +12812,22 @@ return SystemsConfigs
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="121">
+      <Item class="ModuleScript" referent="121">
+        <Properties>
+          <string name="Name">TextureTable</string>
+          <string name="Source"><![CDATA[--!strict
+--!native
+--!optimize 2
+
+return require(script.Parent.Utilities.Render.Core.TextureTable)
+]]></string>
+        </Properties>
+      </Item>
+      <Item class="Folder" referent="122">
         <Properties>
           <string name="Name">Utilities</string>
         </Properties>
-        <Item class="ModuleScript" referent="122">
+        <Item class="ModuleScript" referent="123">
           <Properties>
             <string name="Name">BVH</string>
             <string name="Source"><![CDATA[--!strict
@@ -13581,7 +13636,7 @@ setmetatable(BVH, {
 return BVH
 ]]></string>
           </Properties>
-          <Item class="ModuleScript" referent="123">
+          <Item class="ModuleScript" referent="124">
             <Properties>
               <string name="Name">BVHHelper</string>
               <string name="Source"><![CDATA[--!strict
@@ -13978,7 +14033,7 @@ return BVHHelper
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="124">
+          <Item class="ModuleScript" referent="125">
             <Properties>
               <string name="Name">BVHMath</string>
               <string name="Source"><![CDATA[--!strict
@@ -14285,15 +14340,15 @@ return BVHMath
             </Properties>
           </Item>
         </Item>
-        <Item class="Folder" referent="125">
+        <Item class="Folder" referent="126">
           <Properties>
             <string name="Name">Physics</string>
           </Properties>
-          <Item class="Folder" referent="126">
+          <Item class="Folder" referent="127">
             <Properties>
               <string name="Name">Controller</string>
             </Properties>
-            <Item class="ModuleScript" referent="127">
+            <Item class="ModuleScript" referent="128">
               <Properties>
                 <string name="Name">PhysicsController</string>
                 <string name="Source"><![CDATA[--!strict
@@ -14710,7 +14765,7 @@ return PhysicsController
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="128">
+            <Item class="ModuleScript" referent="129">
               <Properties>
                 <string name="Name">PhysicsControllerHelper</string>
                 <string name="Source"><![CDATA[--!strict
@@ -15092,11 +15147,11 @@ return PhysicsControllerHelper
               </Properties>
             </Item>
           </Item>
-          <Item class="Folder" referent="129">
+          <Item class="Folder" referent="130">
             <Properties>
               <string name="Name">Core</string>
             </Properties>
-            <Item class="ModuleScript" referent="130">
+            <Item class="ModuleScript" referent="131">
               <Properties>
                 <string name="Name">PhysicsMath</string>
                 <string name="Source"><![CDATA[--!strict
@@ -15533,7 +15588,7 @@ return PhysicsMath
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="131">
+            <Item class="ModuleScript" referent="132">
               <Properties>
                 <string name="Name">PhysicsMathHelper</string>
                 <string name="Source"><![CDATA[--!strict
@@ -15780,7 +15835,7 @@ return PhysicsMathHelper
               </Properties>
             </Item>
           </Item>
-          <Item class="ModuleScript" referent="132">
+          <Item class="ModuleScript" referent="133">
             <Properties>
               <string name="Name">PhysicsLibrary</string>
               <string name="Source"><![CDATA[--!strict
@@ -16021,20 +16076,20 @@ return PhysicsLibrary
             </Properties>
           </Item>
         </Item>
-        <Item class="Folder" referent="133">
+        <Item class="Folder" referent="134">
           <Properties>
             <string name="Name">Player</string>
           </Properties>
-          <Item class="Folder" referent="134">
+          <Item class="Folder" referent="135">
             <Properties>
               <string name="Name">Controller</string>
             </Properties>
           </Item>
-          <Item class="Folder" referent="135">
+          <Item class="Folder" referent="136">
             <Properties>
               <string name="Name">Core</string>
             </Properties>
-            <Item class="ModuleScript" referent="136">
+            <Item class="ModuleScript" referent="137">
               <Properties>
                 <string name="Name">PlayerService</string>
                 <string name="Source"><![CDATA[--!strict
@@ -16067,15 +16122,15 @@ return PlayerService
             </Item>
           </Item>
         </Item>
-        <Item class="Folder" referent="137">
+        <Item class="Folder" referent="138">
           <Properties>
             <string name="Name">Render</string>
           </Properties>
-          <Item class="Folder" referent="138">
+          <Item class="Folder" referent="139">
             <Properties>
               <string name="Name">Camera</string>
             </Properties>
-            <Item class="ModuleScript" referent="139">
+            <Item class="ModuleScript" referent="140">
               <Properties>
                 <string name="Name">CameraHelper</string>
                 <string name="Source"><![CDATA[--!strict
@@ -16106,7 +16161,7 @@ return CameraHelper
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="140">
+            <Item class="ModuleScript" referent="141">
               <Properties>
                 <string name="Name">CameraService</string>
                 <string name="Source"><![CDATA[--!strict
@@ -17101,7 +17156,7 @@ return CameraService
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="141">
+            <Item class="ModuleScript" referent="142">
               <Properties>
                 <string name="Name">CameraStore</string>
                 <string name="Source"><![CDATA[--!strict
@@ -17200,11 +17255,11 @@ return CameraStore
               </Properties>
             </Item>
           </Item>
-          <Item class="Folder" referent="142">
+          <Item class="Folder" referent="143">
             <Properties>
               <string name="Name">Controller</string>
             </Properties>
-            <Item class="ModuleScript" referent="143">
+            <Item class="ModuleScript" referent="144">
               <Properties>
                 <string name="Name">RenderController</string>
                 <string name="Source"><![CDATA[--!strict
@@ -17225,8 +17280,9 @@ const Camera = workspace.CurrentCamera :: Camera
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
 const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath)
-const TextureHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.TextureHelper)
+const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Core.TextureTable)
 const RenderControllerHelper = require(script.Parent.RenderControllerHelper)
 
 const CameraStore = require(
@@ -17257,6 +17313,7 @@ const PositionData = ECSStorage.PositionData
 const SizeData = ECSStorage.SizeData
 const DirectionsData = ECSStorage.DirectionsData
 const VisualData = ECSStorage.VisualData
+const PropertiesData = ECSStorage.PropertiesData
 
 -- Configs --
 const WIDTH = SystemsConfigs.RenderWidth :: number
@@ -17275,16 +17332,17 @@ const DEFAULT_CAMERA_VIEW = SystemsConfigs.DefaultCameraView :: string
 
 const ECS_COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const ECS_DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+const ECS_PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
+const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
 const TEXTURE_STUDS_PER_TILE = SystemsConfigs.TextureStudsPerTile :: number
 const INV_TEXTURE_STUDS_PER_TILE = if TEXTURE_STUDS_PER_TILE > 0 then 1 / TEXTURE_STUDS_PER_TILE else 0 :: number
+const TEXTURE_REGISTRY_FOLDER_NAME = SystemsConfigs.TextureRegistryFolderName :: string
 
 local Initialized = false :: boolean
 local Received = 0 :: number
 local CurrentFrame = 0 :: number
 local PendingTextureSyncFrames = 0 :: number
-local LoadedTextureBuffer: buffer? = nil
-local LoadedTextureWidth = 0 :: number
-local LoadedTextureHeight = 0 :: number
+local LoadedTextureBuffers: { [number]: buffer }? = nil
 
 -- Tables --
 local WorkerActors = {} :: { Actor }
@@ -17300,6 +17358,7 @@ const ECSPositionBuffer = PositionData.GetData() :: buffer
 const ECSSizeBuffer = SizeData.GetData() :: buffer
 const ECSDirectionsBuffer = DirectionsData.GetData() :: buffer
 const ECSVisualBuffer = VisualData.GetData() :: buffer
+const ECSPropertiesBuffer = PropertiesData.GetData() :: buffer
 local ScreenVertices = buffer.create(8 * 12) :: buffer
 local ProjectedVertices = buffer.create(12 * 20) :: buffer
 local ClipBufferA = buffer.create(12 * 20) :: buffer
@@ -17375,14 +17434,51 @@ function Renderer.Init()
 		end
 	)
 
-	-- Load the Roblox template texture asynchronously and push it to all worker actors
-	task.spawn(function()
-		const TextureBuffer: buffer, TexWidth: number, TexHeight: number = TextureHelper.LoadRobloxTemplateTexture()
-		LoadedTextureBuffer = TextureBuffer
-		LoadedTextureWidth = TexWidth
-		LoadedTextureHeight = TexHeight
-		PendingTextureSyncFrames = 3
-	end)
+	-- Decode replicated Decal URLs from TextureRegistry into 64x64 buffers inside TextureTable and push them to workers
+	local function DecodeRegistryEntry(Entry: Instance)
+		if not Entry:IsA("StringValue") then
+			return
+		end
+
+		const TextureId = tonumber(Entry.Name) :: number?
+		if not TextureId then
+			return
+		end
+
+		const RawUrl = Entry.Value :: string
+		const TextureNameAttr = Entry:GetAttribute("TextureName")
+		const TextureName = if typeof(TextureNameAttr) == "string" then TextureNameAttr else nil
+
+		task.spawn(function()
+			const _Buf: buffer, Updated: boolean = TextureTable.RegisterEntryWithId(TextureId, RawUrl, TextureName)
+			if Updated or not LoadedTextureBuffers then
+				LoadedTextureBuffers = TextureTable.GetAllCachedBuffers()
+				PendingTextureSyncFrames = 3
+			end
+		end)
+	end
+
+	local function HookTextureRegistry(RegistryFolder: Instance)
+		for _, Entry: Instance in ipairs(RegistryFolder:GetChildren()) do
+			DecodeRegistryEntry(Entry)
+		end
+
+		RegistryFolder.ChildAdded:Connect(DecodeRegistryEntry)
+	end
+
+	const ExistingRegistry = ReplicatedStorage:FindFirstChild(TEXTURE_REGISTRY_FOLDER_NAME)
+	if ExistingRegistry then
+		HookTextureRegistry(ExistingRegistry)
+	else
+		ReplicatedStorage.ChildAdded:Connect(function(Child: Instance)
+			if Child.Name == TEXTURE_REGISTRY_FOLDER_NAME then
+				HookTextureRegistry(Child)
+			end
+		end)
+	end
+
+	LoadedTextureBuffers = TextureTable.GetAllCachedBuffers()
+	PendingTextureSyncFrames = 3
 
 	Initialized = true
 end
@@ -17420,10 +17516,10 @@ function Renderer.DrawFrame()
 	CurrentFrame += 1
 	Received = 0
 
-	if PendingTextureSyncFrames > 0 and LoadedTextureBuffer then
+	if PendingTextureSyncFrames > 0 and LoadedTextureBuffers then
 		PendingTextureSyncFrames -= 1
 		for _, TargetActor: Actor in ipairs(WorkerActors) do
-			TargetActor:SendMessage("Set Texture", LoadedTextureBuffer :: buffer, LoadedTextureWidth, LoadedTextureHeight)
+			TargetActor:SendMessage("Set Texture Table", LoadedTextureBuffers :: { [number]: buffer }, TEXTURE_SIZE, TEXTURE_SIZE)
 		end
 	end
 
@@ -17436,6 +17532,7 @@ function Renderer.DrawFrame()
 	for i = 1, EntityCount do
 		const ComponentOffset = (i - 1) * ECS_COMPONENT_STRIDE :: number
 		const DirectionOffset = (i - 1) * ECS_DIRECTION_STRIDE :: number
+		const PropertiesOffset = (i - 1) * ECS_PROPERTIES_STRIDE :: number
 
 		const FaceMask = RenderMath.GetPartCameraVertices(
 			ECSPositionBuffer,
@@ -17454,10 +17551,18 @@ function Renderer.DrawFrame()
 			continue
 		end
 
-		-- Use neutral white base color so the blood texture's crimson/clot palette renders accurately on every part
-		const PartColorR = 255 :: number
-		const PartColorG = 255 :: number
-		const PartColorB = 255 :: number
+		const PropertiesRegister = buffer.readu32(ECSPropertiesBuffer, PropertiesOffset) :: number
+		const EntityTextureId = ECSMain.GetEntityTextureId(PropertiesRegister) :: number
+
+		-- If untextured (EntityTextureId == 0), shade with the part's color; if textured, use white base so the decal's colors are preserved
+		local PartColorR = 255 :: number
+		local PartColorG = 255 :: number
+		local PartColorB = 255 :: number
+		if EntityTextureId == 0 then
+			PartColorR = buffer.readu8(ECSVisualBuffer, ComponentOffset) :: number
+			PartColorG = buffer.readu8(ECSVisualBuffer, ComponentOffset + 1) :: number
+			PartColorB = buffer.readu8(ECSVisualBuffer, ComponentOffset + 2) :: number
+		end
 
 		local TileScaleX = 1 :: number
 		local TileScaleY = 1 :: number
@@ -17496,6 +17601,7 @@ function Renderer.DrawFrame()
 					TileScaleX,
 					TileScaleY,
 					Color,
+					EntityTextureId,
 					FocalLength,
 					GuardBandX,
 					GuardBandY
@@ -17522,6 +17628,7 @@ function Renderer.DrawFrame()
 					TileScaleX,
 					TileScaleY,
 					Color,
+					EntityTextureId,
 					FocalLength,
 					GuardBandX,
 					GuardBandY
@@ -17557,6 +17664,7 @@ function Renderer.DrawFrame()
 					TileScaleZ,
 					TileScaleX,
 					Color,
+					EntityTextureId,
 					FocalLength,
 					GuardBandX,
 					GuardBandY
@@ -17583,6 +17691,7 @@ function Renderer.DrawFrame()
 					TileScaleZ,
 					TileScaleX,
 					Color,
+					EntityTextureId,
 					FocalLength,
 					GuardBandX,
 					GuardBandY
@@ -17618,6 +17727,7 @@ function Renderer.DrawFrame()
 					TileScaleY,
 					TileScaleZ,
 					Color,
+					EntityTextureId,
 					FocalLength,
 					GuardBandX,
 					GuardBandY
@@ -17644,6 +17754,7 @@ function Renderer.DrawFrame()
 					TileScaleZ,
 					TileScaleY,
 					Color,
+					EntityTextureId,
 					FocalLength,
 					GuardBandX,
 					GuardBandY
@@ -17676,7 +17787,7 @@ return Renderer
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="144">
+            <Item class="ModuleScript" referent="145">
               <Properties>
                 <string name="Name">RenderControllerHelper</string>
                 <string name="Source"><![CDATA[--!strict
@@ -17761,6 +17872,7 @@ end
 	@param ScaleU number -- Horizontal UV tile scale for the face quad.
 	@param ScaleV number -- Vertical UV tile scale for the face quad.
 	@param PackedColor number -- Shaded 32-bit RGBA color.
+	@param TextureId number -- TextureTable numeric ID.
 	@param FocalLength number -- Camera focal length.
 	@param GuardBandX number -- Horizontal guardband slope factor.
 	@param GuardBandY number -- Vertical guardband slope factor.
@@ -17780,6 +17892,7 @@ function RenderControllerHelper.SubmitFaceQuad(
 	ScaleU: number,
 	ScaleV: number,
 	PackedColor: number,
+	TextureId: number,
 	FocalLength: number,
 	GuardBandX: number,
 	GuardBandY: number
@@ -17891,6 +18004,7 @@ function RenderControllerHelper.SubmitFaceQuad(
 		buffer.writef32(RenderBuffer, RenderBufferOffset + 44, ScaledInverseZ2 * TexCoordV2)
 
 		buffer.writeu32(RenderBuffer, RenderBufferOffset + 48, PackedColor)
+		buffer.writeu32(RenderBuffer, RenderBufferOffset + 52, TextureId)
 	end
 end
 
@@ -17899,11 +18013,11 @@ return RenderControllerHelper
               </Properties>
             </Item>
           </Item>
-          <Item class="Folder" referent="145">
+          <Item class="Folder" referent="146">
             <Properties>
               <string name="Name">Core</string>
             </Properties>
-            <Item class="ModuleScript" referent="146">
+            <Item class="ModuleScript" referent="147">
               <Properties>
                 <string name="Name">BufferHelper</string>
                 <string name="Source"><![CDATA[--!strict
@@ -17999,6 +18113,7 @@ end
 	@param ScaledUOverZ2 number -- Pre-scaled U/Z coordinate for vertex 2.
 	@param ScaledVOverZ2 number -- Pre-scaled V/Z coordinate for vertex 2.
 	@param PackedColor number -- Packed 32-bit RGBA color.
+	@param TextureId number -- TextureTable numeric ID.
 	@return number -- Next byte offset in render command buffer.
 ]=]
 function BufferHelper.CreateRenderBuffer(
@@ -18019,9 +18134,10 @@ function BufferHelper.CreateRenderBuffer(
 	ScaledInverseZ2: number,
 	ScaledUOverZ2: number,
 	ScaledVOverZ2: number,
-	PackedColor: number
+	PackedColor: number,
+	TextureId: number
 ): number
-	-- Three 16-byte vertices (X, Y, InvZ, U/Z, V/Z) and one 4-byte packed RGBA u32 color (52 bytes total).
+	-- Three 16-byte vertices (X, Y, InvZ, U/Z, V/Z), one 4-byte packed RGBA u32 color, and one 4-byte u32 TextureId (56 bytes total).
 	buffer.writei16(TargetBuffer, MemoryOffset, Vertex0X)
 	buffer.writei16(TargetBuffer, MemoryOffset + 2, Vertex0Y)
 	buffer.writef32(TargetBuffer, MemoryOffset + 4, ScaledInverseZ0)
@@ -18041,6 +18157,7 @@ function BufferHelper.CreateRenderBuffer(
 	buffer.writef32(TargetBuffer, MemoryOffset + 44, ScaledVOverZ2)
 
 	buffer.writeu32(TargetBuffer, MemoryOffset + 48, PackedColor)
+	buffer.writeu32(TargetBuffer, MemoryOffset + 52, TextureId)
 
 	return MemoryOffset + RENDER_BUFFER_LAYOUT_SIZE
 end
@@ -18093,7 +18210,7 @@ return BufferHelper
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="147">
+            <Item class="ModuleScript" referent="148">
               <Properties>
                 <string name="Name">MathModule</string>
                 <string name="Source"><![CDATA[--!strict
@@ -18381,7 +18498,7 @@ end
 	@param ScaledUOverZ2 number -- Pre-scaled U/Z coordinate for vertex 2.
 	@param ScaledVOverZ2 number -- Pre-scaled V/Z coordinate for vertex 2.
 	@param PackedColor number -- Packed 32-bit RGBA shade/tint color.
-	@param TextureBuffer buffer -- Source RGBA texture buffer (power-of-two dimensions).
+	@param TextureBuffer buffer? -- Optional source RGBA texture buffer (nil renders untextured solid PackedColor).
 	@param TextureWidth number -- Texture width in texels.
 	@param TextureHeight number -- Texture height in texels.
 	@param WIDTH number -- Target framebuffer width.
@@ -18408,7 +18525,7 @@ function MathModule.RasterizeTriangleSpan(
 	ScaledUOverZ2: number,
 	ScaledVOverZ2: number,
 	PackedColor: number,
-	TextureBuffer: buffer,
+	TextureBuffer: buffer?,
 	TextureWidth: number,
 	TextureHeight: number,
 	WIDTH: number,
@@ -18489,33 +18606,46 @@ function MathModule.RasterizeTriangleSpan(
 			local BufferOffset = RowOffset + SpanStartOffsetX * 4 :: number
 			const EndOffset = RowOffset + SpanEndOffsetX * 4 :: number
 			local InterpolatedInverseZ = RowInverseZ + SpanStartOffsetX * InverseZStepX :: number
-			local InterpolatedUOverZ = RowUOverZ + SpanStartOffsetX * UOverZStepX :: number
-			local InterpolatedVOverZ = RowVOverZ + SpanStartOffsetX * VOverZStepX :: number
 
-			while BufferOffset <= EndOffset do
-				if InterpolatedInverseZ > buffer.readf32(ZBuffer, BufferOffset) then
-					buffer.writef32(ZBuffer, BufferOffset, InterpolatedInverseZ)
+			if TextureBuffer then
+				local InterpolatedUOverZ = RowUOverZ + SpanStartOffsetX * UOverZStepX :: number
+				local InterpolatedVOverZ = RowVOverZ + SpanStartOffsetX * VOverZStepX :: number
 
-					const DepthZ = 1 / InterpolatedInverseZ :: number
-					const TexelX = bit32.band(math.floor(InterpolatedUOverZ * DepthZ * TextureWidth), TextureWidthMask) :: number
-					const TexelY = bit32.band(math.floor(InterpolatedVOverZ * DepthZ * TextureHeight), TextureHeightMask) :: number
-					const TexelColor = buffer.readu32(TextureBuffer, (TexelY * TextureWidth + TexelX) * 4) :: number
+				while BufferOffset <= EndOffset do
+					if InterpolatedInverseZ > buffer.readf32(ZBuffer, BufferOffset) then
+						buffer.writef32(ZBuffer, BufferOffset, InterpolatedInverseZ)
 
-					const OutRed = bit32.rshift(bit32.band(TexelColor, 0xFF) * ShadeRed, 8) :: number
-					const OutGreen = bit32.rshift(bit32.band(bit32.rshift(TexelColor, 8), 0xFF) * ShadeGreen, 8) :: number
-					const OutBlue = bit32.rshift(bit32.band(bit32.rshift(TexelColor, 16), 0xFF) * ShadeBlue, 8) :: number
+						const DepthZ = 1 / InterpolatedInverseZ :: number
+						const TexelX = math.clamp(math.floor(InterpolatedUOverZ * DepthZ * TextureWidth), 0, TextureWidthMask) :: number
+						const TexelY = math.clamp(math.floor(InterpolatedVOverZ * DepthZ * TextureHeight), 0, TextureHeightMask) :: number
+						const TexelColor = buffer.readu32(TextureBuffer, (TexelY * TextureWidth + TexelX) * 4) :: number
 
-					buffer.writeu32(
-						PixelBuffer,
-						BufferOffset,
-						bit32.bor(OutRed, bit32.lshift(OutGreen, 8), bit32.lshift(OutBlue, 16), 0xFF000000)
-					)
+						const OutRed = bit32.rshift(bit32.band(TexelColor, 0xFF) * ShadeRed, 8) :: number
+						const OutGreen = bit32.rshift(bit32.band(bit32.rshift(TexelColor, 8), 0xFF) * ShadeGreen, 8) :: number
+						const OutBlue = bit32.rshift(bit32.band(bit32.rshift(TexelColor, 16), 0xFF) * ShadeBlue, 8) :: number
+
+						buffer.writeu32(
+							PixelBuffer,
+							BufferOffset,
+							bit32.bor(OutRed, bit32.lshift(OutGreen, 8), bit32.lshift(OutBlue, 16), 0xFF000000)
+						)
+					end
+
+					InterpolatedInverseZ += InverseZStepX
+					InterpolatedUOverZ += UOverZStepX
+					InterpolatedVOverZ += VOverZStepX
+					BufferOffset += 4
 				end
+			else
+				while BufferOffset <= EndOffset do
+					if InterpolatedInverseZ > buffer.readf32(ZBuffer, BufferOffset) then
+						buffer.writef32(ZBuffer, BufferOffset, InterpolatedInverseZ)
+						buffer.writeu32(PixelBuffer, BufferOffset, PackedColor)
+					end
 
-				InterpolatedInverseZ += InverseZStepX
-				InterpolatedUOverZ += UOverZStepX
-				InterpolatedVOverZ += VOverZStepX
-				BufferOffset += 4
+					InterpolatedInverseZ += InverseZStepX
+					BufferOffset += 4
+				end
 			end
 		end
 
@@ -18533,7 +18663,7 @@ return MathModule
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="148">
+            <Item class="ModuleScript" referent="149">
               <Properties>
                 <string name="Name">RenderMath</string>
                 <string name="Source"><![CDATA[--!strict
@@ -18934,7 +19064,8 @@ end
 	Iterates and rasterizes a packed batch of textured triangles from a render command buffer.
 	@param RenderBuffer buffer -- Source render command queue buffer.
 	@param ByteCount number -- Total byte length of queued commands.
-	@param TextureBuffer buffer -- Source RGBA texture buffer.
+	@param TextureBuffers { [number]: buffer } -- Cached 64x64 RGBA texture buffers keyed by TextureId.
+	@param DefaultTextureBuffer buffer -- Fallback 64x64 RGBA texture buffer.
 	@param TextureWidth number -- Texture width in texels.
 	@param TextureHeight number -- Texture height in texels.
 	@param WIDTH number -- Screen width in pixels.
@@ -18946,7 +19077,8 @@ end
 function RenderMath.DrawTriangleBatch(
 	RenderBuffer: buffer,
 	ByteCount: number,
-	TextureBuffer: buffer,
+	TextureBuffers: { [number]: buffer },
+	DefaultTextureBuffer: buffer,
 	TextureWidth: number,
 	TextureHeight: number,
 	WIDTH: number,
@@ -18960,6 +19092,9 @@ function RenderMath.DrawTriangleBatch(
 	local ReadOffset = 0 :: number
 
 	while ReadOffset < ByteCount do
+		const TextureId = buffer.readu32(RenderBuffer, ReadOffset + 52) :: number
+		const TriangleTextureBuffer: buffer? = if TextureId > 0 then (TextureBuffers[TextureId] or DefaultTextureBuffer) else nil
+
 		const TriangleMinY: number, TriangleMaxY: number = MathModule.RasterizeTriangleSpan(
 			buffer.readi16(RenderBuffer, ReadOffset),
 			buffer.readi16(RenderBuffer, ReadOffset + 2),
@@ -18977,7 +19112,7 @@ function RenderMath.DrawTriangleBatch(
 			buffer.readf32(RenderBuffer, ReadOffset + 40),
 			buffer.readf32(RenderBuffer, ReadOffset + 44),
 			buffer.readu32(RenderBuffer, ReadOffset + 48),
-			TextureBuffer,
+			TriangleTextureBuffer,
 			TextureWidth,
 			TextureHeight,
 			WIDTH,
@@ -19004,7 +19139,7 @@ return RenderMath
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="149">
+            <Item class="ModuleScript" referent="150">
               <Properties>
                 <string name="Name">TextureHelper</string>
                 <string name="Source"><![CDATA[--!strict
@@ -19022,26 +19157,13 @@ const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForC
 const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
 const DEFAULT_TEXTURE_URI = SystemsConfigs.DefaultTextureUri :: string
 
--- Tables --
--- Predefined seamless blood splatter & clot centers: { CenterU, CenterV, Radius, Intensity }
-const SPLATTER_DROPS = {
-	{ 0.18, 0.22, 0.19, 1.0 },
-	{ 0.65, 0.16, 0.15, 0.9 },
-	{ 0.42, 0.54, 0.24, 1.0 },
-	{ 0.82, 0.68, 0.18, 0.95 },
-	{ 0.24, 0.78, 0.16, 0.85 },
-	{ 0.55, 0.88, 0.14, 0.9 },
-	{ 0.10, 0.50, 0.13, 0.8 },
-	{ 0.88, 0.35, 0.15, 0.9 },
-} :: { { number } }
-
 -- Buffers
 local CachedDefaultTexture: buffer? = nil
 
 local TextureHelper = {}
 
 -- ============================================================================
--- 1. PROCEDURAL BLOOD TEXTURE & ROBLOX ASSET TEXTURE LOADING
+-- 1. PROCEDURAL TEXTURES & 64x64 URL DECODING
 -- ============================================================================
 
 --[=[
@@ -19062,20 +19184,24 @@ local function PackRGBA(RedChannel: number, GreenChannel: number, BlueChannel: n
 end
 
 --[=[
-	Generates a high-contrast, seamlessly tileable power-of-two procedural blood texture with splatters, clots, drips, and wet highlights.
+	Generates a seamlessly tileable power-of-two procedural wood plank texture with grain rings, seams, and bevels.
 	@param TargetSize number -- Width and height of the square texture in texels.
 	@return buffer -- RGBA pixel buffer of size TargetSize * TargetSize * 4.
 ]=]
-function TextureHelper.CreateProceduralTemplateTexture(TargetSize: number): buffer
+function TextureHelper.CreateProceduralWoodTexture(TargetSize: number): buffer
 	const PixelBuffer = buffer.create(TargetSize * TargetSize * 4) :: buffer
 	const InvSize = 1 / TargetSize :: number
 	const TwoPi = math.pi * 2 :: number
+	const PlankHeight = math.max(8, TargetSize // 4) :: number
 
 	for TexelY = 0, TargetSize - 1 do
 		const NormV = (TexelY + 0.5) * InvSize :: number
 		const AngleV = NormV * TwoPi :: number
 		const CosV = math.cos(AngleV) :: number
 		const SinV = math.sin(AngleV) :: number
+		const PlankIndex = TexelY // PlankHeight :: number
+		const PlankLocalY = TexelY % PlankHeight :: number
+		const IsHorizontalSeam = (PlankLocalY == 0) :: boolean
 		const RowOffset = TexelY * TargetSize * 4 :: number
 
 		for TexelX = 0, TargetSize - 1 do
@@ -19084,86 +19210,31 @@ function TextureHelper.CreateProceduralTemplateTexture(TargetSize: number): buff
 			const CosU = math.cos(AngleU) :: number
 			const SinU = math.sin(AngleU) :: number
 
-			-- Seamless toroidal Perlin noise across multiple octaves
-			const CoarseNoise = math.noise(CosU * 1.4 + SinV * 0.7, SinU * 1.4 + CosV * 0.7, 3.1) :: number
-			const MediumNoise = math.noise(CosU * 3.2 - SinV * 1.9, SinU * 3.2 + CosV * 1.9, 7.4) :: number
-			const FineNoise = math.noise(CosU * 6.5 + CosV * 4.1, SinU * 6.5 - SinV * 4.1, 13.7) :: number
+			-- Offset vertical plank seams per row for staggered wood planks
+			const SeamX = (TexelX + PlankIndex * (TargetSize // 2)) % TargetSize :: number
+			const IsVerticalSeam = (SeamX == 0) :: boolean
 
-			-- Vertical blood drip streaks (high frequency in U, stretched in V)
-			const DripWave = math.noise(CosU * 5.5, SinU * 5.5, CosV * 1.1 + 19.3) :: number
-			const DripStreak = math.clamp((DripWave + 0.15) * 1.6, 0, 1) :: number
+			-- Elongated horizontal wood grain noise
+			const GrainWarp = math.noise(CosU * 1.1 + PlankIndex * 2.3, SinU * 1.1, CosV * 4.2 + SinV * 4.2) :: number
+			const RingPattern = math.sin((NormV * 14 + GrainWarp * 2.4 + PlankIndex * 0.7) * math.pi) :: number
+			const FineFiber = math.noise(CosU * 3.5, SinU * 3.5, NormV * 24 + PlankIndex * 5.1) :: number
+			const PlankTintOffset = ((PlankIndex % 3) - 1) * 10 :: number
 
-			-- Accumulate organic splatter blobs and dark coagulated clot centers
-			local SplatterMask = 0 :: number
-			local ClotMask = 0 :: number
-			local WetHighlight = 0 :: number
+			local ShadeFactor = 0.5 + 0.32 * RingPattern + 0.18 * FineFiber :: number
+			ShadeFactor = math.clamp(ShadeFactor, 0.12, 1.0)
 
-			for DropIdx = 1, #SPLATTER_DROPS do
-				const Drop = SPLATTER_DROPS[DropIdx]
-				local DeltaU = (NormU - Drop[1] + 0.5) % 1 - 0.5 :: number
-				local DeltaV = (NormV - Drop[2] + 0.5) % 1 - 0.5 :: number
+			local Red = math.clamp(math.floor(110 + ShadeFactor * 92 + PlankTintOffset), 40, 220) :: number
+			local Green = math.clamp(math.floor(66 + ShadeFactor * 64 + PlankTintOffset * 0.7), 24, 155) :: number
+			local Blue = math.clamp(math.floor(32 + ShadeFactor * 36 + PlankTintOffset * 0.4), 12, 90) :: number
 
-				-- Stretch slightly downward for gravity drip look
-				if DeltaV > 0 then
-					DeltaV *= 0.72
-				else
-					DeltaV *= 1.15
-				end
-
-				const Dist = math.sqrt(DeltaU * DeltaU + DeltaV * DeltaV) :: number
-				const JaggedRadius = Drop[3] * (1 + MediumNoise * 0.38 + FineNoise * 0.18) :: number
-
-				if Dist < JaggedRadius then
-					const DropFactor = (1 - Dist / JaggedRadius) * Drop[4] :: number
-					if DropFactor > SplatterMask then
-						SplatterMask = DropFactor
-					end
-
-					-- Thick dark coagulated core inside the splatter
-					if Dist < JaggedRadius * 0.42 then
-						const CoreFactor = 1 - (Dist / (JaggedRadius * 0.42)) :: number
-						if CoreFactor > ClotMask then
-							ClotMask = CoreFactor
-						end
-					end
-
-					-- Wet specular glint near the upper-left rim of fresh drops
-					if DeltaU < 0 and DeltaV < 0 and Dist > JaggedRadius * 0.48 and Dist < JaggedRadius * 0.72 then
-						WetHighlight = 1
-					end
-				end
-			end
-
-			-- Combine base flesh/dried blood with bright arterial splatters and dark clots
-			const OrganicVariation = CoarseNoise * 0.5 + MediumNoise * 0.35 + FineNoise * 0.15 :: number
-
-			-- Base dark dried blood background
-			local Red = math.clamp(math.floor(95 + OrganicVariation * 55 + DripStreak * 45), 35, 165) :: number
-			local Green = math.clamp(math.floor(4 + OrganicVariation * 6), 0, 16) :: number
-			local Blue = math.clamp(math.floor(6 + OrganicVariation * 8), 0, 20) :: number
-
-			-- Vivid crimson arterial splatter layer
-			if SplatterMask > 0 then
-				const FreshRed = math.clamp(math.floor(195 + SplatterMask * 55 + FineNoise * 20), 170, 255) :: number
-				const Blend = math.clamp(SplatterMask * 1.8, 0, 1) :: number
-				Red = math.floor(Red * (1 - Blend) + FreshRed * Blend)
-				Green = math.floor(Green * (1 - Blend) + 10 * Blend)
-				Blue = math.floor(Blue * (1 - Blend) + 12 * Blend)
-			end
-
-			-- Deep dark coagulated blood clots and veins
-			if ClotMask > 0 or OrganicVariation < -0.22 then
-				const DarkFactor = math.max(ClotMask * 0.85, math.clamp((-OrganicVariation - 0.22) * 2.2, 0, 0.8)) :: number
-				Red = math.floor(Red * (1 - DarkFactor) + 28 * DarkFactor)
-				Green = math.floor(Green * (1 - DarkFactor))
-				Blue = math.floor(Blue * (1 - DarkFactor) + 2 * DarkFactor)
-			end
-
-			-- Glossy wet blood highlight
-			if WetHighlight > 0 and FineNoise > -0.1 then
-				Red = 255
-				Green = 75
-				Blue = 70
+			if IsHorizontalSeam or IsVerticalSeam then
+				Red = math.floor(Red * 0.42)
+				Green = math.floor(Green * 0.42)
+				Blue = math.floor(Blue * 0.42)
+			elseif PlankLocalY == 1 or SeamX == 1 then
+				Red = math.min(240, Red + 18)
+				Green = math.min(185, Green + 14)
+				Blue = math.min(115, Blue + 10)
 			end
 
 			buffer.writeu32(PixelBuffer, RowOffset + TexelX * 4, PackRGBA(Red, Green, Blue, 255))
@@ -19171,6 +19242,74 @@ function TextureHelper.CreateProceduralTemplateTexture(TargetSize: number): buff
 	end
 
 	return PixelBuffer
+end
+
+--[=[
+	Generates a high-contrast power-of-two procedural Roblox stud and checker grid template texture.
+	@param TargetSize number -- Width and height of the square texture in texels.
+	@return buffer -- RGBA pixel buffer of size TargetSize * TargetSize * 4.
+]=]
+function TextureHelper.CreateProceduralStudTexture(TargetSize: number): buffer
+	const PixelBuffer = buffer.create(TargetSize * TargetSize * 4) :: buffer
+	const CellSize = math.max(4, TargetSize // 2) :: number
+	const HalfCell = CellSize * 0.5 :: number
+	const BorderThickness = math.max(1, TargetSize // 24) :: number
+	const StudOuterRadius = CellSize * 0.34 :: number
+	const StudInnerRadius = CellSize * 0.22 :: number
+	const StudCenterRadius = CellSize * 0.09 :: number
+
+	for TexelY = 0, TargetSize - 1 do
+		const QuadrantY = TexelY // CellSize :: number
+		const CellY = TexelY % CellSize :: number
+		const OffsetY = (CellY + 0.5) - HalfCell :: number
+		const RowOffset = TexelY * TargetSize * 4 :: number
+
+		for TexelX = 0, TargetSize - 1 do
+			const QuadrantX = TexelX // CellSize :: number
+			const CellX = TexelX % CellSize :: number
+			const OffsetX = (CellX + 0.5) - HalfCell :: number
+			const DistanceFromCenter = math.sqrt(OffsetX * OffsetX + OffsetY * OffsetY) :: number
+
+			const IsLightTile = ((QuadrantX + QuadrantY) % 2 == 0) :: boolean
+			local Shade = if IsLightTile then 236 else 160 :: number
+
+			if
+				CellX < BorderThickness
+				or CellY < BorderThickness
+				or CellX >= CellSize - BorderThickness
+				or CellY >= CellSize - BorderThickness
+			then
+				Shade = 68
+			elseif DistanceFromCenter <= StudCenterRadius then
+				Shade = 95
+			elseif DistanceFromCenter <= StudInnerRadius then
+				Shade = if IsLightTile then 205 else 225
+			elseif DistanceFromCenter <= StudOuterRadius then
+				if OffsetX + OffsetY < 0 then
+					Shade = 250
+				else
+					Shade = 60
+				end
+			end
+
+			buffer.writeu32(
+				PixelBuffer,
+				RowOffset + TexelX * 4,
+				PackRGBA(math.max(0, Shade - 8), Shade, math.min(255, Shade + 10), 255)
+			)
+		end
+	end
+
+	return PixelBuffer
+end
+
+--[=[
+	Generates the default procedural template texture buffer (stud template).
+	@param TargetSize number -- Width and height of the square texture in texels.
+	@return buffer -- RGBA pixel buffer of size TargetSize * TargetSize * 4.
+]=]
+function TextureHelper.CreateProceduralTemplateTexture(TargetSize: number): buffer
+	return TextureHelper.CreateProceduralStudTexture(TargetSize)
 end
 
 --[=[
@@ -19211,19 +19350,55 @@ function TextureHelper.ResampleTextureBuffer(
 end
 
 --[=[
-	Returns the cached synchronous procedural blood texture buffer and its dimensions.
+	Decodes a raw Roblox texture URL into a TargetSize x TargetSize RGBA buffer using EditableImage, falling back to FallbackBuffer on empty URI or load failure.
+	@param RawUrl string -- Raw Roblox texture URL (e.g. "rbxassetid://..." or "rbxasset://...").
+	@param FallbackBuffer buffer? -- Optional precomputed fallback buffer if decoding fails or URL is empty.
+	@param TargetSize number? -- Optional square target size in texels (defaults to SystemsConfigs.TextureSize).
+	@return (buffer, boolean) -- Decoded (or fallback) 64x64 RGBA buffer, and true if decoded from the URL.
+]=]
+function TextureHelper.DecodeUrlToBuffer(
+	RawUrl: string,
+	FallbackBuffer: buffer?,
+	TargetSize: number?
+): (buffer, boolean)
+	const ResolvedSize = TargetSize or TEXTURE_SIZE :: number
+	if RawUrl ~= "" then
+		const Success: boolean, LoadedResult: any = pcall(function()
+			return AssetService:CreateEditableImageAsync(Content.fromUri(RawUrl))
+		end)
+
+		if Success and LoadedResult then
+			const EditableImage = LoadedResult :: EditableImage
+			const ImageSize = EditableImage.Size :: Vector2
+			const RawPixels = EditableImage:ReadPixelsBuffer(Vector2.zero, ImageSize) :: buffer
+			EditableImage:Destroy()
+
+			const Resampled = TextureHelper.ResampleTextureBuffer(RawPixels, ImageSize.X, ImageSize.Y, ResolvedSize)
+			return Resampled, true
+		end
+	end
+
+	if FallbackBuffer then
+		return FallbackBuffer, false
+	end
+
+	return TextureHelper.CreateProceduralStudTexture(ResolvedSize), false
+end
+
+--[=[
+	Returns the cached synchronous procedural default texture buffer and its dimensions.
 	@return (buffer, number, number) -- TextureBuffer, TextureWidth, TextureHeight.
 ]=]
 function TextureHelper.GetDefaultTexture(): (buffer, number, number)
 	if not CachedDefaultTexture then
-		CachedDefaultTexture = TextureHelper.CreateProceduralTemplateTexture(TEXTURE_SIZE)
+		CachedDefaultTexture = TextureHelper.CreateProceduralStudTexture(TEXTURE_SIZE)
 	end
 
 	return CachedDefaultTexture :: buffer, TEXTURE_SIZE, TEXTURE_SIZE
 end
 
 --[=[
-	Loads an optional Roblox texture URI or returns the procedural blood texture.
+	Loads an optional Roblox texture URI or returns the procedural stud template texture.
 	@param TextureUri string? -- Optional asset URI override (defaults to SystemsConfigs.DefaultTextureUri).
 	@param TargetSize number? -- Optional square target size in texels (defaults to SystemsConfigs.TextureSize).
 	@return (buffer, number, number) -- TextureBuffer, TextureWidth, TextureHeight.
@@ -19231,34 +19406,281 @@ end
 function TextureHelper.LoadRobloxTemplateTexture(TextureUri: string?, TargetSize: number?): (buffer, number, number)
 	const ResolvedUri = TextureUri or DEFAULT_TEXTURE_URI :: string
 	const ResolvedSize = TargetSize or TEXTURE_SIZE :: number
-	const BaseTemplate = TextureHelper.CreateProceduralTemplateTexture(ResolvedSize)
-
-	if ResolvedUri == "" then
-		return BaseTemplate, ResolvedSize, ResolvedSize
-	end
-
-	const Success: boolean, LoadedResult: any = pcall(function()
-		return AssetService:CreateEditableImageAsync(Content.fromUri(ResolvedUri))
-	end)
-
-	if Success and LoadedResult then
-		const EditableImage = LoadedResult :: EditableImage
-		const ImageSize = EditableImage.Size :: Vector2
-		const RawPixels = EditableImage:ReadPixelsBuffer(Vector2.zero, ImageSize) :: buffer
-		EditableImage:Destroy()
-
-		const Resampled = TextureHelper.ResampleTextureBuffer(RawPixels, ImageSize.X, ImageSize.Y, ResolvedSize)
-		return Resampled, ResolvedSize, ResolvedSize
-	end
-
-	return BaseTemplate, ResolvedSize, ResolvedSize
+	const DecodedBuffer = TextureHelper.DecodeUrlToBuffer(ResolvedUri, nil, ResolvedSize)
+	return DecodedBuffer, ResolvedSize, ResolvedSize
 end
 
 return TextureHelper
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="150">
+            <Item class="ModuleScript" referent="151">
+              <Properties>
+                <string name="Name">TextureTable</string>
+                <string name="Source"><![CDATA[--!strict
+--!native
+--!optimize 2
+
+-- Services --
+const ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+-- Modules --
+const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const TextureHelper = require(script.Parent.TextureHelper)
+
+-- Configs --
+const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
+
+-- Buffers
+const DefaultWoodBuffer = TextureHelper.CreateProceduralWoodTexture(TEXTURE_SIZE) :: buffer
+const DefaultStudBuffer = TextureHelper.CreateProceduralStudTexture(TEXTURE_SIZE) :: buffer
+
+local NextDynamicId = 1 :: number
+
+local TextureTable = {}
+
+-- ============================================================================
+-- 1. TEXTURE TRANSLATOR, DEDUPLICATED URL REGISTRY & 64x64 BUFFER CACHE
+-- ============================================================================
+
+-- Translator table: numeric ECS TextureId -> texture name
+TextureTable.IdToName = {
+	[1] = "WoodTexture",
+	[2] = "StudTexture",
+} :: { [number]: string }
+
+-- Reverse translator table: texture name -> numeric ECS TextureId
+TextureTable.NameToId = {
+	WoodTexture = 1,
+	StudTexture = 2,
+} :: { [string]: number }
+
+-- URL translator maps for deduplication and client-side decoding
+TextureTable.IdToUrl = {} :: { [number]: string }
+TextureTable.UrlToId = {} :: { [string]: number }
+
+-- Cached 64x64 RGBA texture buffers indexed by numeric ECS TextureId
+TextureTable.CachedBuffers = {
+	[1] = DefaultWoodBuffer,
+	[2] = DefaultStudBuffer,
+} :: { [number]: buffer }
+
+--[=[
+	Trims surrounding whitespace from a raw Roblox asset URL.
+	@param RawUrl string -- Raw Roblox texture URL.
+	@return string -- Normalized URL string.
+]=]
+function TextureTable.NormalizeUrl(RawUrl: string): string
+	return (string.match(RawUrl, "^%s*(.-)%s*$") or "") :: string
+end
+
+--[=[
+	Decodes a raw Roblox texture URL into a 64x64 RGBA buffer using the renderer's EditableImage pipeline.
+	@param RawUrl string -- Raw Roblox asset URL (e.g. "rbxassetid://123456789").
+	@param FallbackBuffer buffer? -- Optional fallback 64x64 buffer if Url is empty or fails to load.
+	@return (buffer, boolean) -- Decoded (or fallback) 64x64 RGBA buffer, and true if decoded from RawUrl.
+]=]
+function TextureTable.DecodeRawUrl(RawUrl: string, FallbackBuffer: buffer?): (buffer, boolean)
+	return TextureHelper.DecodeUrlToBuffer(RawUrl, FallbackBuffer, TEXTURE_SIZE)
+end
+
+--[=[
+	Returns a deterministic procedural 64x64 fallback buffer for a given TextureId slot.
+	@param TextureId number -- Numeric TextureId slot.
+	@return buffer -- Procedural 64x64 RGBA buffer.
+]=]
+local function GetFallbackBufferForSlot(TextureId: number): buffer
+	if TextureId % 2 == 1 then
+		return DefaultWoodBuffer
+	end
+	return DefaultStudBuffer
+end
+
+--[=[
+	Clears all dynamic and default entries from TextureTable before scanning Workspace decals.
+]=]
+function TextureTable.ResetEntries()
+	table.clear(TextureTable.IdToName)
+	table.clear(TextureTable.NameToId)
+	table.clear(TextureTable.IdToUrl)
+	table.clear(TextureTable.UrlToId)
+	table.clear(TextureTable.CachedBuffers)
+	NextDynamicId = 1
+end
+
+--[=[
+	Populates fallback WoodTexture (1) and StudTexture (2) entries if no decals were registered.
+]=]
+function TextureTable.EnsureDefaultEntries()
+	if next(TextureTable.IdToName) ~= nil then
+		return
+	end
+
+	TextureTable.IdToName[1] = "WoodTexture"
+	TextureTable.IdToName[2] = "StudTexture"
+	TextureTable.NameToId["WoodTexture"] = 1
+	TextureTable.NameToId["StudTexture"] = 2
+	TextureTable.CachedBuffers[1] = DefaultWoodBuffer
+	TextureTable.CachedBuffers[2] = DefaultStudBuffer
+	NextDynamicId = 3
+end
+
+--[=[
+	Registers a texture URL into TextureTable, ignoring empty or duplicate URLs, and caches its 64x64 buffer.
+	@param RawUrl string -- Raw Roblox Decal.Texture URL.
+	@param TextureName string? -- Optional human-readable name for the translator table.
+	@param DecodeNow boolean? -- Whether to immediately decode via AssetService (defaults to true).
+	@return (number, boolean) -- Assigned (or existing) TextureId, and true if newly registered (false if empty or duplicate).
+]=]
+function TextureTable.RegisterUrl(RawUrl: string, TextureName: string?, DecodeNow: boolean?): (number, boolean)
+	const NormalizedUrl = TextureTable.NormalizeUrl(RawUrl)
+	if NormalizedUrl == "" then
+		return 0, false
+	end
+
+	-- Ignore duplicate URLs and return the already-registered TextureId
+	const ExistingId = TextureTable.UrlToId[NormalizedUrl]
+	if ExistingId then
+		return ExistingId, false
+	end
+
+	const AssignedId = NextDynamicId :: number
+	NextDynamicId += 1
+
+	const ResolvedName = if TextureName and TextureName ~= ""
+		then TextureName
+		else ("Decal_" .. tostring(AssignedId))
+
+	TextureTable.IdToName[AssignedId] = ResolvedName
+	if not TextureTable.NameToId[ResolvedName] then
+		TextureTable.NameToId[ResolvedName] = AssignedId
+	end
+	TextureTable.IdToUrl[AssignedId] = NormalizedUrl
+	TextureTable.UrlToId[NormalizedUrl] = AssignedId
+
+	const FallbackBuffer = GetFallbackBufferForSlot(AssignedId)
+	if DecodeNow ~= false then
+		const DecodedBuffer = TextureTable.DecodeRawUrl(NormalizedUrl, FallbackBuffer)
+		TextureTable.CachedBuffers[AssignedId] = DecodedBuffer
+	else
+		TextureTable.CachedBuffers[AssignedId] = FallbackBuffer
+	end
+
+	return AssignedId, true
+end
+
+--[=[
+	Registers and decodes a replicated TextureId + URL entry into TextureTable.CachedBuffers, skipping duplicates.
+	@param TextureId number -- Replicated numeric TextureId.
+	@param RawUrl string -- Raw Roblox Decal.Texture URL.
+	@param TextureName string? -- Optional texture name.
+	@return (buffer, boolean) -- Cached 64x64 RGBA buffer, and true if newly decoded/updated.
+]=]
+function TextureTable.RegisterEntryWithId(TextureId: number, RawUrl: string, TextureName: string?): (buffer, boolean)
+	const NormalizedUrl = TextureTable.NormalizeUrl(RawUrl)
+	const FallbackBuffer = GetFallbackBufferForSlot(TextureId)
+	if NormalizedUrl == "" then
+		TextureTable.CachedBuffers[TextureId] = TextureTable.CachedBuffers[TextureId] or FallbackBuffer
+		return TextureTable.CachedBuffers[TextureId], false
+	end
+
+	if TextureTable.IdToUrl[TextureId] == NormalizedUrl and TextureTable.CachedBuffers[TextureId] then
+		return TextureTable.CachedBuffers[TextureId], false
+	end
+
+	-- If this URL was already decoded under another slot, reuse its cached 64x64 buffer without re-downloading
+	const ExistingUrlId = TextureTable.UrlToId[NormalizedUrl]
+	if ExistingUrlId and TextureTable.CachedBuffers[ExistingUrlId] then
+		const SharedBuffer = TextureTable.CachedBuffers[ExistingUrlId]
+		TextureTable.IdToUrl[TextureId] = NormalizedUrl
+		TextureTable.CachedBuffers[TextureId] = SharedBuffer
+		if TextureName and TextureName ~= "" then
+			TextureTable.IdToName[TextureId] = TextureName
+			if not TextureTable.NameToId[TextureName] then
+				TextureTable.NameToId[TextureName] = TextureId
+			end
+		end
+		return SharedBuffer, true
+	end
+
+	const ResolvedName = if TextureName and TextureName ~= ""
+		then TextureName
+		else ("Decal_" .. tostring(TextureId))
+
+	TextureTable.IdToName[TextureId] = ResolvedName
+	if not TextureTable.NameToId[ResolvedName] then
+		TextureTable.NameToId[ResolvedName] = TextureId
+	end
+	TextureTable.IdToUrl[TextureId] = NormalizedUrl
+	TextureTable.UrlToId[NormalizedUrl] = TextureId
+
+	if TextureId >= NextDynamicId then
+		NextDynamicId = TextureId + 1
+	end
+
+	const DecodedBuffer = TextureTable.DecodeRawUrl(NormalizedUrl, FallbackBuffer)
+	TextureTable.CachedBuffers[TextureId] = DecodedBuffer
+	return DecodedBuffer, true
+end
+
+--[=[
+	Returns a sorted array of all currently registered TextureIds in TextureTable.
+	@return { number } -- Sorted list of registered numeric TextureIds.
+]=]
+function TextureTable.GetRegisteredIds(): { number }
+	const Ids = {} :: { number }
+	for TextureId in pairs(TextureTable.IdToName) do
+		table.insert(Ids, TextureId)
+	end
+	table.sort(Ids)
+	return Ids
+end
+
+--[=[
+	Translates a numeric ECS TextureId into its registered texture name.
+	@param TextureId number -- Numeric TextureId stored in the ECS Properties bitfield.
+	@return string -- Texture name (defaults to "WoodTexture" if unknown).
+]=]
+function TextureTable.TranslateIdToName(TextureId: number): string
+	return TextureTable.IdToName[TextureId] or "WoodTexture"
+end
+
+--[=[
+	Translates a texture name into its numeric ECS TextureId.
+	@param TextureName string -- Registered texture name (e.g. "WoodTexture", "StudTexture", or Decal name).
+	@return number -- Numeric TextureId (0 if not registered).
+]=]
+function TextureTable.TranslateNameToId(TextureName: string): number
+	return TextureTable.NameToId[TextureName] or 0
+end
+
+--[=[
+	Returns the cached 64x64 RGBA texture buffer for a given TextureId.
+	@param TextureId number -- Numeric TextureId from the ECS Properties bitfield.
+	@return buffer -- Cached 64x64 RGBA pixel buffer.
+]=]
+function TextureTable.GetTextureBuffer(TextureId: number): buffer
+	const Cached = TextureTable.CachedBuffers[TextureId]
+	if Cached then
+		return Cached
+	end
+
+	return TextureTable.CachedBuffers[1] or DefaultWoodBuffer
+end
+
+--[=[
+	Returns the table of all cached 64x64 RGBA texture buffers keyed by TextureId.
+	@return { [number]: buffer } -- Cached texture buffer map.
+]=]
+function TextureTable.GetAllCachedBuffers(): { [number]: buffer }
+	return TextureTable.CachedBuffers
+end
+
+return TextureTable
+]]></string>
+              </Properties>
+            </Item>
+            <Item class="ModuleScript" referent="152">
               <Properties>
                 <string name="Name">ViewCulling</string>
                 <string name="Source"><![CDATA[--!strict
@@ -19470,7 +19892,7 @@ return ViewCulling
               </Properties>
             </Item>
           </Item>
-          <Item class="ModuleScript" referent="151">
+          <Item class="ModuleScript" referent="153">
             <Properties>
               <string name="Name">ECSStorage</string>
               <string name="Source"><![CDATA[--!strict
@@ -19487,11 +19909,11 @@ return ECSMain.CreateStorage(false)
 ]]></string>
             </Properties>
           </Item>
-          <Item class="Folder" referent="152">
+          <Item class="Folder" referent="154">
             <Properties>
               <string name="Name">Scene</string>
             </Properties>
-            <Item class="ModuleScript" referent="153">
+            <Item class="ModuleScript" referent="155">
               <Properties>
                 <string name="Name">CleanerHelper</string>
                 <string name="Source"><![CDATA[--!strict
@@ -19539,7 +19961,7 @@ return CleanerHelper
 ]]></string>
               </Properties>
             </Item>
-            <Item class="LocalScript" referent="154">
+            <Item class="LocalScript" referent="156">
               <Properties>
                 <string name="Name">RendererCleaner</string>
                 <string name="Source"><![CDATA[--!strict
@@ -19569,6 +19991,7 @@ const ObjectOrientationData = ObjectStorage.OrientationData
 const ObjectVisualData = ObjectStorage.VisualData
 const ObjectSizeData = ObjectStorage.SizeData
 const ObjectDirectionsData = ObjectStorage.DirectionsData
+const ObjectPropertiesData = ObjectStorage.PropertiesData
 
 const RenderECSStorage = require(
 	ReplicatedStorage:WaitForChild("Shared")
@@ -19582,6 +20005,7 @@ const RenderOrientationData = RenderECSStorage.OrientationData
 const RenderVisualData = RenderECSStorage.VisualData
 const RenderSizeData = RenderECSStorage.SizeData
 const RenderDirectionsData = RenderECSStorage.DirectionsData
+const RenderPropertiesData = RenderECSStorage.PropertiesData
 
 const ViewCulling = require(
 	ReplicatedStorage:WaitForChild("Shared")
@@ -19602,6 +20026,7 @@ const CleanerHelper = require(
 -- Configs --
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 const CLEANER_TICK_INTERVAL = SystemsConfigs.CleanerTickInterval :: number
 
 -- Buffers
@@ -19610,6 +20035,7 @@ const ObjectOrientations = ObjectOrientationData.GetData() :: buffer
 const ObjectVisuals = ObjectVisualData.GetData() :: buffer
 const ObjectSizes = ObjectSizeData.GetData() :: buffer
 const ObjectDirections = ObjectDirectionsData.GetData() :: buffer
+const ObjectProperties = ObjectPropertiesData.GetData() :: buffer
 const ObjectCounts = ObjectECSData.ECSDataTable
 
 const RenderPositions = RenderPositionData.GetData() :: buffer
@@ -19617,6 +20043,7 @@ const RenderOrientations = RenderOrientationData.GetData() :: buffer
 const RenderVisuals = RenderVisualData.GetData() :: buffer
 const RenderSizes = RenderSizeData.GetData() :: buffer
 const RenderDirections = RenderDirectionsData.GetData() :: buffer
+const RenderProperties = RenderPropertiesData.GetData() :: buffer
 const RenderCounts = RenderECSData.ECSDataTable
 
 const MAX_ENTITIES = buffer.len(ObjectPositions) // COMPONENT_STRIDE :: number
@@ -19660,14 +20087,17 @@ while true do
 
 			const SourceOffset = (i - 1) * COMPONENT_STRIDE :: number
 			const SourceDirOffset = (i - 1) * DIRECTION_STRIDE :: number
+			const SourcePropOffset = (i - 1) * PROPERTIES_STRIDE :: number
 			const TargetOffset = (RenderSlot - 1) * COMPONENT_STRIDE :: number
 			const TargetDirOffset = (RenderSlot - 1) * DIRECTION_STRIDE :: number
+			const TargetPropOffset = (RenderSlot - 1) * PROPERTIES_STRIDE :: number
 
 			buffer.copy(RenderPositions, TargetOffset, ObjectPositions, SourceOffset, COMPONENT_STRIDE)
 			buffer.copy(RenderOrientations, TargetOffset, ObjectOrientations, SourceOffset, COMPONENT_STRIDE)
 			buffer.copy(RenderVisuals, TargetOffset, ObjectVisuals, SourceOffset, COMPONENT_STRIDE)
 			buffer.copy(RenderSizes, TargetOffset, ObjectSizes, SourceOffset, COMPONENT_STRIDE)
 			buffer.copy(RenderDirections, TargetDirOffset, ObjectDirections, SourceDirOffset, DIRECTION_STRIDE)
+			buffer.copy(RenderProperties, TargetPropOffset, ObjectProperties, SourcePropOffset, PROPERTIES_STRIDE)
 		end
 	end
 
@@ -19676,12 +20106,24 @@ end
 ]]></string>
               </Properties>
             </Item>
+            <Item class="LocalScript" referent="157">
+              <Properties>
+                <string name="Name">TextureCacher</string>
+                <string name="Source"><![CDATA[local TextureFolder = game.MaterialService :: MaterialService
+
+task.wait(0.1)
+
+for i = 1, TextureFolder:GetChildren() do
+end
+]]></string>
+              </Properties>
+            </Item>
           </Item>
-          <Item class="Folder" referent="155">
+          <Item class="Folder" referent="158">
             <Properties>
               <string name="Name">Worker</string>
             </Properties>
-            <Item class="LocalScript" referent="156">
+            <Item class="LocalScript" referent="159">
               <Properties>
                 <string name="Name">ParallelWorker</string>
                 <string name="Source"><![CDATA[--!strict
@@ -19700,16 +20142,20 @@ const SelfActor = script.Parent :: Actor
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper)
 const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath)
-const TextureHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.TextureHelper)
+const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Core.TextureTable)
 
 -- Configs --
 const WIDTH = SystemsConfigs.RenderWidth :: number
 const HEIGHT = SystemsConfigs.RenderHeight :: number
 const TOTAL_PIXELS = WIDTH * HEIGHT :: number
+const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
 
 local DirtyMinY = 0 :: number
 local DirtyMaxY = -1 :: number
-local ActiveTextureBuffer: buffer, TextureWidth: number, TextureHeight: number = TextureHelper.GetDefaultTexture()
+local TextureBuffers = TextureTable.GetAllCachedBuffers() :: { [number]: buffer }
+local DefaultTextureBuffer = TextureTable.GetTextureBuffer(1) :: buffer
+local TextureWidth = TEXTURE_SIZE :: number
+local TextureHeight = TEXTURE_SIZE :: number
 
 -- Buffers
 const PixelBuffer = buffer.create(TOTAL_PIXELS * 4) :: buffer
@@ -19724,9 +20170,19 @@ task.desynchronize()
 -- ============================================================================
 
 SelfActor:BindToMessageParallel(
+	"Set Texture Table",
+	function(NewTextureBuffers: { [number]: buffer }, NewWidth: number, NewHeight: number)
+		TextureBuffers = NewTextureBuffers
+		DefaultTextureBuffer = NewTextureBuffers[1] or DefaultTextureBuffer
+		TextureWidth = NewWidth
+		TextureHeight = NewHeight
+	end
+)
+
+SelfActor:BindToMessageParallel(
 	"Set Texture",
 	function(NewTextureBuffer: buffer, NewWidth: number, NewHeight: number)
-		ActiveTextureBuffer = NewTextureBuffer
+		DefaultTextureBuffer = NewTextureBuffer
 		TextureWidth = NewWidth
 		TextureHeight = NewHeight
 	end
@@ -19743,7 +20199,8 @@ SelfActor:BindToMessageParallel("Execute Rendering", function(RenderBuffer: buff
 		DirtyMinY, DirtyMaxY = RenderMath.DrawTriangleBatch(
 			RenderBuffer,
 			ByteCount,
-			ActiveTextureBuffer,
+			TextureBuffers,
+			DefaultTextureBuffer,
 			TextureWidth,
 			TextureHeight,
 			WIDTH,
@@ -19763,23 +20220,23 @@ end)
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="157">
+  <Item class="ServerScriptService" referent="160">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="158">
+    <Item class="Folder" referent="161">
       <Properties>
         <string name="Name">Server</string>
       </Properties>
-      <Item class="Folder" referent="159">
+      <Item class="Folder" referent="162">
         <Properties>
           <string name="Name">Objects</string>
         </Properties>
-        <Item class="Folder" referent="160">
+        <Item class="Folder" referent="163">
           <Properties>
             <string name="Name">ObjectsECS</string>
           </Properties>
-          <Item class="Script" referent="161">
+          <Item class="Script" referent="164">
             <Properties>
               <string name="Name">ECSBuilder</string>
               <token name="RunContext">0</token>
@@ -19805,6 +20262,9 @@ const WORKSPACE_CLEANUP_DELAY = SystemsConfigs.WorkspaceCleanupDelay :: number
 -- 1. WORKSPACE SEED & LISTENER
 -- ============================================================================
 
+-- Discover all Decals in the workspace first so TextureTable is populated before assigning part TextureIds.
+ECSBuilderHelper.ScanWorkspaceDecals(Workspace)
+
 -- Seed the ECS with everything already present in the workspace.
 for _, Descendant: Instance in ipairs(Workspace:GetDescendants()) do
 	if Descendant:IsA("BasePart") then
@@ -19812,9 +20272,11 @@ for _, Descendant: Instance in ipairs(Workspace:GetDescendants()) do
 	end
 end
 
--- Keep the ECS populated as parts are added at runtime.
+-- Keep the ECS and TextureTable populated as decals and parts are added at runtime.
 Workspace.DescendantAdded:Connect(function(Descendant: Instance)
-	if Descendant:IsA("BasePart") then
+	if Descendant:IsA("Decal") then
+		ECSBuilderHelper.RegisterDecal(Descendant)
+	elseif Descendant:IsA("BasePart") then
 		ECSBuilderHelper.PopulatePart(Descendant)
 	end
 end)
@@ -19826,7 +20288,7 @@ end
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="162">
+          <Item class="ModuleScript" referent="165">
             <Properties>
               <string name="Name">ECSBuilderHelper</string>
               <string name="Source"><![CDATA[--!strict
@@ -19842,6 +20304,7 @@ const Workspace = workspace :: Workspace
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Core.TextureTable)
 const Storage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
 const ECSData = Storage.ECSData
 const PositionData = Storage.PositionData
@@ -19856,14 +20319,70 @@ const ENTITY_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
 const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 const STATIC_FOLDER_NAME = SystemsConfigs.StaticObjectsFolderName :: string
+const TEXTURE_REGISTRY_FOLDER_NAME = SystemsConfigs.TextureRegistryFolderName :: string
 
 -- Tables --
 local StaticFolder = Workspace:FindFirstChild(STATIC_FOLDER_NAME) :: Folder?
+local TextureRegistryFolder = ReplicatedStorage:FindFirstChild(TEXTURE_REGISTRY_FOLDER_NAME) :: Folder?
+if not TextureRegistryFolder then
+	const NewFolder = Instance.new("Folder")
+	NewFolder.Name = TEXTURE_REGISTRY_FOLDER_NAME
+	NewFolder.Parent = ReplicatedStorage
+	TextureRegistryFolder = NewFolder
+end
 
 local ECSBuilderHelper = {}
 
 -- ============================================================================
--- 1. WORKSPACE BASEPART ECS REGISTRATION HELPER
+-- 1. WORKSPACE DECAL DISCOVERY & TEXTURE TABLE POPULATION
+-- ============================================================================
+
+--[=[
+	Registers a Workspace Decal's Texture URL into TextureTable (ignoring duplicate URLs), caches its 64x64 buffer, and replicates the entry.
+	@param DecalInstance Decal -- Source Roblox Decal instance.
+	@return number -- Assigned (or existing) TextureTable ID (0 if URL is empty).
+]=]
+function ECSBuilderHelper.RegisterDecal(DecalInstance: Decal): number
+	const TextureId: number, IsNew: boolean = TextureTable.RegisterUrl(DecalInstance.Texture, DecalInstance.Name, true)
+	if TextureId == 0 then
+		return 0
+	end
+
+	if IsNew then
+		const RegistryFolder = TextureRegistryFolder :: Folder
+		const ExistingEntry = RegistryFolder:FindFirstChild(tostring(TextureId))
+		if not ExistingEntry then
+			const EntryValue = Instance.new("StringValue")
+			EntryValue.Name = tostring(TextureId)
+			EntryValue.Value = TextureTable.IdToUrl[TextureId] or ""
+			EntryValue:SetAttribute("TextureName", TextureTable.TranslateIdToName(TextureId))
+			EntryValue.Parent = RegistryFolder
+		end
+	end
+
+	return TextureId
+end
+
+--[=[
+	Scans RootInstance descendants for Decals and populates TextureTable with unique URLs.
+	@param RootInstance Instance -- Root container to scan (typically Workspace).
+]=]
+function ECSBuilderHelper.ScanWorkspaceDecals(RootInstance: Instance)
+	TextureTable.ResetEntries()
+
+	for _, Entry: Instance in ipairs((TextureRegistryFolder :: Folder):GetChildren()) do
+		Entry:Destroy()
+	end
+
+	for _, Descendant: Instance in ipairs(RootInstance:GetDescendants()) do
+		if Descendant:IsA("Decal") then
+			ECSBuilderHelper.RegisterDecal(Descendant)
+		end
+	end
+end
+
+-- ============================================================================
+-- 2. WORKSPACE BASEPART ECS REGISTRATION HELPER
 -- ============================================================================
 
 --[=[
@@ -19918,15 +20437,37 @@ function ECSBuilderHelper.PopulatePart(Part: BasePart)
 		math.floor(PartColor.B * 255)
 	)
 
+	local TextureId = 0 :: number
+	const TextureIdAttr = Part:GetAttribute("TextureId")
+	if typeof(TextureIdAttr) == "number" and TextureIdAttr > 0 then
+		TextureId = TextureIdAttr
+	else
+		const TextureNameAttr = Part:GetAttribute("TextureName")
+		if typeof(TextureNameAttr) == "string" then
+			const TranslatedId = TextureTable.TranslateNameToId(TextureNameAttr) :: number
+			if TranslatedId > 0 then
+				TextureId = TranslatedId
+			end
+		else
+			const PartDecal = Part:FindFirstChildWhichIsA("Decal", true) :: Decal?
+			if PartDecal and PartDecal.Texture ~= "" then
+				const DecalTextureId = ECSBuilderHelper.RegisterDecal(PartDecal) :: number
+				if DecalTextureId > 0 then
+					TextureId = DecalTextureId
+				end
+			end
+		end
+	end
+
 	const PropertiesOffset = (EntityId - 1) * PROPERTIES_STRIDE :: number
-	PropertiesData.CreateLayout(PropertiesOffset, Part.CanCollide, Part.Transparency < 1, Part.Anchored, 0)
+	PropertiesData.CreateLayout(PropertiesOffset, Part.CanCollide, Part.Transparency < 1, Part.Anchored, 0, TextureId)
 end
 
 return ECSBuilderHelper
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="163">
+          <Item class="ModuleScript" referent="166">
             <Properties>
               <string name="Name">Storage</string>
               <string name="Source"><![CDATA[--!strict
@@ -19944,15 +20485,15 @@ return ECSMain.CreateStorage(true)
             </Properties>
           </Item>
         </Item>
-        <Item class="Folder" referent="164">
+        <Item class="Folder" referent="167">
           <Properties>
             <string name="Name">Replication</string>
           </Properties>
-          <Item class="Folder" referent="165">
+          <Item class="Folder" referent="168">
             <Properties>
               <string name="Name">Controller</string>
             </Properties>
-            <Item class="Script" referent="166">
+            <Item class="Script" referent="169">
               <Properties>
                 <string name="Name">ReplicatorExecuter</string>
                 <token name="RunContext">0</token>
@@ -19998,7 +20539,7 @@ end
 
 while true do
 	for _, Player: Player in ipairs(Players:GetPlayers()) do
-		const DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, Counts =
+		const DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, DeltaProperties, Counts =
 			PlayerCuller.CullObjects(Player)
 		if DeltaPositions and Counts and Counts.EntityECSCount > 0 then
 			(ReplicateEvent :: RemoteEvent):FireClient(
@@ -20008,6 +20549,7 @@ while true do
 				DeltaVisuals,
 				DeltaSizes,
 				DeltaDirections,
+				DeltaProperties,
 				Counts
 			)
 		end
@@ -20019,11 +20561,11 @@ end
               </Properties>
             </Item>
           </Item>
-          <Item class="Folder" referent="167">
+          <Item class="Folder" referent="170">
             <Properties>
               <string name="Name">Core</string>
             </Properties>
-            <Item class="ModuleScript" referent="168">
+            <Item class="ModuleScript" referent="171">
               <Properties>
                 <string name="Name">PlayerCuller</string>
                 <string name="Source"><![CDATA[--!strict
@@ -20042,6 +20584,7 @@ const OrientationData = Storage.OrientationData
 const VisualData = Storage.VisualData
 const SizeData = Storage.SizeData
 const DirectionsData = Storage.DirectionsData
+const PropertiesData = Storage.PropertiesData
 const ECSData = Storage.ECSData
 const PlayerFunctions = require(script.Parent.PlayerFunctions)
 const ViewCulling = require(
@@ -20055,6 +20598,7 @@ const ViewCulling = require(
 -- Configs --
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 
 -- Buffers
 const PositionBuffer = PositionData.GetData() :: buffer
@@ -20062,10 +20606,12 @@ const OrientationBuffer = OrientationData.GetData() :: buffer
 const VisualBuffer = VisualData.GetData() :: buffer
 const SizeBuffer = SizeData.GetData() :: buffer
 const DirectionsBuffer = DirectionsData.GetData() :: buffer
+const PropertiesBuffer = PropertiesData.GetData() :: buffer
 const StaticBuffer = ECSData.GetStaticData() :: buffer
 
 const COMPONENT_BUFFER_SIZE = buffer.len(PositionBuffer) :: number
 const DIRECTION_BUFFER_SIZE = buffer.len(DirectionsBuffer) :: number
+const PROPERTIES_BUFFER_SIZE = buffer.len(PropertiesBuffer) :: number
 const MAX_ENTITIES = COMPONENT_BUFFER_SIZE // COMPONENT_STRIDE :: number
 
 const ScratchPositions = buffer.create(COMPONENT_BUFFER_SIZE) :: buffer
@@ -20073,6 +20619,7 @@ const ScratchOrientations = buffer.create(COMPONENT_BUFFER_SIZE) :: buffer
 const ScratchVisuals = buffer.create(COMPONENT_BUFFER_SIZE) :: buffer
 const ScratchSizes = buffer.create(COMPONENT_BUFFER_SIZE) :: buffer
 const ScratchDirections = buffer.create(DIRECTION_BUFFER_SIZE) :: buffer
+const ScratchProperties = buffer.create(PROPERTIES_BUFFER_SIZE) :: buffer
 
 export type ECSTable = {
 	OrientationECSCount: number,
@@ -20096,10 +20643,10 @@ PlayerCuller.RemovePlayerState = PlayerFunctions.RemovePlayerState
 	@param PlayerObject Player -- Target replicating player.
 	@return (buffer?, buffer?, buffer?, buffer?, buffer?, ECSTable?) -- DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, Counts.
 ]=]
-function PlayerCuller.CullObjects(PlayerObject: Player): (buffer?, buffer?, buffer?, buffer?, buffer?, ECSTable?)
+function PlayerCuller.CullObjects(PlayerObject: Player): (buffer?, buffer?, buffer?, buffer?, buffer?, buffer?, ECSTable?)
 	const Head = ViewCulling.GetObserverHead(PlayerObject) :: BasePart?
 	if not Head then
-		return nil, nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil, nil
 	end
 
 	const EntityCount = math.min(ECSData.GetCounts().EntityECSCount, MAX_ENTITIES) :: number
@@ -20111,11 +20658,13 @@ function PlayerCuller.CullObjects(PlayerObject: Player): (buffer?, buffer?, buff
 	const CachedVisuals = State.Visuals :: buffer
 	const CachedSizes = State.Sizes :: buffer
 	const CachedDirections = State.Directions :: buffer
+	const CachedProperties = State.Properties :: buffer
 
 	ViewCulling.UpdateDynamicView(Head)
 
 	local WriteOffset = 0 :: number
 	local DirectionWriteOffset = 0 :: number
+	local PropertiesWriteOffset = 0 :: number
 
 	for i = 1, EntityCount do
 		const FlagOffset = i - 1 :: number
@@ -20128,6 +20677,7 @@ function PlayerCuller.CullObjects(PlayerObject: Player): (buffer?, buffer?, buff
 
 		const ReadOffset = FlagOffset * COMPONENT_STRIDE :: number
 		const DirectionReadOffset = FlagOffset * DIRECTION_STRIDE :: number
+		const PropertiesReadOffset = FlagOffset * PROPERTIES_STRIDE :: number
 		const WasVisible = buffer.readu8(VisibleFlags, FlagOffset) :: number
 
 		if
@@ -20135,11 +20685,13 @@ function PlayerCuller.CullObjects(PlayerObject: Player): (buffer?, buffer?, buff
 			and not PlayerFunctions.HasEntityChanged(
 				ReadOffset,
 				DirectionReadOffset,
+				PropertiesReadOffset,
 				CachedPositions,
 				CachedOrientations,
 				CachedVisuals,
 				CachedSizes,
-				CachedDirections
+				CachedDirections,
+				CachedProperties
 			)
 		then
 			continue
@@ -20152,6 +20704,7 @@ function PlayerCuller.CullObjects(PlayerObject: Player): (buffer?, buffer?, buff
 		buffer.copy(CachedVisuals, ReadOffset, VisualBuffer, ReadOffset, COMPONENT_STRIDE)
 		buffer.copy(CachedSizes, ReadOffset, SizeBuffer, ReadOffset, COMPONENT_STRIDE)
 		buffer.copy(CachedDirections, DirectionReadOffset, DirectionsBuffer, DirectionReadOffset, DIRECTION_STRIDE)
+		buffer.copy(CachedProperties, PropertiesReadOffset, PropertiesBuffer, PropertiesReadOffset, PROPERTIES_STRIDE)
 
 		buffer.copy(ScratchPositions, WriteOffset, PositionBuffer, ReadOffset, COMPONENT_STRIDE)
 		buffer.copy(ScratchOrientations, WriteOffset, OrientationBuffer, ReadOffset, COMPONENT_STRIDE)
@@ -20159,13 +20712,15 @@ function PlayerCuller.CullObjects(PlayerObject: Player): (buffer?, buffer?, buff
 		buffer.writeu32(ScratchVisuals, WriteOffset + 4, i)
 		buffer.copy(ScratchSizes, WriteOffset, SizeBuffer, ReadOffset, COMPONENT_STRIDE)
 		buffer.copy(ScratchDirections, DirectionWriteOffset, DirectionsBuffer, DirectionReadOffset, DIRECTION_STRIDE)
+		buffer.copy(ScratchProperties, PropertiesWriteOffset, PropertiesBuffer, PropertiesReadOffset, PROPERTIES_STRIDE)
 
 		WriteOffset += COMPONENT_STRIDE
 		DirectionWriteOffset += DIRECTION_STRIDE
+		PropertiesWriteOffset += PROPERTIES_STRIDE
 	end
 
 	if WriteOffset == 0 then
-		return nil, nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil, nil
 	end
 
 	const DeltaPositions = buffer.create(WriteOffset) :: buffer
@@ -20173,12 +20728,14 @@ function PlayerCuller.CullObjects(PlayerObject: Player): (buffer?, buffer?, buff
 	const DeltaVisuals = buffer.create(WriteOffset) :: buffer
 	const DeltaSizes = buffer.create(WriteOffset) :: buffer
 	const DeltaDirections = buffer.create(DirectionWriteOffset) :: buffer
+	const DeltaProperties = buffer.create(PropertiesWriteOffset) :: buffer
 
 	buffer.copy(DeltaPositions, 0, ScratchPositions, 0, WriteOffset)
 	buffer.copy(DeltaOrientations, 0, ScratchOrientations, 0, WriteOffset)
 	buffer.copy(DeltaVisuals, 0, ScratchVisuals, 0, WriteOffset)
 	buffer.copy(DeltaSizes, 0, ScratchSizes, 0, WriteOffset)
 	buffer.copy(DeltaDirections, 0, ScratchDirections, 0, DirectionWriteOffset)
+	buffer.copy(DeltaProperties, 0, ScratchProperties, 0, PropertiesWriteOffset)
 
 	const VisibleCount = WriteOffset // COMPONENT_STRIDE :: number
 
@@ -20191,14 +20748,14 @@ function PlayerCuller.CullObjects(PlayerObject: Player): (buffer?, buffer?, buff
 		EntityECSCount = VisibleCount,
 	}
 
-	return DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, Counts
+	return DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, DeltaProperties, Counts
 end
 
 return PlayerCuller
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="169">
+            <Item class="ModuleScript" referent="172">
               <Properties>
                 <string name="Name">PlayerFunctions</string>
                 <string name="Source"><![CDATA[--!strict
@@ -20218,9 +20775,11 @@ const OrientationData = Storage.OrientationData
 const VisualData = Storage.VisualData
 const SizeData = Storage.SizeData
 const DirectionsData = Storage.DirectionsData
+const PropertiesData = Storage.PropertiesData
 
 -- Configs --
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
+const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 
 -- Buffers
 const PositionBuffer = PositionData.GetData() :: buffer
@@ -20228,9 +20787,11 @@ const OrientationBuffer = OrientationData.GetData() :: buffer
 const VisualBuffer = VisualData.GetData() :: buffer
 const SizeBuffer = SizeData.GetData() :: buffer
 const DirectionsBuffer = DirectionsData.GetData() :: buffer
+const PropertiesBuffer = PropertiesData.GetData() :: buffer
 
 const COMPONENT_BUFFER_SIZE = buffer.len(PositionBuffer) :: number
 const DIRECTION_BUFFER_SIZE = buffer.len(DirectionsBuffer) :: number
+const PROPERTIES_BUFFER_SIZE = buffer.len(PropertiesBuffer) :: number
 const MAX_ENTITIES = COMPONENT_BUFFER_SIZE // COMPONENT_STRIDE :: number
 
 export type PlayerDeltaState = {
@@ -20242,6 +20803,7 @@ export type PlayerDeltaState = {
 	Visuals: buffer,
 	Sizes: buffer,
 	Directions: buffer,
+	Properties: buffer,
 }
 
 -- Tables --
@@ -20286,6 +20848,7 @@ function PlayerFunctions.GetOrCreatePlayerState(
 			Visuals = buffer.create(COMPONENT_BUFFER_SIZE),
 			Sizes = buffer.create(COMPONENT_BUFFER_SIZE),
 			Directions = buffer.create(DIRECTION_BUFFER_SIZE),
+			Properties = buffer.create(PROPERTIES_BUFFER_SIZE),
 		}
 		PlayerStates[PlayerObject] = NewState
 		return NewState
@@ -20316,11 +20879,13 @@ end
 function PlayerFunctions.HasEntityChanged(
 	Offset: number,
 	DirectionOffset: number,
+	PropertiesOffset: number,
 	CachedPositions: buffer,
 	CachedOrientations: buffer,
 	CachedVisuals: buffer,
 	CachedSizes: buffer,
-	CachedDirections: buffer
+	CachedDirections: buffer,
+	CachedProperties: buffer
 ): boolean
 	if
 		buffer.readu32(PositionBuffer, Offset) ~= buffer.readu32(CachedPositions, Offset)
@@ -20364,6 +20929,10 @@ function PlayerFunctions.HasEntityChanged(
 		return true
 	end
 
+	if buffer.readu32(PropertiesBuffer, PropertiesOffset) ~= buffer.readu32(CachedProperties, PropertiesOffset) then
+		return true
+	end
+
 	return false
 end
 
@@ -20374,15 +20943,15 @@ return PlayerFunctions
           </Item>
         </Item>
       </Item>
-      <Item class="Folder" referent="170">
+      <Item class="Folder" referent="173">
         <Properties>
           <string name="Name">Tests</string>
         </Properties>
-        <Item class="Folder" referent="171">
+        <Item class="Folder" referent="174">
           <Properties>
             <string name="Name">Specs</string>
           </Properties>
-          <Item class="ModuleScript" referent="172">
+          <Item class="ModuleScript" referent="175">
             <Properties>
               <string name="Name">BVH.spec</string>
               <string name="Source"><![CDATA[--!strict
@@ -20531,7 +21100,7 @@ end
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="173">
+          <Item class="ModuleScript" referent="176">
             <Properties>
               <string name="Name">ECS.spec</string>
               <string name="Source"><![CDATA[--!strict
@@ -20571,6 +21140,34 @@ return function()
 			const RegZero = ECSMain.PackProperties(false, false, false, 0)
 			expect(ECSMain.HasEntityDynamicId(RegZero)).to.equal(false)
 			expect(ECSMain.GetEntityDynamicId(RegZero)).to.equal(0)
+		end)
+
+		it("should pack, extract, and update TextureId without clobbering flags or DynamicId", function()
+			const Register = ECSMain.PackProperties(true, true, false, 42, 2)
+			expect(ECSMain.CanEntityCollide(Register)).to.equal(true)
+			expect(ECSMain.IsEntityVisible(Register)).to.equal(true)
+			expect(ECSMain.IsEntityAnchored(Register)).to.equal(false)
+			expect(ECSMain.GetEntityDynamicId(Register)).to.equal(42)
+			expect(ECSMain.GetEntityTextureId(Register)).to.equal(2)
+
+			const Storage = ECSMain.CreateStorage(true)
+			const EntityId = Storage.ECSData.RegisterEntity(true)
+			const PropsBuf = Storage.PropertiesData.GetData()
+			Storage.PropertiesData.CreateLayout(0, true, false, true, 77, 1)
+
+			ECSMain.SetEntityTextureId(PropsBuf, EntityId, 2)
+			const UpdatedReg = buffer.readu32(PropsBuf, 0)
+			expect(ECSMain.GetEntityTextureId(UpdatedReg)).to.equal(2)
+			expect(ECSMain.GetEntityDynamicId(UpdatedReg)).to.equal(77)
+			expect(ECSMain.CanEntityCollide(UpdatedReg)).to.equal(true)
+			expect(ECSMain.IsEntityVisible(UpdatedReg)).to.equal(false)
+			expect(ECSMain.IsEntityAnchored(UpdatedReg)).to.equal(true)
+
+			-- Updating DynamicId must also preserve TextureId
+			ECSMain.SetEntityDynamicId(PropsBuf, EntityId, 123)
+			const AfterDynReg = buffer.readu32(PropsBuf, 0)
+			expect(ECSMain.GetEntityTextureId(AfterDynReg)).to.equal(2)
+			expect(ECSMain.GetEntityDynamicId(AfterDynReg)).to.equal(123)
 		end)
 	end)
 
@@ -20631,7 +21228,7 @@ end
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="174">
+          <Item class="ModuleScript" referent="177">
             <Properties>
               <string name="Name">Physics.spec</string>
               <string name="Source"><![CDATA[--!strict
@@ -20781,7 +21378,7 @@ end
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="175">
+          <Item class="ModuleScript" referent="178">
             <Properties>
               <string name="Name">RenderMath.spec</string>
               <string name="Source"><![CDATA[--!strict
@@ -20804,6 +21401,8 @@ return function()
 	const MathModule = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("MathModule"))
 	const BufferHelper = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("BufferHelper"))
 	const TextureHelper = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("TextureHelper"))
+	const TextureTable = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("TextureTable"))
+	const RenderMath = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("RenderMath"))
 
 	describe("1. 2D Edge Functions & Geometric Tests", function()
 		it("should return correct signed determinant for 2D edge queries", function()
@@ -20979,12 +21578,120 @@ return function()
 			expect(bit32.band(bit32.rshift(Sampled, 8), 0xFF)).to.equal(0)
 			expect(bit32.band(bit32.rshift(Sampled, 16), 0xFF)).to.equal(0)
 		end)
+
+		it("should translate texture IDs, deduplicate URLs, and cache 64x64 buffers in TextureTable", function()
+			-- Snapshot live Workspace decal entries so this unit test does not disturb runtime state
+			const SavedIdToName = table.clone(TextureTable.IdToName)
+			const SavedNameToId = table.clone(TextureTable.NameToId)
+			const SavedIdToUrl = table.clone(TextureTable.IdToUrl)
+			const SavedUrlToId = table.clone(TextureTable.UrlToId)
+			const SavedCachedBuffers = table.clone(TextureTable.CachedBuffers)
+
+			TextureTable.ResetEntries()
+			TextureTable.EnsureDefaultEntries()
+
+			expect(TextureTable.TranslateIdToName(1)).to.equal("WoodTexture")
+			expect(TextureTable.TranslateIdToName(2)).to.equal("StudTexture")
+			expect(TextureTable.TranslateNameToId("WoodTexture")).to.equal(1)
+			expect(TextureTable.TranslateNameToId("StudTexture")).to.equal(2)
+
+			const WoodBuf = TextureTable.GetTextureBuffer(1)
+			const StudBuf = TextureTable.GetTextureBuffer(2)
+			expect(buffer.len(WoodBuf)).to.equal(64 * 64 * 4)
+			expect(buffer.len(StudBuf)).to.equal(64 * 64 * 4)
+
+			const DecodedFallback = TextureTable.DecodeRawUrl("", WoodBuf)
+			expect(buffer.len(DecodedFallback)).to.equal(64 * 64 * 4)
+			expect(DecodedFallback).to.equal(WoodBuf)
+
+			-- Test dynamic URL registration & duplicate URL ignoring
+			TextureTable.ResetEntries()
+			const FirstId: number, FirstCreated: boolean = TextureTable.RegisterUrl("rbxassetid://111111", "TestDecalA", false)
+			const DupId: number, DupCreated: boolean = TextureTable.RegisterUrl("rbxassetid://111111", "TestDecalDup", false)
+			const SecondId: number, SecondCreated: boolean = TextureTable.RegisterUrl("rbxassetid://222222", "TestDecalB", false)
+
+			expect(FirstId).to.equal(1)
+			expect(FirstCreated).to.equal(true)
+			expect(DupId).to.equal(1)
+			expect(DupCreated).to.equal(false)
+			expect(SecondId).to.equal(2)
+			expect(SecondCreated).to.equal(true)
+			expect(buffer.len(TextureTable.GetTextureBuffer(1))).to.equal(64 * 64 * 4)
+			expect(buffer.len(TextureTable.GetTextureBuffer(2))).to.equal(64 * 64 * 4)
+
+			-- Restore previous entries so runtime Workspace decals remain intact
+			TextureTable.ResetEntries()
+			for Id: number, Name: string in pairs(SavedIdToName) do
+				TextureTable.IdToName[Id] = Name
+			end
+			for Name: string, Id: number in pairs(SavedNameToId) do
+				TextureTable.NameToId[Name] = Id
+			end
+			for Id: number, Url: string in pairs(SavedIdToUrl) do
+				TextureTable.IdToUrl[Id] = Url
+			end
+			for Url: string, Id: number in pairs(SavedUrlToId) do
+				TextureTable.UrlToId[Url] = Id
+			end
+			for Id: number, Buf: buffer in pairs(SavedCachedBuffers) do
+				TextureTable.CachedBuffers[Id] = Buf
+			end
+
+			-- Verify RenderMath.DrawTriangleBatch selects per-triangle textures by TextureId
+			const SolidGreen = buffer.create(2 * 2 * 4)
+			const SolidBlue = buffer.create(2 * 2 * 4)
+			for i = 0, 12, 4 do
+				buffer.writeu32(SolidGreen, i, 0xFF00FF00)
+				buffer.writeu32(SolidBlue, i, 0xFFFF0000)
+			end
+			const BatchTextures = {
+				[1] = SolidGreen,
+				[2] = SolidBlue,
+			}
+
+			const CmdBuf = buffer.create(56)
+			const Area = 64 :: number
+			const InvArea = 1 / Area :: number
+			BufferHelper.CreateRenderBuffer(
+				CmdBuf,
+				0,
+				2, 2, InvArea, 0, 0,
+				2, 10, InvArea, 0, InvArea,
+				10, 2, InvArea, InvArea, 0,
+				0xFFFFFFFF,
+				2
+			)
+
+			const PixBuf = buffer.create(16 * 16 * 4)
+			const ZBuf = buffer.create(16 * 16 * 4)
+			BufferHelper.ClearBuffers(16 * 16, PixBuf, ZBuf)
+
+			RenderMath.DrawTriangleBatch(CmdBuf, 56, BatchTextures, SolidGreen, 2, 2, 16, 16, PixBuf, ZBuf)
+			const Sampled = buffer.readu32(PixBuf, (3 * 16 + 3) * 4)
+			expect(bit32.band(Sampled, 0xFF)).to.equal(0)
+			expect(bit32.band(bit32.rshift(Sampled, 8), 0xFF)).to.equal(0)
+			expect(bit32.band(bit32.rshift(Sampled, 16), 0xFF)).to.equal(255)
+
+			-- Verify TextureId = 0 renders untextured solid PackedColor
+			BufferHelper.ClearBuffers(16 * 16, PixBuf, ZBuf)
+			BufferHelper.CreateRenderBuffer(
+				CmdBuf,
+				0,
+				2, 2, InvArea, 0, 0,
+				2, 10, InvArea, 0, InvArea,
+				10, 2, InvArea, InvArea, 0,
+				0xFF112233,
+				0
+			)
+			RenderMath.DrawTriangleBatch(CmdBuf, 56, BatchTextures, SolidGreen, 2, 2, 16, 16, PixBuf, ZBuf)
+			expect(buffer.readu32(PixBuf, (3 * 16 + 3) * 4)).to.equal(0xFF112233)
+		end)
 	end)
 end
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="176">
+          <Item class="ModuleScript" referent="179">
             <Properties>
               <string name="Name">Replication.spec</string>
               <string name="Source"><![CDATA[--!strict
@@ -21047,7 +21754,7 @@ end
             </Properties>
           </Item>
         </Item>
-        <Item class="ModuleScript" referent="177">
+        <Item class="ModuleScript" referent="180">
           <Properties>
             <string name="Name">TestHarness</string>
             <string name="Source"><![CDATA[--!strict
@@ -21254,7 +21961,7 @@ return TestHarness
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="178">
+        <Item class="ModuleScript" referent="181">
           <Properties>
             <string name="Name">TestHelper</string>
             <string name="Source"><![CDATA[--!strict
@@ -21373,7 +22080,7 @@ return TestHelper
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Script" referent="179">
+        <Item class="Script" referent="182">
           <Properties>
             <string name="Name">TestRunner</string>
             <token name="RunContext">0</token>
@@ -21441,49 +22148,49 @@ end)
       </Item>
     </Item>
   </Item>
-  <Item class="SoundService" referent="180">
+  <Item class="SoundService" referent="183">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>
     </Properties>
   </Item>
-  <Item class="StarterGui" referent="181">
+  <Item class="StarterGui" referent="184">
     <Properties>
       <string name="Name">StarterGui</string>
     </Properties>
-    <Item class="Folder" referent="182">
+    <Item class="Folder" referent="185">
       <Properties>
         <string name="Name">GuiScripts</string>
       </Properties>
     </Item>
   </Item>
-  <Item class="StarterPlayer" referent="183">
+  <Item class="StarterPlayer" referent="186">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterCharacterScripts" referent="184">
+    <Item class="StarterCharacterScripts" referent="187">
       <Properties>
         <string name="Name">StarterCharacterScripts</string>
       </Properties>
-      <Item class="Folder" referent="185">
+      <Item class="Folder" referent="188">
         <Properties>
           <string name="Name">CharacterScripts</string>
         </Properties>
       </Item>
     </Item>
-    <Item class="StarterPlayerScripts" referent="186">
+    <Item class="StarterPlayerScripts" referent="189">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="187">
+      <Item class="Folder" referent="190">
         <Properties>
           <string name="Name">Client</string>
         </Properties>
-        <Item class="Folder" referent="188">
+        <Item class="Folder" referent="191">
           <Properties>
             <string name="Name">Objects</string>
           </Properties>
-          <Item class="ModuleScript" referent="189">
+          <Item class="ModuleScript" referent="192">
             <Properties>
               <string name="Name">ObjectStorage</string>
               <string name="Source"><![CDATA[--!strict
@@ -21500,11 +22207,11 @@ return ECSMain.CreateStorage(false)
 ]]></string>
             </Properties>
           </Item>
-          <Item class="Folder" referent="190">
+          <Item class="Folder" referent="193">
             <Properties>
               <string name="Name">Replication</string>
             </Properties>
-            <Item class="LocalScript" referent="191">
+            <Item class="LocalScript" referent="194">
               <Properties>
                 <string name="Name">ReplicationReceiver</string>
                 <string name="Source"><![CDATA[--!strict
@@ -21534,12 +22241,14 @@ const OrientationData = ObjectStorage.OrientationData
 const VisualData = ObjectStorage.VisualData
 const SizeData = ObjectStorage.SizeData
 const DirectionsData = ObjectStorage.DirectionsData
+const PropertiesData = ObjectStorage.PropertiesData
 
 -- Configs --
 const CORE_EVENTS_FOLDER_NAME = SystemsConfigs.CoreEventsFolderName :: string
 const REPLICATE_REMOTE_EVENT_NAME = SystemsConfigs.ReplicateRemoteEventName :: string
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 
 const CoreEvents = ReplicatedStorage:WaitForChild(CORE_EVENTS_FOLDER_NAME) :: Folder
 const ReplicateEvent = CoreEvents:WaitForChild(REPLICATE_REMOTE_EVENT_NAME) :: RemoteEvent
@@ -21550,6 +22259,7 @@ const LocalOrientationBuffer = OrientationData.GetData() :: buffer
 const LocalVisualBuffer = VisualData.GetData() :: buffer
 const LocalSizeBuffer = SizeData.GetData() :: buffer
 const LocalDirectionsBuffer = DirectionsData.GetData() :: buffer
+const LocalPropertiesBuffer = PropertiesData.GetData() :: buffer
 
 -- The local ECS buffers have a fixed size, so a snapshot holding more entities than they can store
 -- is clamped instead of erroring out on an out of bounds write and dropping every later packet.
@@ -21585,8 +22295,15 @@ ReplicateEvent.OnClientEvent:Connect(
 		VisualBuffer: buffer,
 		SizeBuffer: buffer,
 		DirectionsBuffer: buffer,
-		ECSDataTable: ECSTable
+		PropertiesOrCounts: any,
+		MaybeCounts: ECSTable?
 	)
+		const PropertiesBuffer = if typeof(PropertiesOrCounts) == "buffer" then PropertiesOrCounts :: buffer else nil
+		const ECSDataTable = (if PropertiesBuffer then MaybeCounts else PropertiesOrCounts) :: ECSTable
+		if not ECSDataTable then
+			return
+		end
+
 		const DeltaCount = math.min(ECSDataTable.EntityECSCount, MAX_ENTITIES) :: number
 		if DeltaCount <= 0 then
 			return
@@ -21597,6 +22314,7 @@ ReplicateEvent.OnClientEvent:Connect(
 		for i = 1, DeltaCount do
 			const ReadOffset = (i - 1) * COMPONENT_STRIDE :: number
 			const DirectionReadOffset = (i - 1) * DIRECTION_STRIDE :: number
+			const PropertiesReadOffset = (i - 1) * PROPERTIES_STRIDE :: number
 
 			const ServerId = buffer.readu32(VisualBuffer, ReadOffset + 4) :: number
 			local TargetSlot = if ServerId > 0 and ServerId <= MAX_ENTITIES
@@ -21618,6 +22336,7 @@ ReplicateEvent.OnClientEvent:Connect(
 
 			const WriteOffset = (TargetSlot - 1) * COMPONENT_STRIDE :: number
 			const DirectionWriteOffset = (TargetSlot - 1) * DIRECTION_STRIDE :: number
+			const PropertiesWriteOffset = (TargetSlot - 1) * PROPERTIES_STRIDE :: number
 
 			buffer.copy(LocalPositionBuffer, WriteOffset, PositionBuffer, ReadOffset, COMPONENT_STRIDE)
 			buffer.copy(LocalOrientationBuffer, WriteOffset, OrientationBuffer, ReadOffset, COMPONENT_STRIDE)
@@ -21630,6 +22349,15 @@ ReplicateEvent.OnClientEvent:Connect(
 				DirectionReadOffset,
 				DIRECTION_STRIDE
 			)
+			if PropertiesBuffer then
+				buffer.copy(
+					LocalPropertiesBuffer,
+					PropertiesWriteOffset,
+					PropertiesBuffer,
+					PropertiesReadOffset,
+					PROPERTIES_STRIDE
+				)
+			end
 		end
 	end
 )
@@ -21638,7 +22366,7 @@ ReplicateEvent.OnClientEvent:Connect(
             </Item>
           </Item>
         </Item>
-        <Item class="ModuleScript" referent="192">
+        <Item class="ModuleScript" referent="195">
           <Properties>
             <string name="Name">RenderBootstrap</string>
             <string name="Source"><![CDATA[--!strict
@@ -21716,7 +22444,7 @@ return RenderBootstrap
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="193">
+        <Item class="LocalScript" referent="196">
           <Properties>
             <string name="Name">Starter</string>
             <string name="Source"><![CDATA[--!strict
@@ -21730,11 +22458,11 @@ RenderBootstrap.CreateSetup()
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="194">
+        <Item class="Folder" referent="197">
           <Properties>
             <string name="Name">Tests</string>
           </Properties>
-          <Item class="LocalScript" referent="195">
+          <Item class="LocalScript" referent="198">
             <Properties>
               <string name="Name">ClientTestRunner</string>
               <string name="Source"><![CDATA[--!strict
@@ -21800,11 +22528,11 @@ end)
 ]]></string>
             </Properties>
           </Item>
-          <Item class="Folder" referent="196">
+          <Item class="Folder" referent="199">
             <Properties>
               <string name="Name">Specs</string>
             </Properties>
-            <Item class="ModuleScript" referent="197">
+            <Item class="ModuleScript" referent="200">
               <Properties>
                 <string name="Name">Camera.spec</string>
                 <string name="Source"><![CDATA[--!strict
@@ -21884,7 +22612,7 @@ end
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="198">
+            <Item class="ModuleScript" referent="201">
               <Properties>
                 <string name="Name">Cleaner.spec</string>
                 <string name="Source"><![CDATA[--!strict
@@ -21965,7 +22693,7 @@ end
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="199">
+            <Item class="ModuleScript" referent="202">
               <Properties>
                 <string name="Name">ClientInput.spec</string>
                 <string name="Source"><![CDATA[--!strict
@@ -22019,7 +22747,7 @@ end
 ]]></string>
               </Properties>
             </Item>
-            <Item class="ModuleScript" referent="200">
+            <Item class="ModuleScript" referent="203">
               <Properties>
                 <string name="Name">ReplicationReceiver.spec</string>
                 <string name="Source"><![CDATA[--!strict
@@ -22121,7 +22849,7 @@ end
               </Properties>
             </Item>
           </Item>
-          <Item class="ModuleScript" referent="201">
+          <Item class="ModuleScript" referent="204">
             <Properties>
               <string name="Name">TestHarness</string>
               <string name="Source"><![CDATA[--!strict
@@ -22328,7 +23056,7 @@ return TestHarness
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="202">
+          <Item class="ModuleScript" referent="205">
             <Properties>
               <string name="Name">TestHelper</string>
               <string name="Source"><![CDATA[--!strict
@@ -22414,7 +23142,7 @@ return TestHelper
             </Properties>
           </Item>
         </Item>
-        <Item class="LocalScript" referent="203">
+        <Item class="LocalScript" referent="206">
           <Properties>
             <string name="Name">main</string>
             <string name="Source"><![CDATA[--!strict
@@ -22461,7 +23189,7 @@ end
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="204">
+  <Item class="Workspace" referent="207">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>

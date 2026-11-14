@@ -40,7 +40,7 @@ end
 
 while true do
 	for _, Player: Player in ipairs(Players:GetPlayers()) do
-		const DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, Counts =
+		const DeltaPositions, DeltaOrientations, DeltaVisuals, DeltaSizes, DeltaDirections, DeltaProperties, Counts =
 			PlayerCuller.CullObjects(Player)
 		if DeltaPositions and Counts and Counts.EntityECSCount > 0 then
 			(ReplicateEvent :: RemoteEvent):FireClient(
@@ -50,6 +50,7 @@ while true do
 				DeltaVisuals,
 				DeltaSizes,
 				DeltaDirections,
+				DeltaProperties,
 				Counts
 			)
 		end

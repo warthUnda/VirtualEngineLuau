@@ -26,5 +26,6 @@
 - **Position & Momentum Transfer:** Displaces intersecting bodies out of geometry and updates momentum according to inverse mass ratios (`PLAYER_INV_MASS`, `ObjectInvMassBuffer`).
 
 ### 4. PhysicsLibrary & Dynamic Entity Management
-- Exposes high-level state APIs: `SetPlayerPosition`, `GetPlayerPosition`, `SetPlayerVelocity`, and `GetPlayerVelocity`.
-- Manages wake/sleep states for dynamic ECS bodies (`DynamicFlags`: 0 = static, 1 = awake, 2 = sleeping).
+- Exposes a single unified entity simulation entry point `SimulateInstance(EntityId, Angle, Impulse, Speed, CustomMass)` that checks `FLAG_ANCHORED` and immediately applies physics (falling back to prepackaged `PhysicsConfig` defaults `ObjectDefaultLaunchAngle`, `ObjectDefaultImpulse`, and `ObjectDefaultSpeed` when parameters are `nil`), alongside `StopSimulatingInstance(EntityId)`.
+- Exposes high-level player state APIs: `SetPlayerPosition`, `GetPlayerPosition`, `SetPlayerVelocity`, and `GetPlayerVelocity`.
+- Manages wake/sleep states and rolling/tumbling angular velocity for dynamic ECS bodies (`DynamicFlags`: 0 = static, 1 = awake, 2 = sleeping).

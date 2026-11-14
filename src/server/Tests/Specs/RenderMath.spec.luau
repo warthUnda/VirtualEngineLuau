@@ -18,7 +18,6 @@ return function()
 	const MathModule = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("MathModule"))
 	const BufferHelper = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("BufferHelper"))
 	const VerticeFile = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("VerticeFile"))
-	const TextureHelper = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Texture"):WaitForChild("TextureHelper"))
 	const TextureTable = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Texture"):WaitForChild("TextureTable"))
 	const RenderMath = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("RenderMath"))
 
@@ -154,11 +153,7 @@ return function()
 			expect(buffer.readf32(OutputBuf, 40 + 12)).to.be.near(0.5, 1e-4)
 		end)
 
-		it("should generate a procedural stud texture and rasterize textured triangles", function()
-			const TexSize = 4 :: number
-			const TexBuf = TextureHelper.CreateProceduralStudTexture(TexSize)
-			expect(buffer.len(TexBuf)).to.equal(TexSize * TexSize * 4)
-
+		it("should rasterize textured triangles with solid texture buffers", function()
 			-- Fill a 2x2 solid red texture to verify tinting + sampling
 			const SolidTex = buffer.create(2 * 2 * 4)
 			for i = 0, 12, 4 do
@@ -197,7 +192,7 @@ return function()
 			expect(bit32.band(bit32.rshift(Sampled, 16), 0xFF)).to.equal(0)
 		end)
 
-		it("should translate texture IDs, deduplicate URLs, and cache 64x64 buffers in TextureTable", function()
+		it("should translate texture IDs and deduplicate URLs in TextureTable", function()
 			-- Snapshot live Workspace decal entries so this unit test does not disturb runtime state
 			const SavedIdToName = table.clone(TextureTable.IdToName)
 			const SavedNameToId = table.clone(TextureTable.NameToId)
@@ -206,21 +201,12 @@ return function()
 			const SavedCachedBuffers = table.clone(TextureTable.CachedBuffers)
 
 			TextureTable.ResetEntries()
-			TextureTable.EnsureDefaultEntries()
+			expect(TextureTable.TranslateIdToName(1)).to.equal("")
+			expect(TextureTable.GetTextureBuffer(1)).to.equal(nil)
 
-			expect(TextureTable.TranslateIdToName(1)).to.equal("WoodTexture")
-			expect(TextureTable.TranslateIdToName(2)).to.equal("StudTexture")
-			expect(TextureTable.TranslateNameToId("WoodTexture")).to.equal(1)
-			expect(TextureTable.TranslateNameToId("StudTexture")).to.equal(2)
-
-			const WoodBuf = TextureTable.GetTextureBuffer(1)
-			const StudBuf = TextureTable.GetTextureBuffer(2)
-			expect(buffer.len(WoodBuf)).to.equal(64 * 64 * 4)
-			expect(buffer.len(StudBuf)).to.equal(64 * 64 * 4)
-
-			const DecodedFallback = TextureTable.DecodeRawUrl("", WoodBuf)
-			expect(buffer.len(DecodedFallback)).to.equal(64 * 64 * 4)
-			expect(DecodedFallback).to.equal(WoodBuf)
+			const DecodedEmpty, WasDecoded = TextureTable.DecodeRawUrl("")
+			expect(DecodedEmpty).to.equal(nil)
+			expect(WasDecoded).to.equal(false)
 
 			-- Test dynamic URL registration & duplicate URL ignoring
 			TextureTable.ResetEntries()
@@ -234,8 +220,8 @@ return function()
 			expect(DupCreated).to.equal(false)
 			expect(SecondId).to.equal(2)
 			expect(SecondCreated).to.equal(true)
-			expect(buffer.len(TextureTable.GetTextureBuffer(1))).to.equal(64 * 64 * 4)
-			expect(buffer.len(TextureTable.GetTextureBuffer(2))).to.equal(64 * 64 * 4)
+			expect(TextureTable.TranslateIdToName(1)).to.equal("TestDecalA")
+			expect(TextureTable.TranslateNameToId("TestDecalB")).to.equal(2)
 
 			-- Restore previous entries so runtime Workspace decals remain intact
 			TextureTable.ResetEntries()
@@ -295,7 +281,7 @@ return function()
 			const ZBuf = buffer.create(16 * 16 * 4)
 			BufferHelper.ClearBuffers(16 * 16, PixBuf, ZBuf)
 
-			RenderMath.DrawTriangleBatch(CmdBuf, 56, BatchTextures, SolidGreen, 2, 2, 16, 16, PixBuf, ZBuf)
+			RenderMath.DrawTriangleBatch(CmdBuf, 56, BatchTextures, 2, 2, 16, 16, PixBuf, ZBuf)
 			const Sampled = buffer.readu32(PixBuf, (3 * 16 + 3) * 4)
 			expect(bit32.band(Sampled, 0xFF)).to.equal(0)
 			expect(bit32.band(bit32.rshift(Sampled, 8), 0xFF)).to.equal(0)
@@ -304,7 +290,7 @@ return function()
 			-- Verify TextureId = 0 renders untextured solid PackedColor
 			BufferHelper.ClearBuffers(16 * 16, PixBuf, ZBuf)
 			WriteTriCmd(0, 0xFF112233)
-			RenderMath.DrawTriangleBatch(CmdBuf, 56, BatchTextures, SolidGreen, 2, 2, 16, 16, PixBuf, ZBuf)
+			RenderMath.DrawTriangleBatch(CmdBuf, 56, BatchTextures, 2, 2, 16, 16, PixBuf, ZBuf)
 			expect(buffer.readu32(PixBuf, (3 * 16 + 3) * 4)).to.equal(0xFF112233)
 		end)
 

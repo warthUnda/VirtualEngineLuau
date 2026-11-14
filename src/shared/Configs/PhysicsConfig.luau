@@ -67,10 +67,25 @@ PhysicsConfig.ObjectSurfaceFriction = 6.5 :: number
 PhysicsConfig.ObjectRestitution = 0.15 :: number
 -- Normal impact restitution (0-1) for dynamic ECS object collisions.
 
+PhysicsConfig.ObjectDefaultLaunchAngle = Vector3.new(0.7, 0.2, 0.7).Unit :: Vector3
+-- Default unit launch direction vector applied when SimulateInstance is called with a nil Angle parameter.
+
+PhysicsConfig.ObjectDefaultImpulse = 30.0 :: number
+-- Default instantaneous impulse magnitude (kg*m/s) applied when SimulateInstance is called with a nil Impulse parameter.
+
+PhysicsConfig.ObjectDefaultSpeed = 16.0 :: number
+-- Default initial linear speed (studs/s) applied when SimulateInstance is called with a nil Speed parameter.
+
+PhysicsConfig.ObjectAngularDrag = 0.35 :: number
+-- Rotational velocity damping rate per second applied to airborne dynamic ECS objects.
+
+PhysicsConfig.ObjectRollCoupling = 14.0 :: number
+-- Coupling rate converting tangential contact velocity into rolling and tumbling angular velocity.
+
 PhysicsConfig.ObjectSleepSpeedThreshold = 0.08 :: number
 -- Velocity magnitude threshold in studs per second below which grounded dynamic objects settle to sleep.
 
-PhysicsConfig.PhysicsBroadphasePadding = 2.0 :: number
+PhysicsConfig.PhysicsBroadphasePadding = 4.0 :: number
 -- World-space AABB padding in studs around a moving body when querying the BVH for collision candidates.
 
 PhysicsConfig.PlayerMaxWishScale = 2.5 :: number

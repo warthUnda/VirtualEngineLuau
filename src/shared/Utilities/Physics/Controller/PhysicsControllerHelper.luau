@@ -6,6 +6,7 @@
 const Players = game:GetService("Players")
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const RunService = game:GetService("RunService")
+const ServerScriptService = game:GetService("ServerScriptService")
 const UserInputService = game:GetService("UserInputService")
 
 -- Static References --
@@ -17,6 +18,7 @@ const PhysicsFolder = UtilitiesFolder:WaitForChild("Physics")
 -- Modules --
 const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 const PhysicsMath = require(PhysicsFolder:WaitForChild("Core"):WaitForChild("PhysicsMath"))
+const PhysicsMathHelper = require(PhysicsFolder:WaitForChild("Core"):WaitForChild("PhysicsMathHelper"))
 
 const CameraStore = if IS_CLIENT
 	then require(UtilitiesFolder:WaitForChild("Render"):WaitForChild("Camera"):WaitForChild("CameraStore"))
@@ -25,6 +27,7 @@ const CameraStore = if IS_CLIENT
 -- Configs --
 const OBJECT_DEFAULT_DENSITY = SystemsConfigs.ObjectDefaultDensity :: number
 const OBJECT_RESTITUTION = SystemsConfigs.ObjectRestitution :: number
+const DEFAULT_LAUNCH_ANGLE = SystemsConfigs.ObjectDefaultLaunchAngle :: Vector3
 const SLEEP_SPEED_THRESHOLD = SystemsConfigs.ObjectSleepSpeedThreshold :: number
 const SLEEP_SPEED_SQ = SLEEP_SPEED_THRESHOLD * SLEEP_SPEED_THRESHOLD :: number
 const PLAYER_MAX_WISH_SCALE = SystemsConfigs.PlayerMaxWishScale :: number
@@ -41,12 +44,15 @@ local PhysicsControllerHelper = {}
 -- ============================================================================
 
 --[=[
-	Resolves the active client ObjectStorage module reference.
-	@return Instance? -- Resolved ObjectStorage instance (or nil on server).
+	Resolves the active client or server ObjectStorage module reference.
+	@return Instance? -- Resolved Storage module instance.
 ]=]
 function PhysicsControllerHelper.ResolveObjectStorage(): Instance?
 	if not IS_CLIENT then
-		return nil
+		const ServerFolder = ServerScriptService:FindFirstChild("Server")
+		const ObjectsFolder = if ServerFolder then ServerFolder:FindFirstChild("Objects") else nil
+		const ObjectsECS = if ObjectsFolder then ObjectsFolder:FindFirstChild("ObjectsECS") else nil
+		return if ObjectsECS then ObjectsECS:FindFirstChild("Storage") else nil
 	end
 
 	const LocalPlayer = Players.LocalPlayer :: Player?
@@ -248,6 +254,31 @@ function PhysicsControllerHelper.EnsureDynamicEntityMass(
 end
 
 --[=[
+	Resolves a unit launch direction vector from an optional Vector3 direction, yaw angle in degrees, or prepackaged config default.
+	@param Angle (Vector3 | number)? -- Optional world direction vector or horizontal yaw angle in degrees.
+	@return (number, number, number) -- Normalized (DirX, DirY, DirZ).
+]=]
+function PhysicsControllerHelper.ResolveLaunchDirection(Angle: (Vector3 | number)?): (number, number, number)
+	if typeof(Angle) == "Vector3" then
+		const Len = Angle.Magnitude :: number
+		if Len <= 1e-6 then
+			return 0, 0, 0
+		end
+		const InvLen = 1 / Len :: number
+		return Angle.X * InvLen, Angle.Y * InvLen, Angle.Z * InvLen
+	elseif type(Angle) == "number" then
+		const Rad = math.rad(Angle) :: number
+		const RawX = math.cos(Rad) :: number
+		const RawY = DEFAULT_LAUNCH_ANGLE.Y :: number
+		const RawZ = math.sin(Rad) :: number
+		const InvLen = 1 / math.sqrt(RawX * RawX + RawY * RawY + RawZ * RawZ) :: number
+		return RawX * InvLen, RawY * InvLen, RawZ * InvLen
+	end
+
+	return DEFAULT_LAUNCH_ANGLE.X, DEFAULT_LAUNCH_ANGLE.Y, DEFAULT_LAUNCH_ANGLE.Z
+end
+
+--[=[
 	Simulates a single substepped physics frame for an active dynamic ECS object.
 	@param EntityId number -- Target entity ID.
 	@param EntityCount number -- Total active ECS entity count.
@@ -255,9 +286,11 @@ end
 	@param PositionBuffer buffer -- ECS positions buffer.
 	@param SizeBuffer buffer -- ECS sizes buffer.
 	@param DirectionsBuffer buffer -- ECS directions buffer.
+	@param OrientationBuffer buffer? -- Optional ECS orientation buffer.
 	@param DynamicFlags buffer -- ECS dynamic state buffer.
 	@param ObjectGroundedFlags buffer -- ECS grounded state buffer.
 	@param ObjectVelocityBuffer buffer -- Dynamic objects velocity buffer.
+	@param ObjectAngularVelocityBuffer buffer -- Dynamic objects angular velocity buffer.
 	@param ObjectForceBuffer buffer -- Dynamic objects force buffer.
 	@param ObjectInvMassBuffer buffer -- Dynamic objects inverse mass buffer.
 ]=]
@@ -268,9 +301,11 @@ function PhysicsControllerHelper.StepSingleDynamicObject(
 	PositionBuffer: buffer,
 	SizeBuffer: buffer,
 	DirectionsBuffer: buffer,
+	OrientationBuffer: buffer?,
 	DynamicFlags: buffer,
 	ObjectGroundedFlags: buffer,
 	ObjectVelocityBuffer: buffer,
+	ObjectAngularVelocityBuffer: buffer,
 	ObjectForceBuffer: buffer,
 	ObjectInvMassBuffer: buffer
 )
@@ -299,6 +334,10 @@ function PhysicsControllerHelper.StepSingleDynamicObject(
 		WasGrounded,
 		StepDeltaTime
 	)
+
+	const PreCollisionVelX = VelocityX :: number
+	const PreCollisionVelY = VelocityY :: number
+	const PreCollisionVelZ = VelocityZ :: number
 
 	local PosX = buffer.readf32(PositionBuffer, CompOffset) + VelocityX * StepDeltaTime :: number
 	local PosY = buffer.readf32(PositionBuffer, CompOffset + 4) + VelocityY * StepDeltaTime :: number
@@ -336,12 +375,33 @@ function PhysicsControllerHelper.StepSingleDynamicObject(
 	buffer.writef32(PositionBuffer, CompOffset + 8, PosZ)
 	buffer.writeu8(ObjectGroundedFlags, FlagIndex, if Grounded then 1 else 0)
 
+	const AngSpeedSquared = PhysicsMathHelper.StepObjectRotation(
+		EntityId,
+		HalfSizeX,
+		HalfSizeY,
+		HalfSizeZ,
+		PreCollisionVelX,
+		PreCollisionVelY,
+		PreCollisionVelZ,
+		VelocityX,
+		VelocityY,
+		VelocityZ,
+		Grounded,
+		StepDeltaTime,
+		DirectionsBuffer,
+		OrientationBuffer,
+		ObjectAngularVelocityBuffer
+	) :: number
+
 	const SpeedSquared = VelocityX * VelocityX + VelocityY * VelocityY + VelocityZ * VelocityZ :: number
 	const HasAppliedForce = (ForceX ~= 0 or ForceY ~= 0 or ForceZ ~= 0) :: boolean
-	if Grounded and not HasAppliedForce and SpeedSquared < SLEEP_SPEED_SQ then
+	if Grounded and not HasAppliedForce and SpeedSquared < SLEEP_SPEED_SQ and AngSpeedSquared < SLEEP_SPEED_SQ then
 		buffer.writef32(ObjectVelocityBuffer, CompOffset, 0)
 		buffer.writef32(ObjectVelocityBuffer, CompOffset + 4, 0)
 		buffer.writef32(ObjectVelocityBuffer, CompOffset + 8, 0)
+		buffer.writef32(ObjectAngularVelocityBuffer, CompOffset, 0)
+		buffer.writef32(ObjectAngularVelocityBuffer, CompOffset + 4, 0)
+		buffer.writef32(ObjectAngularVelocityBuffer, CompOffset + 8, 0)
 		buffer.writeu8(DynamicFlags, FlagIndex, 2)
 		return
 	end

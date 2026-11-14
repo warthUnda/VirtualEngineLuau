@@ -34,6 +34,8 @@ const PLAYER_HZ = PLAYER_HALF_EXTENTS.Z :: number
 
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const MAX_ENTITIES = SystemsConfigs.ECSMaxEntities :: number
+const DEFAULT_OBJECT_IMPULSE = SystemsConfigs.ObjectDefaultImpulse :: number
+const DEFAULT_OBJECT_SPEED = SystemsConfigs.ObjectDefaultSpeed :: number
 
 const FLAG_CAN_COLLIDE = bit32.lshift(1, 1) :: number
 const FLAG_IS_VISIBLE = bit32.lshift(1, 2) :: number
@@ -68,11 +70,13 @@ local ECSDataModule: any = nil
 local ECSPositionBuffer: buffer? = nil
 local ECSSizeBuffer: buffer? = nil
 local ECSDirectionsBuffer: buffer? = nil
+local ECSOrientationBuffer: buffer? = nil
 local ECSPropertiesBuffer: buffer? = nil
 
 const DynamicFlags = buffer.create(MAX_ENTITIES) :: buffer -- 0 = static, 1 = awake dynamic, 2 = sleeping dynamic
 const ObjectGroundedFlags = buffer.create(MAX_ENTITIES) :: buffer
 const ObjectVelocityBuffer = buffer.create(MAX_ENTITIES * COMPONENT_STRIDE) :: buffer
+const ObjectAngularVelocityBuffer = buffer.create(MAX_ENTITIES * COMPONENT_STRIDE) :: buffer
 const ObjectForceBuffer = buffer.create(MAX_ENTITIES * COMPONENT_STRIDE) :: buffer
 const ObjectInvMassBuffer = buffer.create(MAX_ENTITIES * 4) :: buffer
 const ActiveForceSlots = buffer.create(MAX_ENTITIES * 4) :: buffer
@@ -107,12 +111,14 @@ function PhysicsController.InitializePhysics()
 		ECSPositionBuffer = ObjectStorage.PositionData.GetData()
 		ECSSizeBuffer = ObjectStorage.SizeData.GetData()
 		ECSDirectionsBuffer = ObjectStorage.DirectionsData.GetData()
+		ECSOrientationBuffer = if ObjectStorage.OrientationData then ObjectStorage.OrientationData.GetData() else nil
 		ECSPropertiesBuffer = ObjectStorage.PropertiesData.GetData()
 	end
 
 	Initialized = true
 
 	if not IS_CLIENT then
+		RunService.Heartbeat:Connect(PhysicsController.SimulatePhysicsFrame)
 		return
 	end
 
@@ -275,49 +281,51 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 	local PendingJump = JumpRequested :: boolean
 
 	for _ = 1, SUBSTEPS do
-		const WasGrounded = PlayerGrounded :: boolean
-		PlayerVelX, PlayerVelY, PlayerVelZ, PlayerGrounded = PhysicsMath.StepPlayerVelocity(
-			PlayerVelX,
-			PlayerVelY,
-			PlayerVelZ,
-			WishX,
-			WishZ,
-			WishScale,
-			PendingJump,
-			PlayerGrounded,
-			StepDeltaTime
-		)
-
-		if WasGrounded and PendingJump then
-			PendingJump = false
-		end
-
-		PlayerPosX += PlayerVelX * StepDeltaTime
-		PlayerPosY += PlayerVelY * StepDeltaTime
-		PlayerPosZ += PlayerVelZ * StepDeltaTime
-
-		PlayerPosX, PlayerPosY, PlayerPosZ, PlayerVelX, PlayerVelY, PlayerVelZ, PlayerGrounded =
-			PhysicsMath.ResolveBodyWorldCollisions(
-				PlayerPosX,
-				PlayerPosY,
-				PlayerPosZ,
-				PLAYER_HX,
-				PLAYER_HY,
-				PLAYER_HZ,
+		if IS_CLIENT then
+			const WasGrounded = PlayerGrounded :: boolean
+			PlayerVelX, PlayerVelY, PlayerVelZ, PlayerGrounded = PhysicsMath.StepPlayerVelocity(
 				PlayerVelX,
 				PlayerVelY,
 				PlayerVelZ,
-				PLAYER_INV_MASS,
-				0,
-				0,
-				EntityCount,
-				PositionBuffer,
-				SizeBuffer,
-				DirectionsBuffer,
-				DynamicFlags,
-				ObjectVelocityBuffer,
-				ObjectInvMassBuffer
+				WishX,
+				WishZ,
+				WishScale,
+				PendingJump,
+				PlayerGrounded,
+				StepDeltaTime
 			)
+
+			if WasGrounded and PendingJump then
+				PendingJump = false
+			end
+
+			PlayerPosX += PlayerVelX * StepDeltaTime
+			PlayerPosY += PlayerVelY * StepDeltaTime
+			PlayerPosZ += PlayerVelZ * StepDeltaTime
+
+			PlayerPosX, PlayerPosY, PlayerPosZ, PlayerVelX, PlayerVelY, PlayerVelZ, PlayerGrounded =
+				PhysicsMath.ResolveBodyWorldCollisions(
+					PlayerPosX,
+					PlayerPosY,
+					PlayerPosZ,
+					PLAYER_HX,
+					PLAYER_HY,
+					PLAYER_HZ,
+					PlayerVelX,
+					PlayerVelY,
+					PlayerVelZ,
+					PLAYER_INV_MASS,
+					0,
+					0,
+					EntityCount,
+					PositionBuffer,
+					SizeBuffer,
+					DirectionsBuffer,
+					DynamicFlags,
+					ObjectVelocityBuffer,
+					ObjectInvMassBuffer
+				)
+		end
 
 		for EntityId = 1, EntityCount do
 			if buffer.readu8(DynamicFlags, EntityId - 1) == 1 then
@@ -328,9 +336,11 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 					PositionBuffer,
 					SizeBuffer,
 					DirectionsBuffer,
+					ECSOrientationBuffer,
 					DynamicFlags,
 					ObjectGroundedFlags,
 					ObjectVelocityBuffer,
+					ObjectAngularVelocityBuffer,
 					ObjectForceBuffer,
 					ObjectInvMassBuffer
 				)
@@ -344,45 +354,113 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 		ObjectForceBuffer
 	)
 
-	if PlayerPosY < VOID_RESET_Y then
-		PlayerPosX, PlayerPosY, PlayerPosZ = SpawnPosX, SpawnPosY, SpawnPosZ
-		PlayerVelX, PlayerVelY, PlayerVelZ = 0, 0, 0
-		PlayerGrounded = false
-	end
+	if IS_CLIENT then
+		if PlayerPosY < VOID_RESET_Y then
+			PlayerPosX, PlayerPosY, PlayerPosZ = SpawnPosX, SpawnPosY, SpawnPosZ
+			PlayerVelX, PlayerVelY, PlayerVelZ = 0, 0, 0
+			PlayerGrounded = false
+		end
 
-	if HostRootPart and HostRootPart.Parent then
-		HostRootPart.CFrame = HostRootPart.CFrame.Rotation + Vector3.new(PlayerPosX, PlayerPosY, PlayerPosZ)
+		if HostRootPart and HostRootPart.Parent then
+			HostRootPart.CFrame = HostRootPart.CFrame.Rotation + Vector3.new(PlayerPosX, PlayerPosY, PlayerPosZ)
+		end
 	end
 end
 
-function PhysicsController.SetEntityDynamic(EntityId: number, IsDynamic: boolean, CustomMass: number?)
+function PhysicsController.SimulateInstance(
+	EntityId: number,
+	Angle: (Vector3 | number)?,
+	Impulse: number?,
+	Speed: number?,
+	CustomMass: number?
+): boolean
+	if not Initialized then
+		PhysicsController.InitializePhysics()
+	end
+
 	if EntityId < 1 or EntityId > MAX_ENTITIES then
-		return
+		return false
 	end
 
 	const FlagIndex = EntityId - 1 :: number
-	if not IsDynamic then
-		buffer.writeu8(DynamicFlags, FlagIndex, 0)
-		buffer.writef32(ObjectInvMassBuffer, FlagIndex * 4, 0)
-		if ECSPropertiesBuffer then
-			const PropReg = buffer.readu32(ECSPropertiesBuffer, FlagIndex * 4) :: number
-			buffer.writeu32(
-				ECSPropertiesBuffer,
-				FlagIndex * 4,
-				bit32.bor(PropReg, FLAG_CAN_COLLIDE, FLAG_IS_VISIBLE, FLAG_ANCHORED)
-			)
+	if ECSPropertiesBuffer then
+		const PropReg = buffer.readu32(ECSPropertiesBuffer, FlagIndex * 4) :: number
+		if bit32.btest(PropReg, FLAG_ANCHORED) then
+			return false
 		end
-		return
 	end
 
-	PhysicsControllerHelper.EnsureDynamicEntityMass(
+	const InverseMass = PhysicsControllerHelper.EnsureDynamicEntityMass(
 		EntityId,
 		ObjectInvMassBuffer,
 		ECSSizeBuffer,
 		ECSPropertiesBuffer,
 		CustomMass
-	)
+	) :: number
+
+	const DirX: number, DirY: number, DirZ: number = PhysicsControllerHelper.ResolveLaunchDirection(Angle)
+	const ResolvedImpulse = if Impulse ~= nil then Impulse else DEFAULT_OBJECT_IMPULSE :: number
+	const ResolvedSpeed = if Speed ~= nil then Speed else DEFAULT_OBJECT_SPEED :: number
+	const TotalLaunchSpeed = ResolvedSpeed + ResolvedImpulse * InverseMass :: number
+
+	const VelX = DirX * TotalLaunchSpeed :: number
+	const VelY = DirY * TotalLaunchSpeed :: number
+	const VelZ = DirZ * TotalLaunchSpeed :: number
+	const CompOffset = FlagIndex * COMPONENT_STRIDE :: number
+
 	buffer.writeu8(DynamicFlags, FlagIndex, 1)
+	buffer.writef32(ObjectVelocityBuffer, CompOffset, VelX)
+	buffer.writef32(ObjectVelocityBuffer, CompOffset + 4, VelY)
+	buffer.writef32(ObjectVelocityBuffer, CompOffset + 8, VelZ)
+
+	local Radius = 1.0 :: number
+	if ECSSizeBuffer then
+		const SizeX = buffer.readf32(ECSSizeBuffer, CompOffset) :: number
+		const SizeY = buffer.readf32(ECSSizeBuffer, CompOffset + 4) :: number
+		const SizeZ = buffer.readf32(ECSSizeBuffer, CompOffset + 8) :: number
+		Radius = math.max(0.25, (SizeX + SizeY + SizeZ) / 6)
+	end
+
+	buffer.writef32(ObjectAngularVelocityBuffer, CompOffset, VelZ / Radius)
+	buffer.writef32(ObjectAngularVelocityBuffer, CompOffset + 4, 0)
+	buffer.writef32(ObjectAngularVelocityBuffer, CompOffset + 8, -VelX / Radius)
+
+	return true
+end
+
+function PhysicsController.StopSimulatingInstance(EntityId: number)
+	if not Initialized then
+		PhysicsController.InitializePhysics()
+	end
+
+	if EntityId < 1 or EntityId > MAX_ENTITIES then
+		return
+	end
+
+	const FlagIndex = EntityId - 1 :: number
+	const CompOffset = FlagIndex * COMPONENT_STRIDE :: number
+
+	buffer.writeu8(DynamicFlags, FlagIndex, 0)
+	buffer.writeu8(ObjectGroundedFlags, FlagIndex, 0)
+	buffer.writef32(ObjectInvMassBuffer, FlagIndex * 4, 0)
+	buffer.writef32(ObjectVelocityBuffer, CompOffset, 0)
+	buffer.writef32(ObjectVelocityBuffer, CompOffset + 4, 0)
+	buffer.writef32(ObjectVelocityBuffer, CompOffset + 8, 0)
+	buffer.writef32(ObjectAngularVelocityBuffer, CompOffset, 0)
+	buffer.writef32(ObjectAngularVelocityBuffer, CompOffset + 4, 0)
+	buffer.writef32(ObjectAngularVelocityBuffer, CompOffset + 8, 0)
+	buffer.writef32(ObjectForceBuffer, CompOffset, 0)
+	buffer.writef32(ObjectForceBuffer, CompOffset + 4, 0)
+	buffer.writef32(ObjectForceBuffer, CompOffset + 8, 0)
+end
+
+function PhysicsController.SetEntityDynamic(EntityId: number, IsDynamic: boolean, CustomMass: number?)
+	if not IsDynamic then
+		PhysicsController.StopSimulatingInstance(EntityId)
+		return
+	end
+
+	PhysicsController.SimulateInstance(EntityId, Vector3.zero, 0, 0, CustomMass)
 end
 
 function PhysicsController.GetPlayerPosition(): Vector3

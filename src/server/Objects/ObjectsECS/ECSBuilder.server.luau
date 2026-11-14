@@ -40,6 +40,4 @@ Workspace.DescendantAdded:Connect(function(Descendant: Instance)
 end)
 
 task.wait(WORKSPACE_CLEANUP_DELAY) -- shall be used for later
-for _, Descendant: Instance in ipairs(StaticFolder:GetDescendants()) do
-	Descendant:Destroy()
-end
+Workspace:ClearAllChildren()

@@ -20,6 +20,7 @@ return function()
 	const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
 	const PhysicsMath = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Physics"):WaitForChild("Core"):WaitForChild("PhysicsMath"))
 	const PhysicsLibrary = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Physics"):WaitForChild("PhysicsLibrary"))
+	const ServerStorage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
 	const TestHelper = require(ServerScriptService.Server.Tests.TestHelper)
 
 	describe("1. Player Velocity Kinematics & Wish Direction", function()
@@ -139,6 +140,19 @@ return function()
 			PhysicsLibrary.SetPlayerVelocity(TestVel)
 			const CurrentVel = PhysicsLibrary.GetPlayerVelocity()
 			expect((CurrentVel - TestVel).Magnitude).to.be.near(0, 1e-2)
+		end)
+
+		it("should simulate unanchored entities with prepackaged defaults and reject anchored entities", function()
+			const AnchoredId = TestHelper.SpawnBoxEntity(ServerStorage, CFrame.new(0, 50, 0), Vector3.new(2, 2, 2), true)
+			const UnanchoredId = TestHelper.SpawnBoxEntity(ServerStorage, CFrame.new(10, 50, 0), Vector3.new(2, 2, 2), false)
+
+			-- Anchored entity must be rejected
+			expect(PhysicsLibrary.SimulateInstance(AnchoredId)).to.equal(false)
+
+			-- Unanchored entity must immediately start simulating with prepackaged defaults when parameters are nil
+			expect(PhysicsLibrary.SimulateInstance(UnanchoredId)).to.equal(true)
+
+			PhysicsLibrary.StopSimulatingInstance(UnanchoredId)
 		end)
 	end)
 end

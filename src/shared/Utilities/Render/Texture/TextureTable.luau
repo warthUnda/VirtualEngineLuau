@@ -12,10 +12,6 @@ const TextureHelper = require(script.Parent.TextureHelper)
 -- Configs --
 const TEXTURE_SIZE = RenderConfig.TextureSize :: number
 
--- Buffers
-const DefaultWoodBuffer = TextureHelper.CreateProceduralWoodTexture(TEXTURE_SIZE) :: buffer
-const DefaultStudBuffer = TextureHelper.CreateProceduralStudTexture(TEXTURE_SIZE) :: buffer
-
 local NextDynamicId = 1 :: number
 
 local TextureTable = {}
@@ -25,26 +21,17 @@ local TextureTable = {}
 -- ============================================================================
 
 -- Translator table: numeric ECS TextureId -> texture name
-TextureTable.IdToName = {
-	[1] = "WoodTexture",
-	[2] = "StudTexture",
-} :: { [number]: string }
+TextureTable.IdToName = {} :: { [number]: string }
 
 -- Reverse translator table: texture name -> numeric ECS TextureId
-TextureTable.NameToId = {
-	WoodTexture = 1,
-	StudTexture = 2,
-} :: { [string]: number }
+TextureTable.NameToId = {} :: { [string]: number }
 
 -- URL translator maps for deduplication and client-side decoding
 TextureTable.IdToUrl = {} :: { [number]: string }
 TextureTable.UrlToId = {} :: { [string]: number }
 
 -- Cached 64x64 RGBA texture buffers indexed by numeric ECS TextureId
-TextureTable.CachedBuffers = {
-	[1] = DefaultWoodBuffer,
-	[2] = DefaultStudBuffer,
-} :: { [number]: buffer }
+TextureTable.CachedBuffers = {} :: { [number]: buffer }
 
 --[=[
 	Trims surrounding whitespace from a raw Roblox asset URL.
@@ -58,27 +45,14 @@ end
 --[=[
 	Decodes a raw Roblox texture URL into a 64x64 RGBA buffer using the renderer's EditableImage pipeline.
 	@param RawUrl string -- Raw Roblox asset URL (e.g. "rbxassetid://123456789").
-	@param FallbackBuffer buffer? -- Optional fallback 64x64 buffer if Url is empty or fails to load.
-	@return (buffer, boolean) -- Decoded (or fallback) 64x64 RGBA buffer, and true if decoded from RawUrl.
+	@return (buffer?, boolean) -- Decoded 64x64 RGBA buffer (or nil if empty/failed), and true if decoded.
 ]=]
-function TextureTable.DecodeRawUrl(RawUrl: string, FallbackBuffer: buffer?): (buffer, boolean)
-	return TextureHelper.DecodeUrlToBuffer(RawUrl, FallbackBuffer, TEXTURE_SIZE)
+function TextureTable.DecodeRawUrl(RawUrl: string): (buffer?, boolean)
+	return TextureHelper.DecodeUrlToBuffer(RawUrl, TEXTURE_SIZE)
 end
 
 --[=[
-	Returns a deterministic procedural 64x64 fallback buffer for a given TextureId slot.
-	@param TextureId number -- Numeric TextureId slot.
-	@return buffer -- Procedural 64x64 RGBA buffer.
-]=]
-local function GetFallbackBufferForSlot(TextureId: number): buffer
-	if TextureId % 2 == 1 then
-		return DefaultWoodBuffer
-	end
-	return DefaultStudBuffer
-end
-
---[=[
-	Clears all dynamic and default entries from TextureTable before scanning Workspace decals.
+	Clears all dynamic entries from TextureTable before scanning Workspace decals.
 ]=]
 function TextureTable.ResetEntries()
 	table.clear(TextureTable.IdToName)
@@ -90,24 +64,7 @@ function TextureTable.ResetEntries()
 end
 
 --[=[
-	Populates fallback WoodTexture (1) and StudTexture (2) entries if no decals were registered.
-]=]
-function TextureTable.EnsureDefaultEntries()
-	if next(TextureTable.IdToName) ~= nil then
-		return
-	end
-
-	TextureTable.IdToName[1] = "WoodTexture"
-	TextureTable.IdToName[2] = "StudTexture"
-	TextureTable.NameToId["WoodTexture"] = 1
-	TextureTable.NameToId["StudTexture"] = 2
-	TextureTable.CachedBuffers[1] = DefaultWoodBuffer
-	TextureTable.CachedBuffers[2] = DefaultStudBuffer
-	NextDynamicId = 3
-end
-
---[=[
-	Registers a texture URL into TextureTable, ignoring empty or duplicate URLs, and caches its 64x64 buffer.
+	Registers a texture URL into TextureTable, ignoring empty or duplicate URLs, and optionally caches its 64x64 buffer.
 	@param RawUrl string -- Raw Roblox Decal.Texture URL.
 	@param TextureName string? -- Optional human-readable name for the translator table.
 	@param DecodeNow boolean? -- Whether to immediately decode via AssetService (defaults to true).
@@ -139,12 +96,11 @@ function TextureTable.RegisterUrl(RawUrl: string, TextureName: string?, DecodeNo
 	TextureTable.IdToUrl[AssignedId] = NormalizedUrl
 	TextureTable.UrlToId[NormalizedUrl] = AssignedId
 
-	const FallbackBuffer = GetFallbackBufferForSlot(AssignedId)
 	if DecodeNow ~= false then
-		const DecodedBuffer = TextureTable.DecodeRawUrl(NormalizedUrl, FallbackBuffer)
-		TextureTable.CachedBuffers[AssignedId] = DecodedBuffer
-	else
-		TextureTable.CachedBuffers[AssignedId] = FallbackBuffer
+		const DecodedBuffer = TextureTable.DecodeRawUrl(NormalizedUrl)
+		if DecodedBuffer then
+			TextureTable.CachedBuffers[AssignedId] = DecodedBuffer
+		end
 	end
 
 	return AssignedId, true
@@ -155,13 +111,11 @@ end
 	@param TextureId number -- Replicated numeric TextureId.
 	@param RawUrl string -- Raw Roblox Decal.Texture URL.
 	@param TextureName string? -- Optional texture name.
-	@return (buffer, boolean) -- Cached 64x64 RGBA buffer, and true if newly decoded/updated.
+	@return (buffer?, boolean) -- Cached 64x64 RGBA buffer (or nil), and true if newly decoded/updated.
 ]=]
-function TextureTable.RegisterEntryWithId(TextureId: number, RawUrl: string, TextureName: string?): (buffer, boolean)
+function TextureTable.RegisterEntryWithId(TextureId: number, RawUrl: string, TextureName: string?): (buffer?, boolean)
 	const NormalizedUrl = TextureTable.NormalizeUrl(RawUrl)
-	const FallbackBuffer = GetFallbackBufferForSlot(TextureId)
 	if NormalizedUrl == "" then
-		TextureTable.CachedBuffers[TextureId] = TextureTable.CachedBuffers[TextureId] or FallbackBuffer
 		return TextureTable.CachedBuffers[TextureId], false
 	end
 
@@ -199,9 +153,13 @@ function TextureTable.RegisterEntryWithId(TextureId: number, RawUrl: string, Tex
 		NextDynamicId = TextureId + 1
 	end
 
-	const DecodedBuffer = TextureTable.DecodeRawUrl(NormalizedUrl, FallbackBuffer)
-	TextureTable.CachedBuffers[TextureId] = DecodedBuffer
-	return DecodedBuffer, true
+	const DecodedBuffer = TextureTable.DecodeRawUrl(NormalizedUrl)
+	if DecodedBuffer then
+		TextureTable.CachedBuffers[TextureId] = DecodedBuffer
+		return DecodedBuffer, true
+	end
+
+	return nil, false
 end
 
 --[=[
@@ -220,15 +178,15 @@ end
 --[=[
 	Translates a numeric ECS TextureId into its registered texture name.
 	@param TextureId number -- Numeric TextureId stored in the ECS Properties bitfield.
-	@return string -- Texture name (defaults to "WoodTexture" if unknown).
+	@return string -- Texture name (empty string if unknown).
 ]=]
 function TextureTable.TranslateIdToName(TextureId: number): string
-	return TextureTable.IdToName[TextureId] or "WoodTexture"
+	return TextureTable.IdToName[TextureId] or ""
 end
 
 --[=[
 	Translates a texture name into its numeric ECS TextureId.
-	@param TextureName string -- Registered texture name (e.g. "WoodTexture", "StudTexture", or Decal name).
+	@param TextureName string -- Registered texture name (e.g. Decal name).
 	@return number -- Numeric TextureId (0 if not registered).
 ]=]
 function TextureTable.TranslateNameToId(TextureName: string): number
@@ -236,17 +194,12 @@ function TextureTable.TranslateNameToId(TextureName: string): number
 end
 
 --[=[
-	Returns the cached 64x64 RGBA texture buffer for a given TextureId.
+	Returns the cached 64x64 RGBA texture buffer for a given TextureId, or nil if not cached.
 	@param TextureId number -- Numeric TextureId from the ECS Properties bitfield.
-	@return buffer -- Cached 64x64 RGBA pixel buffer.
+	@return buffer? -- Cached 64x64 RGBA pixel buffer (or nil).
 ]=]
-function TextureTable.GetTextureBuffer(TextureId: number): buffer
-	const Cached = TextureTable.CachedBuffers[TextureId]
-	if Cached then
-		return Cached
-	end
-
-	return TextureTable.CachedBuffers[1] or DefaultWoodBuffer
+function TextureTable.GetTextureBuffer(TextureId: number): buffer?
+	return TextureTable.CachedBuffers[TextureId]
 end
 
 --[=[

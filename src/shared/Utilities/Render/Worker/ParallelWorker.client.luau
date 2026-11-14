@@ -25,7 +25,6 @@ const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
 local DirtyMinY = 0 :: number
 local DirtyMaxY = -1 :: number
 local TextureBuffers = TextureTable.GetAllCachedBuffers() :: { [number]: buffer }
-local DefaultTextureBuffer = TextureTable.GetTextureBuffer(1) :: buffer
 local TextureWidth = TEXTURE_SIZE :: number
 local TextureHeight = TEXTURE_SIZE :: number
 
@@ -47,7 +46,6 @@ SelfActor:BindToMessageParallel(
 	"Set Texture Table",
 	function(NewTextureBuffers: { [number]: buffer }, NewWidth: number, NewHeight: number)
 		TextureBuffers = NewTextureBuffers
-		DefaultTextureBuffer = NewTextureBuffers[1] or DefaultTextureBuffer
 		TextureWidth = NewWidth
 		TextureHeight = NewHeight
 	end
@@ -65,7 +63,6 @@ SelfActor:BindToMessageParallel("Execute Rendering", function(RenderBuffer: buff
 			RenderBuffer,
 			ByteCount,
 			TextureBuffers,
-			DefaultTextureBuffer,
 			TextureWidth,
 			TextureHeight,
 			WIDTH,

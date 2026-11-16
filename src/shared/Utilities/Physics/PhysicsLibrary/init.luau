@@ -8,10 +8,13 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Static References --
 const PhysicsFolder = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities"):WaitForChild("Physics")
 
--- Modules --
+-- Libraries --
 const PhysicsController = require(PhysicsFolder:WaitForChild("Controller"):WaitForChild("PhysicsController"))
 
+-- Tables --
 local PhysicsLibrary = {}
+
+-- Functions --
 
 -- ============================================================================
 -- 1. DYNAMIC ENTITY & OBJECT SIMULATION CALLS

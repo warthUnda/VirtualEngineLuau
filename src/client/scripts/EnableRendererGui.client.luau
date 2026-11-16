@@ -10,6 +10,7 @@ const LocalPlayer = Players.LocalPlayer :: Player
 const PlayerGui = LocalPlayer:WaitForChild("PlayerGui") :: PlayerGui
 const RendererScreenGui = PlayerGui:WaitForChild("ScreenGui") :: ScreenGui
 
+-- Functions --
 -- ============================================================================
 -- 1. ENABLE RENDERER SCREENGUI
 -- ============================================================================

@@ -8,6 +8,27 @@
 
 ---
 
+## Modular Decomposition & File Layout
+
+### Controller Modules (`src/shared/Utilities/Physics/Controller/`)
+- **`PhysicsController.luau`**: Thin frame and substep loop orchestrator executing player and active dynamic rigid body steps.
+- **`PhysicsControllerHelper.luau`**: Helper for dynamic mass calculation, launch direction resolution, per-entity dynamic substep integration, and force clearing.
+- **`PhysicsInputGateway.luau`**: Isolates Roblox actor storage resolution, character spawn binding, and keyboard input sampling.
+- **`PhysicsInstanceManager.luau`**: Dynamic entity launching (`StartSimulatingEntity`), continuous/impulse movement (`ApplyObjectMovement`), and simulation stopping (`StopSimulatingEntity`).
+- **`PhysicsAwakeState.luau`**: Dense awake entity tracking (`AwakeEntitiesBuffer`, `AwakeEntitySlotBuffer`), velocity/force buffers, and `SetSwapPopCallback` synchronization.
+
+### Core Modules (`src/shared/Utilities/Physics/Core/`)
+- **`PhysicsMath.luau`**: Core physics facade for linear velocity integration, broadphase candidate filtering, and world collision resolution.
+- **`PhysicsSATMath.luau`**: Pure Separating Axis Theorem (SAT) narrowphase collision kernel between an axis-aligned box body and an oriented ECS box.
+- **`PhysicsRotationMath.luau`**: Rodrigues' axis-angle formula, angular velocity integration, contact roll coupling, and orthonormal basis updates.
+- **`PhysicsMathHelper.luau`**: Pairwise dynamic collision impulse resolution and contact restitution.
+- **`PlayerPhysics.luau`**: Dedicated player kinematic velocity stepping, grounded driving, stopping friction, and airborne steering.
+
+### Public Facade (`src/shared/Utilities/Physics/PhysicsLibrary/`)
+- **`init.luau`**: Public consumer API for moving players, launching instances, teleportation, and querying velocities.
+
+---
+
 ## Architectural Mechanisms
 
 ### 1. Kinematic Velocity, Ground Interaction & Character Independence
@@ -27,7 +48,7 @@
 - Computes minimum translation distance (`MinOverlap`) and the surface normal (`BestNormal`) along the principal axis of least penetration.
 - **Position & Momentum Transfer:** Displaces intersecting bodies out of geometry and updates momentum according to inverse mass ratios (`PLAYER_INV_MASS`, `ObjectInvMassBuffer`).
 
-### 4. PhysicsLibrary & Awake-List Entity Management
-- Exposes a single unified entity simulation entry point `SimulateInstance(EntityId, Angle, Impulse, Speed, CustomMass)` that checks `FLAG_ANCHORED` and immediately applies physics (falling back to prepackaged `PhysicsConfig` defaults `ObjectDefaultLaunchAngle`, `ObjectDefaultImpulse`, and `ObjectDefaultSpeed` when parameters are `nil`), alongside `StopSimulatingInstance(EntityId)`.
+### 4. Modular Controller Decomposition & Awake-List Entity Management (`PhysicsController`, `PhysicsInstanceManager`, `PhysicsAwakeState`, `PhysicsInputGateway`, `PhysicsControllerHelper`, `PhysicsLibrary`)
+- **`PhysicsController` & `PhysicsInstanceManager`**: `PhysicsController` acts as the thin simulation facade while `PhysicsInstanceManager` handles `ApplyObjectMovement`, `StartSimulatingEntity`, and `StopSimulatingEntity` (checking `FLAG_ANCHORED` and falling back to prepackaged `PhysicsConfig` defaults `ObjectDefaultLaunchAngle`, `ObjectDefaultImpulse`, and `ObjectDefaultSpeed`). `PhysicsInputGateway` isolates Actor storage resolution, character binding, and keyboard sampling.
 - Exposes high-level player state APIs: `SetPlayerPosition`, `GetPlayerPosition`, `SetPlayerVelocity`, and `GetPlayerVelocity`.
 - Manages wake/sleep states and tumbling angular velocity via a dense `AwakeEntitiesBuffer` / `AwakeEntitySlotBuffer` (`O(AwakeCount)` iteration instead of scanning all entities), calls `BVH.EnsureFresh()` once per substep, wakes sleeping entities collided in `PhysicsMath`, marks mutated bodies via `ECSData.MarkDirty`, and stays synchronized across `DeleteEntity` swap-pops via `SetSwapPopCallback`.

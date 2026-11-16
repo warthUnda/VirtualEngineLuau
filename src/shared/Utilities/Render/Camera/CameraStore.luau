@@ -6,7 +6,7 @@
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const RunService = game:GetService("RunService")
 
--- Modules --
+-- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const CameraHelper = require(script.Parent.CameraHelper)
 
@@ -14,6 +14,12 @@ const CameraHelper = require(script.Parent.CameraHelper)
 const FIXED_POSITION = SystemsConfigs.CameraFixedPosition :: Vector3
 const DEFAULT_CAMERA_CFRAME = SystemsConfigs.DefaultCameraCFrame :: CFrame
 const DEFAULT_CAMERA_FOV = SystemsConfigs.DefaultCameraFOV :: number
+
+-- Variables --
+local CameraPosition = DEFAULT_CAMERA_CFRAME.Position :: Vector3
+local CameraRight = DEFAULT_CAMERA_CFRAME.RightVector :: Vector3
+local CameraUp = DEFAULT_CAMERA_CFRAME.UpVector :: Vector3
+local CameraLook = DEFAULT_CAMERA_CFRAME.LookVector :: Vector3
 
 -- Tables --
 local CameraTable = {
@@ -23,12 +29,9 @@ local CameraTable = {
 	CameraSubject = nil :: Instance?,
 }
 
-local CameraPosition = DEFAULT_CAMERA_CFRAME.Position :: Vector3
-local CameraRight = DEFAULT_CAMERA_CFRAME.RightVector :: Vector3
-local CameraUp = DEFAULT_CAMERA_CFRAME.UpVector :: Vector3
-local CameraLook = DEFAULT_CAMERA_CFRAME.LookVector :: Vector3
-
 local CameraStore = {}
+
+-- Functions --
 
 -- ============================================================================
 -- 1. CAMERA SYNC - UPDATES CAMERA STATE EACH FRAME

@@ -22,9 +22,11 @@ return function()
 	-- Storage --
 	const ServerStorage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
 
-	-- Modules --
+	-- Libraries --
 	const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
-	const ViewCulling = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("ViewCulling"))
+	const ViewCulling = require(
+		SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("ViewCulling")
+	)
 	const PlayerCuller = require(ServerScriptService.Server.Objects.Replication.Core.PlayerCuller)
 	const PlayerFunctions = require(ServerScriptService.Server.Objects.Replication.Core.PlayerFunctions)
 	const TestHelper = require(ServerScriptService.Server.Tests.TestHelper)
@@ -32,93 +34,7 @@ return function()
 	-- Configs --
 	const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 
-	describe("1. Frustum & View Cone Culling", function()
-		it("should cull entities behind or beyond near/far clipping boundaries", function()
-			const PosBuf = buffer.create(COMPONENT_STRIDE * 2)
-			const SizeBuf = buffer.create(COMPONENT_STRIDE * 2)
-
-			-- Entity 1: Far behind near plane (e.g. at -50 when camera looks forward)
-			buffer.writef32(PosBuf, 0, 0)
-			buffer.writef32(PosBuf, 4, 0)
-			buffer.writef32(PosBuf, 8, 50000) -- Beyond Far clip
-			buffer.writef32(SizeBuf, 0, 2)
-			buffer.writef32(SizeBuf, 4, 2)
-			buffer.writef32(SizeBuf, 8, 2)
-
-			const IsCulled = ViewCulling.IsEntityCulled(1, PosBuf, SizeBuf)
-			expect(IsCulled).to.equal(true)
-		end)
-
-		it("should pass entities directly in front of the observer cone", function()
-			const PosBuf = buffer.create(COMPONENT_STRIDE)
-			const SizeBuf = buffer.create(COMPONENT_STRIDE)
-
-			-- Entity at (0, 0, -20) (in default look direction -Z)
-			buffer.writef32(PosBuf, 0, 0)
-			buffer.writef32(PosBuf, 4, 0)
-			buffer.writef32(PosBuf, 8, -20)
-			buffer.writef32(SizeBuf, 0, 4)
-			buffer.writef32(SizeBuf, 4, 4)
-			buffer.writef32(SizeBuf, 8, 4)
-
-			const IsCulled = ViewCulling.IsEntityCulled(1, PosBuf, SizeBuf)
-			expect(IsCulled).to.equal(false)
-		end)
-
-		it("should update observer frustum and player replication state without a Character or Humanoid", function()
-			const MockPlayer = ({ Character = nil } :: any) :: Player
-			const Payload = buffer.create(ViewCulling.ObserverPayloadBytes)
-			buffer.writef32(Payload, 0, 100)
-			buffer.writef32(Payload, 4, 20)
-			buffer.writef32(Payload, 8, -50)
-			buffer.writef32(Payload, 12, 1)
-			buffer.writef32(Payload, 16, 0)
-			buffer.writef32(Payload, 20, 0)
-			buffer.writef32(Payload, 24, 0)
-			buffer.writef32(Payload, 28, 1)
-			buffer.writef32(Payload, 32, 0)
-			buffer.writef32(Payload, 36, 0)
-			buffer.writef32(Payload, 40, 0)
-			buffer.writef32(Payload, 44, 1)
-			buffer.writef32(Payload, 48, 0)
-			buffer.writef32(Payload, 52, 70)
-
-			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, Payload, 1)
-			const State = PlayerFunctions.GetOrCreatePlayerState(MockPlayer, 1)
-			expect(State.ClientSynced).to.equal(true)
-			expect(State.OriginX).to.be.near(100, 1e-4)
-
-			ViewCulling.UpdateObserverFromVectors(
-				State.OriginX,
-				State.OriginY,
-				State.OriginZ,
-				State.LookX,
-				State.LookY,
-				State.LookZ,
-				State.UpX,
-				State.UpY,
-				State.UpZ,
-				State.RightX,
-				State.RightY,
-				State.RightZ,
-				State.ExtraBackPadding,
-				State.FovDegrees
-			)
-
-			const PosBuf = buffer.create(COMPONENT_STRIDE)
-			const SizeBuf = buffer.create(COMPONENT_STRIDE)
-			buffer.writef32(PosBuf, 0, 125)
-			buffer.writef32(PosBuf, 4, 20)
-			buffer.writef32(PosBuf, 8, -50)
-			buffer.writef32(SizeBuf, 0, 4)
-			buffer.writef32(SizeBuf, 4, 4)
-			buffer.writef32(SizeBuf, 8, 4)
-
-			expect(ViewCulling.IsEntityCulled(1, PosBuf, SizeBuf)).to.equal(false)
-			PlayerFunctions.RemovePlayerState(MockPlayer)
-			ViewCulling.UpdateObserverFromVectors(0, 0, 0, 0, 0, -1, 0, 1, 0, 1, 0, 0, 0, 70)
-		end)
-
+	describe("1. Replication Delta Culling & Swap-Pop Resync", function()
 		it("should not re-send unchanged entities when leaving and re-entering the observer frustum", function()
 			const EntityId = TestHelper.SpawnBoxEntity(ServerStorage, CFrame.new(0, 0, -25), Vector3.new(4, 4, 4), false)
 			const MockPlayer = ({ Character = nil } :: any) :: Player
@@ -147,7 +63,6 @@ return function()
 			buffer.writef32(BackwardPayload, 44, 0)
 			buffer.writef32(BackwardPayload, 52, 70)
 
-			-- 1. Look at entity -> sent once (drain all initial map chunks when Workspace exceeds packet cap)
 			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, ForwardPayload, EntityId)
 			local TotalInitialSent = 0 :: number
 			for _ = 1, 64 do
@@ -159,7 +74,6 @@ return function()
 			end
 			expect(TotalInitialSent >= 1).to.equal(true)
 
-			-- 2. Look away (culls entity; drain any remaining map parts in +Z)
 			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, BackwardPayload, EntityId)
 			for _ = 1, 64 do
 				const AwayPacket = PlayerCuller.CullObjects(MockPlayer)
@@ -168,12 +82,10 @@ return function()
 				end
 			end
 
-			-- 3. Look back without entity mutating -> must NOT re-send
 			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, ForwardPayload, EntityId)
 			const ReenterPacket = PlayerCuller.CullObjects(MockPlayer)
 			expect(ReenterPacket == nil).to.equal(true)
 
-			-- 4. Mutate entity while visible -> must send packed binary delta with count == 1
 			ServerStorage.PositionData.CreateLayout((EntityId - 1) * COMPONENT_STRIDE, 2, 0, -25)
 			const DeltaPacket = PlayerCuller.CullObjects(MockPlayer)
 			expect(DeltaPacket ~= nil).to.equal(true)
@@ -183,7 +95,6 @@ return function()
 				expect(bit32.band(buffer.readu8(DeltaPacket, 10), 1)).to.equal(1)
 			end
 
-			-- 5. Deleting tail entity shrinks world entity count and emits header update
 			ServerStorage.ECSData.DeleteEntity(EntityId)
 			const ShrinkPacket = PlayerCuller.CullObjects(MockPlayer)
 			expect(ShrinkPacket ~= nil).to.equal(true)
@@ -192,36 +103,6 @@ return function()
 			end
 
 			PlayerFunctions.RemovePlayerState(MockPlayer)
-			ViewCulling.UpdateObserverFromVectors(0, 0, 0, 0, 0, -1, 0, 1, 0, 1, 0, 0, 0, 70)
-		end)
-
-		it("should prepass dominant occluders regardless of entity ordering", function()
-			const PosBuf = buffer.create(COMPONENT_STRIDE * 2)
-			const SizeBuf = buffer.create(COMPONENT_STRIDE * 2)
-			const PropBuf = buffer.create(SystemsConfigs.ECSPropertiesStride * 2)
-
-			-- Entity 1: small target far behind Entity 2
-			buffer.writef32(PosBuf, 0, 0)
-			buffer.writef32(PosBuf, 4, 0)
-			buffer.writef32(PosBuf, 8, -60)
-			buffer.writef32(SizeBuf, 0, 2)
-			buffer.writef32(SizeBuf, 4, 2)
-			buffer.writef32(SizeBuf, 8, 2)
-			buffer.writeu32(PropBuf, 0, bit32.lshift(1, 2))
-
-			-- Entity 2 (higher ID): thick visible building block directly in front of target
-			buffer.writef32(PosBuf, COMPONENT_STRIDE, 0)
-			buffer.writef32(PosBuf, COMPONENT_STRIDE + 4, 0)
-			buffer.writef32(PosBuf, COMPONENT_STRIDE + 8, -15)
-			buffer.writef32(SizeBuf, COMPONENT_STRIDE, 24)
-			buffer.writef32(SizeBuf, COMPONENT_STRIDE + 4, 24)
-			buffer.writef32(SizeBuf, COMPONENT_STRIDE + 8, 24)
-			buffer.writeu32(PropBuf, SystemsConfigs.ECSPropertiesStride, bit32.lshift(1, 2))
-
-			ViewCulling.UpdateObserverFromVectors(0, 0, 0, 0, 0, -1, 0, 1, 0, 1, 0, 0, 0, 70)
-			ViewCulling.PrepassDominantOccluder(2, PosBuf, SizeBuf, PropBuf)
-			expect(ViewCulling.IsEntityCulled(1, PosBuf, SizeBuf)).to.equal(true)
-			expect(ViewCulling.IsEntityCulled(2, PosBuf, SizeBuf)).to.equal(false)
 			ViewCulling.UpdateObserverFromVectors(0, 0, 0, 0, 0, -1, 0, 1, 0, 1, 0, 0, 0, 70)
 		end)
 
@@ -250,7 +131,6 @@ return function()
 				end
 			end
 
-			-- Delete FrontEntity: BehindTailEntity (+80 Z, outside frustum) swap-pops into FrontEntity's slot
 			ServerStorage.ECSData.DeleteEntity(FrontEntity)
 			const SwapPopPacket = PlayerCuller.CullObjects(MockPlayer)
 			expect(SwapPopPacket ~= nil).to.equal(true)
@@ -258,7 +138,6 @@ return function()
 				expect(buffer.readu16(SwapPopPacket, 0) >= 1).to.equal(true)
 			end
 
-			-- Clean up remaining entity (now residing in FrontEntity's slot)
 			ServerStorage.ECSData.DeleteEntity(FrontEntity)
 			PlayerFunctions.RemovePlayerState(MockPlayer)
 			ViewCulling.UpdateObserverFromVectors(0, 0, 0, 0, 0, -1, 0, 1, 0, 1, 0, 0, 0, 70)

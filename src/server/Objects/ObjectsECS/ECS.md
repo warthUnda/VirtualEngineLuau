@@ -10,7 +10,13 @@
 
 ## Architectural Mechanisms
 
-### 1. Dense Buffer Layout & Component Strides
+### 1. Modular Architecture & Dense Buffer Layout (`ECSMain`, `ECSStorageFactory`, `ECSComponents`, `ECSBitfield`, `ECSTypes`)
+`ECSMain` serves as the facade over modular single-purpose internal libraries:
+- **`ECSTypes`**: Canonical Luau type definitions for all ECS component streams, counts, and unified storage structures.
+- **`ECSBitfield`**: Stateless bitwise codecs for packing and unpacking 32-bit `Properties` registers (`FLAG_CAN_COLLIDE`, `FLAG_IS_VISIBLE`, `FLAG_ANCHORED`, `TextureId`, `ShapeId`, `DynamicId`) and laying out vector/visual memory slices.
+- **`ECSComponents`**: Isolated component buffer allocators, entity registration, dirty flag management, and $O(1)$ swap-and-pop buffer compaction.
+- **`ECSStorageFactory`**: Unified storage container factory assembling parallel component streams and dispatching `SetSwapPopCallback` listeners.
+
 Components are stored across parallel contiguous byte buffers whose byte sizes derive directly from `ECSMaxEntities * Stride` (`8192` capacity):
 - **`PositionData`**: 32-bit floating-point triples ($X, Y, Z$) (`12` bytes/entity).
 - **`SizeData`**: Full dimensions ($X, Y, Z$) (`12` bytes/entity).
@@ -28,7 +34,10 @@ Components are stored across parallel contiguous byte buffers whose byte sizes d
   - Bit 1: `FLAG_CAN_COLLIDE`
   - Bit 2: `FLAG_IS_VISIBLE`
   - Bit 3: `FLAG_ANCHORED`
-  - Bits 16-31: Dynamic Object ID reference
+  - Bit 4: `FLAG_HAS_DYNAMIC_ID`
+  - Bits 5–12: `TextureId` (`0..255`)
+  - Bits 13–15: `ShapeId` (`0..7`)
+  - Bits 22–31: `DynamicId` (`1..1023`)
 
 ### 4. Dynamic OOP Binding (`DynamicObjectsMain`)
 - Bridges data-oriented flat buffers with high-level game logic scripts.

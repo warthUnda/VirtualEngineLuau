@@ -8,26 +8,30 @@ description: Architecture invariants, 250-line modular decomposition, subagent d
 ## 1. Agent Roles & Delegation Protocol
 
 ### If You Are the Primary Agent (e.g., Carbon / Argon / Pro)
-- **Your Responsibility:** Architecture, modular decomposition (<= 250 lines per file), flat deterministic logic, TDD specs, zero-allocation performance, and strict type/syntax safety (Sections **1–4**).
-- **Cleaner Subagent Delegation:**
-  - Define and invoke a cleaner subagent on the lighter model (`Model: "flash"` / Hydrogen) with write tools enabled to handle tactile formatting, canonical `-- Section --` headers, flat readability refinements, comments, and `*.md` documentation sync (Section **5**).
-  - Do **not** poll or check on the subagent after launching it; only message it if you need to terminate it.
+- **Your Responsibility:** Architecture, modular decomposition (`<= 250` non-comment lines per file), flat deterministic logic, TDD specs, zero-allocation performance, and strict type/syntax safety (Sections **1–4**).
+- **Post-Completion Cleaner Subagent Delegation:**
+  - Spawn the cleaner/refactorer subagent (`Model: "flash"`, write tools enabled) **only once AFTER you have completely finished all production and test file edits**—never while you are still editing files.
+  - Pass it the **explicit list of modified/created `.luau` and `<System>.md` file paths** so it never needs to scan or poll `git status`.
+  - Do **not** poll or check on the subagent after launching it; let the system notify you when its single pass completes (only message it if you need to terminate it).
   - Pass the cleaner subagent these exact rules:
-    1. You are a refinement-only subagent: you may **never** create new systems, change runtime behavior, alter function signatures, or change test assertions.
-    2. Refine modified/created files to match `.agent/skills/code-formatting/SKILL.md` (Sections **4** & **5**): enforce canonical `-- Section --` headers (`-- Variables --`, `-- Local Functions --`, `-- Functions --`, etc.), tactically flatten control flow where safe without sacrificing performance or correctness, run `stylua .` if installed, and never introduce leading-`(` statements.
+    1. You are a single-pass refinement subagent: process **only** the listed files once, then finish and exit immediately (never loop or poll `git status`).
+    2. You may **never** create new systems, change runtime behavior, alter function signatures, or change test assertions.
+    3. Refine the listed files to match `.agent/skills/code-formatting/SKILL.md` (Sections **4** & **5**): enforce canonical `-- Section --` headers (`-- Variables --`, `-- Local Functions --`, `-- Functions --`, etc.), tactically flatten control flow where safe without sacrificing performance or correctness, add/sync Moonwave docblocks and `<System>.md` docs (remembering documentation and comments do **not** count toward the 250-line limit), run `stylua .` if installed, and never introduce leading-`(` statements.
 
 ### If You Are the Cleaner Subagent (Hydrogen / Flash)
+- Execute **one single pass** over the explicit file list provided by the primary agent, then report completion and exit immediately.
 - Follow Sections **4** and **5** strictly.
 - Tactically make code as flat, predictable, and linearly structured as possible to read—**without sacrificing performance, zero-allocation guarantees, type safety, or exact runtime behavior**.
-- Never alter algorithms, buffer strides, parameter orders, return values, or test expectations.
+- Never alter algorithms, buffer strides, parameter orders, return values, or test expectations, and never delete documentation/comments to save lines (documentation and comments do not count toward the 250-line cap).
 
 ---
 
 ## 2. Project Structure, 250-Line Cap & File Placement
 
-### Hard 250-Line File Limit & Design Patterns
-- **Never write or grow a `.luau` file beyond 250 lines.**
-- When a module approaches 250 lines, split responsibilities across smaller, single-purpose `.luau` files using:
+### Hard 250-Line Code Limit & Design Patterns
+- **Never write or grow a `.luau` file beyond 250 code lines.**
+- **Documentation and comments do NOT count toward the 250-line limit:** single-line comments (`-- ...`, including `-- Section --` headers and banners) and multi-line documentation/comment blocks (`--[=[ ... ]=]`, `--[[ ... ]]`) are excluded from the line count. Never omit or strip Moonwave docblocks or clarifying comments to fit under 250 lines.
+- When a module approaches 250 non-comment lines, split responsibilities across smaller, single-purpose `.luau` files using:
   - **Facade Pattern:** Keep a thin public entry module (`init.luau` or `<System>Controller.luau`) that exposes a clean API and delegates implementation steps to focused internal modules.
   - **Gateway Pattern:** Isolate external Roblox boundaries (`RemoteEvent` / `UnreliableRemoteEvent` wiring, `Actor:SendMessage` / `BindToMessage` transport, `AssetService` / `Players` I/O) in a dedicated gateway module separate from pure domain/math logic.
   - **Focused Sub-Modules:** Split distinct stages into dedicated sibling files (`*Helper.luau`, `*Math.luau`, `*Codec.luau`, `*Partition.luau`). Large TestEZ suites should likewise split by sub-feature (`<System><Topic>.spec.luau`), as test runners auto-discover all `*.spec.luau` files.
@@ -152,8 +156,8 @@ Structure every file predictably from top to bottom using these exact `-- Sectio
 5. `-- Configs --` — `SCREAMING_SNAKE_CASE` constants cached from `SystemsConfigs` or fixed module constants, followed by `export type` definitions.
 6. `-- Remote Events --` — `RemoteEvent` / `UnreliableRemoteEvent` lookups.
 7. `-- Variables --` — module-scope mutable scalar state (`local CurrentFrame = 0 :: number`, flags, accumulators).
-8. `-- Tables --` — module-scope state tables and the exported module table (`local Module = {}`).
-9. `-- Buffers` — pre-allocated `buffer.create(...)` declarations (note: no trailing `--`).
+8. `-- Buffers` — pre-allocated `buffer.create(...)` declarations (note: no trailing `--`), placed before `-- Tables --` so exported module tables can reference buffers directly without `nil` placeholders.
+9. `-- Tables --` — module-scope state tables and the exported module table (`local Module = {}`). **Never reorder a table or variable above a constant or buffer it references (no use-before-declaration).**
 10. `-- Local Functions --` — file-private `local function` helpers (only in standalone scripts/specs; production systems place helpers in sibling `*Helper.luau` modules per Section 2).
 11. `-- Functions --` & Numbered Runtime Banners — public `Module.FunctionName` definitions, message listeners, and frame loops grouped under numbered banners:
     ```lua
@@ -163,12 +167,12 @@ Structure every file predictably from top to bottom using these exact `-- Sectio
     ```
 
 ### Cleaner Subagent Tactile Rules
-- Enforce the exact `-- Section --` headers above (`-- Variables --`, `-- Tables --`, `-- Local Functions --`, `-- Functions --`, etc.) consistently across touched files.
+- Enforce the exact `-- Section --` headers above (`-- Variables --`, `-- Tables --`, `-- Local Functions --`, `-- Functions --`, etc.) consistently across the provided file list in a single pass.
 - Flatten avoidable nesting into linear guard clauses where safe, **without sacrificing performance, allocations, or behavior**.
-- Flag or split files that exceed the **250-line** ceiling only when delegated; otherwise preserve public module contracts intact.
+- Flag or split files that exceed the **250 non-comment line** ceiling (excluding `--` comments and `--[=[ ... ]=]` / `--[[ ... ]]` documentation) only when delegated; otherwise preserve public module contracts intact.
 
 ### Naming Conventions
-- **Config / Fixed Constants:** `SCREAMING_SNAKE_CASE` (`RENDER_TARGET_FPS`, `COMPONENT_STRIDE`).
+- **Config / Fixed Constants:** `SCREAMING_SNAKE_CASE` (`RENDER_NEAR_CLIP`, `COMPONENT_STRIDE`).
 - **Variables, Tables, Buffers & Functions:** `PascalCase` (`CurrentFrame`, `StagedTriangles`, `DispatchStagedTriangles`).
 - **Math Variables:** Use descriptive names (`SignedDoubleTriangleArea`, `InverseTriangleArea`, `RowEdgeWeight`) instead of cryptic abbreviations (`W01`, `Det`).
 - **Loop Counters:** Typed inline for iterators (`for i, TargetActor: Actor in ipairs(WorkerActors) do`).

@@ -23,20 +23,23 @@ const TOTAL_PIXELS = WIDTH * HEIGHT :: number
 const ROW_STRIDE = WIDTH * 4 :: number
 const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
 
--- Tables --
+-- Variables --
 local BandStartY = 0 :: number
 local BandEndY = HEIGHT - 1 :: number
 local PrevLocalDirtyMinY = HEIGHT :: number
 local PrevLocalDirtyMaxY = -1 :: number
-local TextureBuffers = TextureTable.GetAllCachedBuffers() :: { [number]: buffer }
 local TextureWidth = TEXTURE_SIZE :: number
 local TextureHeight = TEXTURE_SIZE :: number
+
+-- Tables --
+local TextureBuffers = TextureTable.GetAllCachedBuffers() :: { [number]: buffer }
 
 -- Buffers
 const EmptyPayload = buffer.create(0) :: buffer
 const PixelBuffer = buffer.create(TOTAL_PIXELS * 4) :: buffer
 const ZBuffer = buffer.create(TOTAL_PIXELS * 4) :: buffer
 
+-- Functions --
 BufferHelper.ClearBuffers(TOTAL_PIXELS, PixelBuffer, ZBuffer)
 
 task.desynchronize()

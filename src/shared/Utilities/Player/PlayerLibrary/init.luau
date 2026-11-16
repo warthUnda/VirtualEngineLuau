@@ -9,7 +9,7 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
 const PlayerFolder = SharedFolder:WaitForChild("Utilities"):WaitForChild("Player")
 
--- Modules --
+-- Libraries --
 const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
 const PlayerService = require(PlayerFolder:WaitForChild("Core"):WaitForChild("PlayerService"))
 const PlayerController = require(PlayerFolder:WaitForChild("Controller"):WaitForChild("PlayerController"))
@@ -18,6 +18,7 @@ const PlayerControllerHelper = require(PlayerFolder:WaitForChild("Controller"):W
 -- Tables --
 local PlayerLibrary = {}
 
+-- Functions --
 -- ============================================================================
 -- 1. PUBLIC PLAYER LIFECYCLE, OOP LINKER & RENDERING TRANSFORM API
 -- ============================================================================

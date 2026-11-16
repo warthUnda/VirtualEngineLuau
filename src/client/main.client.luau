@@ -16,7 +16,7 @@ end
 const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
 const Utilities = SharedFolder:WaitForChild("Utilities")
 
--- Modules --
+-- Libraries --
 const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 const PhysicsController =
 	require(Utilities:WaitForChild("Physics"):WaitForChild("Controller"):WaitForChild("PhysicsController"))
@@ -30,16 +30,17 @@ const CORE_EVENTS_FOLDER_NAME = SystemsConfigs.CoreEventsFolderName :: string
 const OBSERVER_REMOTE_EVENT_NAME = SystemsConfigs.ObserverRemoteEventName :: string
 const OBSERVER_SYNC_INTERVAL = SystemsConfigs.ObserverSyncInterval :: number
 
--- Remote events
+-- Remote Events --
 const CoreEvents = ReplicatedStorage:WaitForChild(CORE_EVENTS_FOLDER_NAME) :: Folder
 const ObserverStateEvent = CoreEvents:WaitForChild(OBSERVER_REMOTE_EVENT_NAME) :: any
 
--- Tables --
+-- Variables --
 local SyncAccumulator = OBSERVER_SYNC_INTERVAL :: number
 
 -- Buffers
 const ObserverPayload = buffer.create(ViewCulling.ObserverPayloadBytes) :: buffer
 
+-- Functions --
 -- ============================================================================
 -- 1. INITIALIZATION
 -- ============================================================================
@@ -59,7 +60,7 @@ while true do
 	PlayerController.StepClient(DeltaTime)
 	debug.profileend()
 	debug.profilebegin("Render all instances")
-	Renderer.DrawFrame(DeltaTime)
+	Renderer.DrawFrame()
 	debug.profileend()
 
 	debug.profilebegin("Send replication info")

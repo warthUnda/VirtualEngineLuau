@@ -6,9 +6,8 @@
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const ServerScriptService = game:GetService("ServerScriptService")
 
--- Modules --
+-- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
-const Storage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
 const PlayerFunctions = require(script.Parent.PlayerFunctions)
 const ViewCulling = require(
 	ReplicatedStorage:WaitForChild("Shared")
@@ -18,7 +17,8 @@ const ViewCulling = require(
 		:WaitForChild("ViewCulling")
 )
 
--- Storage tables (ECS)
+-- Storage --
+const Storage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
 const PositionData = Storage.PositionData
 const VisualData = Storage.VisualData
 const SizeData = Storage.SizeData
@@ -37,6 +37,12 @@ const STATIC_STREAM_RADIUS_SQ = STATIC_STREAM_RADIUS * STATIC_STREAM_RADIUS :: n
 const HEADER_BYTES = 8 :: number
 const MAX_RECORD_BYTES = 59 :: number
 
+-- Variables --
+local ReplicationTick = 0 :: number
+
+-- Tables --
+local PlayerCuller = {}
+
 -- Buffers
 const PositionBuffer = PositionData.GetData() :: buffer
 const VisualBuffer = VisualData.GetData() :: buffer
@@ -50,10 +56,7 @@ const MAX_ENTITIES = COMPONENT_BUFFER_SIZE // COMPONENT_STRIDE :: number
 
 const ScratchPayload = buffer.create(HEADER_BYTES + MAX_ENTITIES_PER_PACKET * MAX_RECORD_BYTES) :: buffer
 
-local ReplicationTick = 0 :: number
-
-local PlayerCuller = {}
-
+-- Functions --
 PlayerCuller.RemovePlayerState = PlayerFunctions.RemovePlayerState
 
 -- ============================================================================

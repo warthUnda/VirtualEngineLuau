@@ -31,7 +31,6 @@ const ReplicationReceiverHelper = require(ReplicationFolder:WaitForChild("Replic
 -- Storage --
 const RequireAny: any = require
 const ObjectStorage = RequireAny(SelfActor:WaitForChild("ObjectStorage")) :: ECSMain.ECSStorage
-const ReceiverState = ReplicationReceiverHelper.CreateReceiverState(ObjectStorage, LOCAL_USER_ID)
 
 -- Configs --
 const CORE_EVENTS_FOLDER_NAME = SystemsConfigs.CoreEventsFolderName :: string
@@ -41,6 +40,10 @@ const REPLICATE_REMOTE_EVENT_NAME = SystemsConfigs.ReplicateRemoteEventName :: s
 const CoreEvents = ReplicatedStorage:WaitForChild(CORE_EVENTS_FOLDER_NAME) :: Folder
 const ReplicateEvent = CoreEvents:WaitForChild(REPLICATE_REMOTE_EVENT_NAME) :: RemoteEvent
 
+-- Tables --
+const ReceiverState = ReplicationReceiverHelper.CreateReceiverState(ObjectStorage, LOCAL_USER_ID)
+
+-- Functions --
 -- ============================================================================
 -- 1. LISTENER - MERGES REPLICATED DELTAS INTO THE LOCAL ECS
 -- ============================================================================

@@ -5,13 +5,14 @@
 -- Static References --
 const ConfigsFolder = script.Parent:WaitForChild("Configs")
 
--- Configs --
+-- Libraries --
 const RenderConfig = require(ConfigsFolder:WaitForChild("RenderConfig"))
 const ECSConfig = require(ConfigsFolder:WaitForChild("ECSConfig"))
 const PhysicsConfig = require(ConfigsFolder:WaitForChild("PhysicsConfig"))
 const BVHConfig = require(ConfigsFolder:WaitForChild("BVHConfig"))
 const PlayerConfig = require(ConfigsFolder:WaitForChild("PlayerConfig"))
 
+-- Configs --
 export type SystemsConfigsType = {
 	Render: typeof(RenderConfig),
 	ECS: typeof(ECSConfig),

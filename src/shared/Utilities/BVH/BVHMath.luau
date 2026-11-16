@@ -5,17 +5,19 @@
 -- Services --
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- Modules --
+-- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 
 -- Configs --
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
 const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
-
 const FLAG_CAN_COLLIDE = bit32.lshift(1, 1) :: number
 
+-- Tables --
 local BVHMath = {}
+
+-- Functions --
 
 -- ============================================================================
 -- 1. SCALAR RAY-AABB & RAY-OBB INTERSECTION KERNELS
@@ -23,26 +25,12 @@ local BVHMath = {}
 
 --[=[
 	Tests ray intersection against an axis-aligned bounding box node in the BVH tree buffer.
-	@param NodeBuffer buffer -- BVH tree nodes buffer.
-	@param NodeOffset number -- Byte offset of the BVH node.
-	@param OriginX number -- Ray origin X.
-	@param OriginY number -- Ray origin Y.
-	@param OriginZ number -- Ray origin Z.
-	@param InverseDirectionX number -- Precomputed 1 / direction X.
-	@param InverseDirectionY number -- Precomputed 1 / direction Y.
-	@param InverseDirectionZ number -- Precomputed 1 / direction Z.
-	@param MaxDistance number -- Maximum valid raycast distance.
-	@return (boolean, number) -- Hits, EntryDistance.
 ]=]
 function BVHMath.TestNodeAABB(
 	NodeBuffer: buffer,
 	NodeOffset: number,
-	OriginX: number,
-	OriginY: number,
-	OriginZ: number,
-	InverseDirectionX: number,
-	InverseDirectionY: number,
-	InverseDirectionZ: number,
+	OriginX: number, OriginY: number, OriginZ: number,
+	InverseDirectionX: number, InverseDirectionY: number, InverseDirectionZ: number,
 	MaxDistance: number
 ): (boolean, number)
 	const MinX = buffer.readf32(NodeBuffer, NodeOffset) :: number
@@ -73,52 +61,15 @@ end
 
 --[=[
 	Calculates exact ray intersection, hit distance, and outward normal against an oriented bounding box (OBB).
-	@param OriginX number -- Ray origin X.
-	@param OriginY number -- Ray origin Y.
-	@param OriginZ number -- Ray origin Z.
-	@param DirectionX number -- Normalized ray direction X.
-	@param DirectionY number -- Normalized ray direction Y.
-	@param DirectionZ number -- Normalized ray direction Z.
-	@param PositionX number -- OBB center position X.
-	@param PositionY number -- OBB center position Y.
-	@param PositionZ number -- OBB center position Z.
-	@param HalfSizeX number -- OBB half extent X.
-	@param HalfSizeY number -- OBB half extent Y.
-	@param HalfSizeZ number -- OBB half extent Z.
-	@param RightX number -- Basis RightVector X.
-	@param RightY number -- Basis RightVector Y.
-	@param RightZ number -- Basis RightVector Z.
-	@param UpX number -- Basis UpVector X.
-	@param UpY number -- Basis UpVector Y.
-	@param UpZ number -- Basis UpVector Z.
-	@param LookX number -- Basis LookVector X.
-	@param LookY number -- Basis LookVector Y.
-	@param LookZ number -- Basis LookVector Z.
-	@param MaxDistance number -- Maximum valid raycast distance.
-	@return (boolean, number, number, number, number) -- Hits, HitDistance, NormalX, NormalY, NormalZ.
 ]=]
 function BVHMath.TestBoxOBB(
-	OriginX: number,
-	OriginY: number,
-	OriginZ: number,
-	DirectionX: number,
-	DirectionY: number,
-	DirectionZ: number,
-	PositionX: number,
-	PositionY: number,
-	PositionZ: number,
-	HalfSizeX: number,
-	HalfSizeY: number,
-	HalfSizeZ: number,
-	RightX: number,
-	RightY: number,
-	RightZ: number,
-	UpX: number,
-	UpY: number,
-	UpZ: number,
-	LookX: number,
-	LookY: number,
-	LookZ: number,
+	OriginX: number, OriginY: number, OriginZ: number,
+	DirectionX: number, DirectionY: number, DirectionZ: number,
+	PositionX: number, PositionY: number, PositionZ: number,
+	HalfSizeX: number, HalfSizeY: number, HalfSizeZ: number,
+	RightX: number, RightY: number, RightZ: number,
+	UpX: number, UpY: number, UpZ: number,
+	LookX: number, LookY: number, LookZ: number,
 	MaxDistance: number
 ): (boolean, number, number, number, number)
 	const DeltaX = OriginX - PositionX :: number
@@ -133,15 +84,9 @@ function BVHMath.TestBoxOBB(
 	const LocalDirectionY = DirectionX * UpX + DirectionY * UpY + DirectionZ * UpZ :: number
 	const LocalDirectionZ = DirectionX * LookX + DirectionY * LookY + DirectionZ * LookZ :: number
 
-	const InverseLocalX = if math.abs(LocalDirectionX) > 1e-8
-		then 1 / LocalDirectionX
-		else (if LocalDirectionX >= 0 then 1e30 else -1e30) :: number
-	const InverseLocalY = if math.abs(LocalDirectionY) > 1e-8
-		then 1 / LocalDirectionY
-		else (if LocalDirectionY >= 0 then 1e30 else -1e30) :: number
-	const InverseLocalZ = if math.abs(LocalDirectionZ) > 1e-8
-		then 1 / LocalDirectionZ
-		else (if LocalDirectionZ >= 0 then 1e30 else -1e30) :: number
+	const InverseLocalX = if math.abs(LocalDirectionX) > 1e-8 then 1 / LocalDirectionX else (if LocalDirectionX >= 0 then 1e30 else -1e30) :: number
+	const InverseLocalY = if math.abs(LocalDirectionY) > 1e-8 then 1 / LocalDirectionY else (if LocalDirectionY >= 0 then 1e30 else -1e30) :: number
+	const InverseLocalZ = if math.abs(LocalDirectionZ) > 1e-8 then 1 / LocalDirectionZ else (if LocalDirectionZ >= 0 then 1e30 else -1e30) :: number
 
 	const SlabEnterX = (-HalfSizeX - LocalOriginX) * InverseLocalX :: number
 	const SlabExitX = (HalfSizeX - LocalOriginX) * InverseLocalX :: number
@@ -184,36 +129,18 @@ function BVHMath.TestBoxOBB(
 	elseif HitAxis == 1 then
 		const AxisSign = if LocalDirectionY > 0 then -1 else 1 :: number
 		return true, EntryDistance, UpX * AxisSign, UpY * AxisSign, UpZ * AxisSign
-	else
-		const AxisSign = if LocalDirectionZ > 0 then -1 else 1 :: number
-		return true, EntryDistance, LookX * AxisSign, LookY * AxisSign, LookZ * AxisSign
 	end
+	const AxisSign = if LocalDirectionZ > 0 then -1 else 1 :: number
+	return true, EntryDistance, LookX * AxisSign, LookY * AxisSign, LookZ * AxisSign
 end
 
 --[=[
 	Casts a ray against an ECS entity's OBB using bounding sphere early-out.
-	@param EntityId number -- Target ECS entity ID.
-	@param OriginX number -- Ray origin X.
-	@param OriginY number -- Ray origin Y.
-	@param OriginZ number -- Ray origin Z.
-	@param DirectionX number -- Normalized ray direction X.
-	@param DirectionY number -- Normalized ray direction Y.
-	@param DirectionZ number -- Normalized ray direction Z.
-	@param MaxDistance number -- Maximum valid raycast distance.
-	@param PositionBuffer buffer -- ECS positions buffer.
-	@param SizeBuffer buffer -- ECS sizes buffer.
-	@param DirectionsBuffer buffer -- ECS directions buffer.
-	@param PropertiesBuffer buffer -- ECS properties buffer.
-	@return (boolean, number, number, number, number) -- Hits, HitDistance, NormalX, NormalY, NormalZ.
 ]=]
 function BVHMath.TestEntityOBB(
 	EntityId: number,
-	OriginX: number,
-	OriginY: number,
-	OriginZ: number,
-	DirectionX: number,
-	DirectionY: number,
-	DirectionZ: number,
+	OriginX: number, OriginY: number, OriginZ: number,
+	DirectionX: number, DirectionY: number, DirectionZ: number,
 	MaxDistance: number,
 	PositionBuffer: buffer,
 	SizeBuffer: buffer,
@@ -226,11 +153,9 @@ function BVHMath.TestEntityOBB(
 	end
 
 	const CompOffset = (EntityId - 1) * COMPONENT_STRIDE :: number
-
 	const PositionX = buffer.readf32(PositionBuffer, CompOffset) :: number
 	const PositionY = buffer.readf32(PositionBuffer, CompOffset + 4) :: number
 	const PositionZ = buffer.readf32(PositionBuffer, CompOffset + 8) :: number
-
 	const HalfSizeX = math.abs(buffer.readf32(SizeBuffer, CompOffset)) * 0.5 :: number
 	const HalfSizeY = math.abs(buffer.readf32(SizeBuffer, CompOffset + 4)) * 0.5 :: number
 	const HalfSizeZ = math.abs(buffer.readf32(SizeBuffer, CompOffset + 8)) * 0.5 :: number
@@ -240,8 +165,7 @@ function BVHMath.TestEntityOBB(
 	const RelativeZ = PositionZ - OriginZ :: number
 	const BoundingRadiusSquared = HalfSizeX * HalfSizeX + HalfSizeY * HalfSizeY + HalfSizeZ * HalfSizeZ :: number
 	const RayProjection = RelativeX * DirectionX + RelativeY * DirectionY + RelativeZ * DirectionZ :: number
-	const PerpendicularDistanceSquared = (RelativeX * RelativeX + RelativeY * RelativeY + RelativeZ * RelativeZ)
-		- (RayProjection * RayProjection) :: number
+	const PerpendicularDistanceSquared = (RelativeX * RelativeX + RelativeY * RelativeY + RelativeZ * RelativeZ) - (RayProjection * RayProjection) :: number
 	if PerpendicularDistanceSquared > BoundingRadiusSquared + 1e-5 then
 		return false, MaxDistance, 0, 0, 0
 	end
@@ -252,15 +176,12 @@ function BVHMath.TestEntityOBB(
 	end
 
 	const DirOffset = (EntityId - 1) * DIRECTION_STRIDE :: number
-
 	local LookX = buffer.readf32(DirectionsBuffer, DirOffset) :: number
 	local LookY = buffer.readf32(DirectionsBuffer, DirOffset + 4) :: number
 	local LookZ = buffer.readf32(DirectionsBuffer, DirOffset + 8) :: number
-
 	local UpX = buffer.readf32(DirectionsBuffer, DirOffset + 12) :: number
 	local UpY = buffer.readf32(DirectionsBuffer, DirOffset + 16) :: number
 	local UpZ = buffer.readf32(DirectionsBuffer, DirOffset + 20) :: number
-
 	local RightX = buffer.readf32(DirectionsBuffer, DirOffset + 24) :: number
 	local RightY = buffer.readf32(DirectionsBuffer, DirOffset + 28) :: number
 	local RightZ = buffer.readf32(DirectionsBuffer, DirOffset + 32) :: number
@@ -272,28 +193,9 @@ function BVHMath.TestEntityOBB(
 	end
 
 	return BVHMath.TestBoxOBB(
-		OriginX,
-		OriginY,
-		OriginZ,
-		DirectionX,
-		DirectionY,
-		DirectionZ,
-		PositionX,
-		PositionY,
-		PositionZ,
-		HalfSizeX,
-		HalfSizeY,
-		HalfSizeZ,
-		RightX,
-		RightY,
-		RightZ,
-		UpX,
-		UpY,
-		UpZ,
-		LookX,
-		LookY,
-		LookZ,
-		MaxDistance
+		OriginX, OriginY, OriginZ, DirectionX, DirectionY, DirectionZ,
+		PositionX, PositionY, PositionZ, HalfSizeX, HalfSizeY, HalfSizeZ,
+		RightX, RightY, RightZ, UpX, UpY, UpZ, LookX, LookY, LookZ, MaxDistance
 	)
 end
 

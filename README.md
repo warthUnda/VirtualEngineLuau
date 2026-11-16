@@ -78,7 +78,7 @@ The codebase strictly follows standard architectural roles across directories:
 The project includes dual-boundary automated test coverage executable directly within Roblox Studio or via TestEZ:
 
 - **Server Test Suite:** [`src/server/Tests/TestRunner.server.luau`](file:///C:/Users/Startklar/Documents/Development/Roblox/CustomRenderer/src/server/Tests/TestRunner.server.luau)
-  - Specs: `BVH.spec.luau`, `ECS.spec.luau`, `Physics.spec.luau`, `Player.spec.luau`, `RenderMath.spec.luau`, `Replication.spec.luau`.
+  - Specs: `BVH.spec.luau`, `ECS.spec.luau`, `Physics.spec.luau`, `Player.spec.luau`, `RenderMath.spec.luau`, `RenderTexture.spec.luau`, `Replication.spec.luau`, `ViewCulling.spec.luau`, `WorkerPartition.spec.luau`.
 - **Client Test Suite:** [`src/client/Tests/ClientTestRunner.client.luau`](file:///C:/Users/Startklar/Documents/Development/Roblox/CustomRenderer/src/client/Tests/ClientTestRunner.client.luau)
   - Specs: `Camera.spec.luau`, `Cleaner.spec.luau`, `ClientInput.spec.luau`, `PlayerClient.spec.luau`, `ReplicationReceiver.spec.luau`.
 

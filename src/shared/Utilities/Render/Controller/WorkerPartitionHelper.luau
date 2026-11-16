@@ -14,6 +14,7 @@ const RENDER_BUFFER_LAYOUT_SIZE = SystemsConfigs.RenderBufferLayoutSize :: numbe
 -- Tables --
 local WorkerPartitionHelper = {}
 
+-- Functions --
 -- ============================================================================
 -- 1. PREFIX-SUM SCANLINE COST RECORDING, DYNAMIC BAND PARTITION & DISPATCH
 -- ============================================================================

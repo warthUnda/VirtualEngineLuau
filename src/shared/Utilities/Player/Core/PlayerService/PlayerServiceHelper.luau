@@ -9,7 +9,7 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
 const RenderCoreFolder = SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core")
 
--- Modules --
+-- Libraries --
 const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 const VerticeFile = require(RenderCoreFolder:WaitForChild("VerticeFile"))
 
@@ -21,6 +21,7 @@ const PLAYER_RENDER_SHAPE = SystemsConfigs.PlayerRenderShape :: string
 -- Tables --
 local PlayerServiceHelper = {}
 
+-- Functions --
 -- ============================================================================
 -- 1. ORIENTATION NORMALIZATION & INITIAL CHARACTER SEEDING HELPERS
 -- ============================================================================

@@ -5,54 +5,35 @@
 -- Services --
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- Modules --
+-- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const PhysicsRotationMath = require(script.Parent.PhysicsRotationMath)
 
 -- Configs --
 const OBJECT_RESTITUTION = SystemsConfigs.ObjectRestitution :: number
-const OBJECT_ANGULAR_DRAG = SystemsConfigs.ObjectAngularDrag :: number
-const OBJECT_ROLL_COUPLING = SystemsConfigs.ObjectRollCoupling :: number
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
-const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
 
-local PhysicsMathHelper = {}
+-- Tables --
+local PhysicsMathHelper = {
+	RotateVectorByAxisAngle = PhysicsRotationMath.RotateVectorByAxisAngle,
+	StepObjectRotation = PhysicsRotationMath.StepObjectRotation,
+}
+
+-- Functions --
 
 -- ============================================================================
--- 1. PAIR CONTACT RESOLUTION & ROTATIONAL DYNAMICS HELPERS
+-- 1. DYNAMIC PAIR CONTACT IMPULSE RESOLUTION & ROTATION FACADE
 -- ============================================================================
 
 --[=[
 	Resolves penetration and dynamic impulse transfer between two intersecting moving bodies.
-	@param BodyX number -- Primary body center position X.
-	@param BodyY number -- Primary body center position Y.
-	@param BodyZ number -- Primary body center position Z.
-	@param VelocityX number -- Primary body velocity X.
-	@param VelocityY number -- Primary body velocity Y.
-	@param VelocityZ number -- Primary body velocity Z.
-	@param BodyInverseMass number -- 1 / mass of primary body.
-	@param OtherEntityIndex number -- Target colliding entity index.
-	@param NormalX number -- Contact surface normal X.
-	@param NormalY number -- Contact surface normal Y.
-	@param NormalZ number -- Contact surface normal Z.
-	@param Penetration number -- Overlap depth along contact normal.
-	@param PositionBuffer buffer -- ECS positions buffer.
-	@param DynamicFlags buffer -- ECS dynamic state buffer.
-	@param ObjectVelocityBuffer buffer -- Dynamic objects velocity buffer.
-	@param ObjectInvMassBuffer buffer -- Dynamic objects inverse mass buffer.
-	@return (number, number, number, number, number, number) -- NextBodyX, NextBodyY, NextBodyZ, NextVelX, NextVelY, NextVelZ.
 ]=]
 function PhysicsMathHelper.ResolveDynamicPairContact(
-	BodyX: number,
-	BodyY: number,
-	BodyZ: number,
-	VelocityX: number,
-	VelocityY: number,
-	VelocityZ: number,
+	BodyX: number, BodyY: number, BodyZ: number,
+	VelocityX: number, VelocityY: number, VelocityZ: number,
 	BodyInverseMass: number,
 	OtherEntityIndex: number,
-	NormalX: number,
-	NormalY: number,
-	NormalZ: number,
+	NormalX: number, NormalY: number, NormalZ: number,
 	Penetration: number,
 	PositionBuffer: buffer,
 	DynamicFlags: buffer,
@@ -65,38 +46,21 @@ function PhysicsMathHelper.ResolveDynamicPairContact(
 	const TotalInverseMass = BodyInverseMass + OtherInverseMass :: number
 
 	if TotalInverseMass <= 1e-6 then
-		return BodyX + NormalX * Penetration,
-			BodyY + NormalY * Penetration,
-			BodyZ + NormalZ * Penetration,
-			VelocityX,
-			VelocityY,
-			VelocityZ
+		return BodyX + NormalX * Penetration, BodyY + NormalY * Penetration, BodyZ + NormalZ * Penetration,
+			VelocityX, VelocityY, VelocityZ
 	end
 
 	buffer.writeu8(DynamicFlags, FlagIndex, 1)
 
 	const BodyShare = BodyInverseMass / TotalInverseMass :: number
 	const OtherShare = OtherInverseMass / TotalInverseMass :: number
-
 	const NextBodyX = BodyX + NormalX * (Penetration * BodyShare) :: number
 	const NextBodyY = BodyY + NormalY * (Penetration * BodyShare) :: number
 	const NextBodyZ = BodyZ + NormalZ * (Penetration * BodyShare) :: number
 
-	buffer.writef32(
-		PositionBuffer,
-		OtherCompOffset,
-		buffer.readf32(PositionBuffer, OtherCompOffset) - NormalX * (Penetration * OtherShare)
-	)
-	buffer.writef32(
-		PositionBuffer,
-		OtherCompOffset + 4,
-		buffer.readf32(PositionBuffer, OtherCompOffset + 4) - NormalY * (Penetration * OtherShare)
-	)
-	buffer.writef32(
-		PositionBuffer,
-		OtherCompOffset + 8,
-		buffer.readf32(PositionBuffer, OtherCompOffset + 8) - NormalZ * (Penetration * OtherShare)
-	)
+	buffer.writef32(PositionBuffer, OtherCompOffset, buffer.readf32(PositionBuffer, OtherCompOffset) - NormalX * (Penetration * OtherShare))
+	buffer.writef32(PositionBuffer, OtherCompOffset + 4, buffer.readf32(PositionBuffer, OtherCompOffset + 4) - NormalY * (Penetration * OtherShare))
+	buffer.writef32(PositionBuffer, OtherCompOffset + 8, buffer.readf32(PositionBuffer, OtherCompOffset + 8) - NormalZ * (Penetration * OtherShare))
 
 	const OtherVelocityX = buffer.readf32(ObjectVelocityBuffer, OtherCompOffset) :: number
 	const OtherVelocityY = buffer.readf32(ObjectVelocityBuffer, OtherCompOffset + 4) :: number
@@ -117,204 +81,10 @@ function PhysicsMathHelper.ResolveDynamicPairContact(
 	buffer.writef32(ObjectVelocityBuffer, OtherCompOffset + 4, OtherVelocityY - NormalY * OtherImpulse)
 	buffer.writef32(ObjectVelocityBuffer, OtherCompOffset + 8, OtherVelocityZ - NormalZ * OtherImpulse)
 
-	return NextBodyX,
-		NextBodyY,
-		NextBodyZ,
+	return NextBodyX, NextBodyY, NextBodyZ,
 		VelocityX + NormalX * BodyImpulse,
 		VelocityY + NormalY * BodyImpulse,
 		VelocityZ + NormalZ * BodyImpulse
-end
-
---[=[
-	Rotates a 3D basis vector around a unit axis using Rodrigues' rotation formula.
-	@param VecX number -- Input vector X.
-	@param VecY number -- Input vector Y.
-	@param VecZ number -- Input vector Z.
-	@param AxisX number -- Unit rotation axis X.
-	@param AxisY number -- Unit rotation axis Y.
-	@param AxisZ number -- Unit rotation axis Z.
-	@param CosAngle number -- Cosine of rotation angle.
-	@param SinAngle number -- Sine of rotation angle.
-	@return (number, number, number) -- Rotated vector (X, Y, Z).
-]=]
-function PhysicsMathHelper.RotateVectorByAxisAngle(
-	VecX: number,
-	VecY: number,
-	VecZ: number,
-	AxisX: number,
-	AxisY: number,
-	AxisZ: number,
-	CosAngle: number,
-	SinAngle: number
-): (number, number, number)
-	const OneMinusCos = 1 - CosAngle :: number
-	const AxisDotVec = AxisX * VecX + AxisY * VecY + AxisZ * VecZ :: number
-	const CrossX = AxisY * VecZ - AxisZ * VecY :: number
-	const CrossY = AxisZ * VecX - AxisX * VecZ :: number
-	const CrossZ = AxisX * VecY - AxisY * VecX :: number
-
-	return VecX * CosAngle + CrossX * SinAngle + AxisX * (AxisDotVec * OneMinusCos),
-		VecY * CosAngle + CrossY * SinAngle + AxisY * (AxisDotVec * OneMinusCos),
-		VecZ * CosAngle + CrossZ * SinAngle + AxisZ * (AxisDotVec * OneMinusCos)
-end
-
---[=[
-	Updates angular velocity from contact impulses/rolling and rotates the entity's orthonormal basis in DirectionsBuffer.
-	@param EntityId number -- Target ECS entity ID.
-	@param HalfSizeX number -- Half extent X of the entity.
-	@param HalfSizeY number -- Half extent Y of the entity.
-	@param HalfSizeZ number -- Half extent Z of the entity.
-	@param PreVelocityX number -- Linear velocity X before collision resolution.
-	@param PreVelocityY number -- Linear velocity Y before collision resolution.
-	@param PreVelocityZ number -- Linear velocity Z before collision resolution.
-	@param VelocityX number -- Linear velocity X after collision resolution.
-	@param VelocityY number -- Linear velocity Y after collision resolution.
-	@param VelocityZ number -- Linear velocity Z after collision resolution.
-	@param Grounded boolean -- Whether the entity is currently resting on ground.
-	@param StepDeltaTime number -- Substep delta time in seconds.
-	@param DirectionsBuffer buffer -- ECS directions buffer storing Look, Up, and Right vectors.
-	@param OrientationBuffer buffer? -- Optional ECS orientation buffer storing Look vector.
-	@param ObjectAngularVelocityBuffer buffer -- Dynamic objects angular velocity buffer (rad/s).
-	@return number -- Squared angular speed after stepping.
-]=]
-function PhysicsMathHelper.StepObjectRotation(
-	EntityId: number,
-	HalfSizeX: number,
-	HalfSizeY: number,
-	HalfSizeZ: number,
-	PreVelocityX: number,
-	PreVelocityY: number,
-	PreVelocityZ: number,
-	VelocityX: number,
-	VelocityY: number,
-	VelocityZ: number,
-	Grounded: boolean,
-	StepDeltaTime: number,
-	DirectionsBuffer: buffer,
-	OrientationBuffer: buffer?,
-	ObjectAngularVelocityBuffer: buffer
-): number
-	const FlagIndex = EntityId - 1 :: number
-	const CompOffset = FlagIndex * COMPONENT_STRIDE :: number
-	const DirOffset = FlagIndex * DIRECTION_STRIDE :: number
-
-	local AngVelX = buffer.readf32(ObjectAngularVelocityBuffer, CompOffset) :: number
-	local AngVelY = buffer.readf32(ObjectAngularVelocityBuffer, CompOffset + 4) :: number
-	local AngVelZ = buffer.readf32(ObjectAngularVelocityBuffer, CompOffset + 8) :: number
-
-	const Radius = math.max(0.25, (HalfSizeX + HalfSizeY + HalfSizeZ) / 3) :: number
-	const ImpulseX = VelocityX - PreVelocityX :: number
-	const ImpulseY = VelocityY - PreVelocityY :: number
-	const ImpulseZ = VelocityZ - PreVelocityZ :: number
-	const ImpulseMagSq = ImpulseX * ImpulseX + ImpulseY * ImpulseY + ImpulseZ * ImpulseZ :: number
-
-	if ImpulseMagSq > 1e-8 then
-		const InvImpulseMag = 1 / math.sqrt(ImpulseMagSq) :: number
-		const NormX = ImpulseX * InvImpulseMag :: number
-		const NormY = ImpulseY * InvImpulseMag :: number
-		const NormZ = ImpulseZ * InvImpulseMag :: number
-
-		const VelDotNorm = VelocityX * NormX + VelocityY * NormY + VelocityZ * NormZ :: number
-		const TanX = VelocityX - VelDotNorm * NormX :: number
-		const TanY = VelocityY - VelDotNorm * NormY :: number
-		const TanZ = VelocityZ - VelDotNorm * NormZ :: number
-
-		const TargetX = (NormY * TanZ - NormZ * TanY) / Radius :: number
-		const TargetY = (NormZ * TanX - NormX * TanZ) / Radius :: number
-		const TargetZ = (NormX * TanY - NormY * TanX) / Radius :: number
-
-		const Blend = math.min(1, OBJECT_ROLL_COUPLING * StepDeltaTime) :: number
-		AngVelX += (TargetX - AngVelX) * Blend
-		AngVelY += (TargetY - AngVelY) * Blend
-		AngVelZ += (TargetZ - AngVelZ) * Blend
-	elseif Grounded then
-		const TargetX = VelocityZ / Radius :: number
-		const TargetZ = -VelocityX / Radius :: number
-		const Blend = math.min(1, OBJECT_ROLL_COUPLING * StepDeltaTime) :: number
-		AngVelX += (TargetX - AngVelX) * Blend
-		AngVelY *= math.max(0, 1 - OBJECT_ANGULAR_DRAG * 2 * StepDeltaTime)
-		AngVelZ += (TargetZ - AngVelZ) * Blend
-	else
-		const AirDecay = math.max(0, 1 - OBJECT_ANGULAR_DRAG * StepDeltaTime) :: number
-		AngVelX *= AirDecay
-		AngVelY *= AirDecay
-		AngVelZ *= AirDecay
-	end
-
-	buffer.writef32(ObjectAngularVelocityBuffer, CompOffset, AngVelX)
-	buffer.writef32(ObjectAngularVelocityBuffer, CompOffset + 4, AngVelY)
-	buffer.writef32(ObjectAngularVelocityBuffer, CompOffset + 8, AngVelZ)
-
-	const AngSpeedSq = AngVelX * AngVelX + AngVelY * AngVelY + AngVelZ * AngVelZ :: number
-	if AngSpeedSq <= 1e-8 then
-		return AngSpeedSq
-	end
-
-	const AngSpeed = math.sqrt(AngSpeedSq) :: number
-	const Angle = AngSpeed * StepDeltaTime :: number
-	const InvAngSpeed = 1 / AngSpeed :: number
-	const AxisX = AngVelX * InvAngSpeed :: number
-	const AxisY = AngVelY * InvAngSpeed :: number
-	const AxisZ = AngVelZ * InvAngSpeed :: number
-	const CosAngle = math.cos(Angle) :: number
-	const SinAngle = math.sin(Angle) :: number
-
-	local LookX = buffer.readf32(DirectionsBuffer, DirOffset) :: number
-	local LookY = buffer.readf32(DirectionsBuffer, DirOffset + 4) :: number
-	local LookZ = buffer.readf32(DirectionsBuffer, DirOffset + 8) :: number
-	local UpX = buffer.readf32(DirectionsBuffer, DirOffset + 12) :: number
-	local UpY = buffer.readf32(DirectionsBuffer, DirOffset + 16) :: number
-	local UpZ = buffer.readf32(DirectionsBuffer, DirOffset + 20) :: number
-
-	if LookX * LookX + LookY * LookY + LookZ * LookZ < 0.5 or UpX * UpX + UpY * UpY + UpZ * UpZ < 0.5 then
-		LookX, LookY, LookZ = 0, 0, -1
-		UpX, UpY, UpZ = 0, 1, 0
-	end
-
-	LookX, LookY, LookZ =
-		PhysicsMathHelper.RotateVectorByAxisAngle(LookX, LookY, LookZ, AxisX, AxisY, AxisZ, CosAngle, SinAngle)
-	UpX, UpY, UpZ = PhysicsMathHelper.RotateVectorByAxisAngle(UpX, UpY, UpZ, AxisX, AxisY, AxisZ, CosAngle, SinAngle)
-
-	const LookLenSq = LookX * LookX + LookY * LookY + LookZ * LookZ :: number
-	const InvLookLen = if LookLenSq > 1e-8 then 1 / math.sqrt(LookLenSq) else 1 :: number
-	LookX *= InvLookLen
-	LookY *= InvLookLen
-	LookZ *= InvLookLen
-
-	local RightX = LookY * UpZ - LookZ * UpY :: number
-	local RightY = LookZ * UpX - LookX * UpZ :: number
-	local RightZ = LookX * UpY - LookY * UpX :: number
-	const RightLenSq = RightX * RightX + RightY * RightY + RightZ * RightZ :: number
-	if RightLenSq <= 1e-8 then
-		return AngSpeedSq
-	end
-
-	const InvRightLen = 1 / math.sqrt(RightLenSq) :: number
-	RightX *= InvRightLen
-	RightY *= InvRightLen
-	RightZ *= InvRightLen
-
-	UpX = RightY * LookZ - RightZ * LookY
-	UpY = RightZ * LookX - RightX * LookZ
-	UpZ = RightX * LookY - RightY * LookX
-
-	buffer.writef32(DirectionsBuffer, DirOffset, LookX)
-	buffer.writef32(DirectionsBuffer, DirOffset + 4, LookY)
-	buffer.writef32(DirectionsBuffer, DirOffset + 8, LookZ)
-	buffer.writef32(DirectionsBuffer, DirOffset + 12, UpX)
-	buffer.writef32(DirectionsBuffer, DirOffset + 16, UpY)
-	buffer.writef32(DirectionsBuffer, DirOffset + 20, UpZ)
-	buffer.writef32(DirectionsBuffer, DirOffset + 24, RightX)
-	buffer.writef32(DirectionsBuffer, DirOffset + 28, RightY)
-	buffer.writef32(DirectionsBuffer, DirOffset + 32, RightZ)
-
-	if OrientationBuffer then
-		buffer.writef32(OrientationBuffer, CompOffset, LookX)
-		buffer.writef32(OrientationBuffer, CompOffset + 4, LookY)
-		buffer.writef32(OrientationBuffer, CompOffset + 8, LookZ)
-	end
-
-	return AngSpeedSq
 end
 
 return PhysicsMathHelper

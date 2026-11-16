@@ -5,16 +5,12 @@
 -- Services --
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- Modules --
+-- Libraries --
 const RenderConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Configs"):WaitForChild("RenderConfig"))
 const TextureHelper = require(script.Parent.TextureHelper)
 
 -- Configs --
 const TEXTURE_SIZE = RenderConfig.TextureSize :: number
-
-local NextDynamicId = 1 :: number
-
-local TextureTable = {}
 
 export type TextureEntry = {
 	Id: number,
@@ -22,25 +18,22 @@ export type TextureEntry = {
 	Name: string,
 }
 
+-- Variables --
+local NextDynamicId = 1 :: number
+
+-- Tables --
+local TextureTable = {}
+TextureTable.Entries = {} :: { [number]: TextureEntry }
+TextureTable.IdToName = {} :: { [number]: string }
+TextureTable.NameToId = {} :: { [string]: number }
+TextureTable.IdToUrl = {} :: { [number]: string }
+TextureTable.UrlToId = {} :: { [string]: number }
+TextureTable.CachedBuffers = {} :: { [number]: buffer }
+
+-- Functions --
 -- ============================================================================
 -- 1. TEXTURE TRANSLATOR, DEDUPLICATED URL REGISTRY & 64x64 BUFFER CACHE
 -- ============================================================================
-
--- Public hashmap acting as the texture registry folder: numeric ECS TextureId -> { Id, Url, Name }
-TextureTable.Entries = {} :: { [number]: TextureEntry }
-
--- Translator table: numeric ECS TextureId -> texture name
-TextureTable.IdToName = {} :: { [number]: string }
-
--- Reverse translator table: texture name -> numeric ECS TextureId
-TextureTable.NameToId = {} :: { [string]: number }
-
--- URL translator maps for deduplication and client-side decoding
-TextureTable.IdToUrl = {} :: { [number]: string }
-TextureTable.UrlToId = {} :: { [string]: number }
-
--- Cached 64x64 RGBA texture buffers indexed by numeric ECS TextureId
-TextureTable.CachedBuffers = {} :: { [number]: buffer }
 
 --[=[
 	Trims surrounding whitespace from a raw Roblox asset URL.
@@ -53,7 +46,7 @@ end
 
 --[=[
 	Decodes a raw Roblox texture URL into a 64x64 RGBA buffer using the renderer's EditableImage pipeline.
-	@param RawUrl string -- Raw Roblox asset URL (e.g. "rbxassetid://123456789").
+	@param RawUrl string -- Raw Roblox asset URL.
 	@return (buffer?, boolean) -- Decoded 64x64 RGBA buffer (or nil if empty/failed), and true if decoded.
 ]=]
 function TextureTable.DecodeRawUrl(RawUrl: string): (buffer?, boolean)
@@ -78,7 +71,7 @@ end
 	@param RawUrl string -- Raw Roblox Decal.Texture URL.
 	@param TextureName string? -- Optional human-readable name for the translator table.
 	@param DecodeNow boolean? -- Whether to immediately decode via AssetService (defaults to true).
-	@return (number, boolean) -- Assigned (or existing) TextureId, and true if newly registered (false if empty or duplicate).
+	@return (number, boolean) -- Assigned (or existing) TextureId, and true if newly registered.
 ]=]
 function TextureTable.RegisterUrl(RawUrl: string, TextureName: string?, DecodeNow: boolean?): (number, boolean)
 	const NormalizedUrl = TextureTable.NormalizeUrl(RawUrl)
@@ -86,7 +79,6 @@ function TextureTable.RegisterUrl(RawUrl: string, TextureName: string?, DecodeNo
 		return 0, false
 	end
 
-	-- Ignore duplicate URLs and return the already-registered TextureId
 	const ExistingId = TextureTable.UrlToId[NormalizedUrl]
 	if ExistingId then
 		return ExistingId, false
@@ -95,21 +87,14 @@ function TextureTable.RegisterUrl(RawUrl: string, TextureName: string?, DecodeNo
 	const AssignedId = NextDynamicId :: number
 	NextDynamicId += 1
 
-	const ResolvedName = if TextureName and TextureName ~= ""
-		then TextureName
-		else ("Decal_" .. tostring(AssignedId))
-
+	const ResolvedName = if TextureName and TextureName ~= "" then TextureName else ("Decal_" .. tostring(AssignedId))
 	TextureTable.IdToName[AssignedId] = ResolvedName
 	if not TextureTable.NameToId[ResolvedName] then
 		TextureTable.NameToId[ResolvedName] = AssignedId
 	end
 	TextureTable.IdToUrl[AssignedId] = NormalizedUrl
 	TextureTable.UrlToId[NormalizedUrl] = AssignedId
-	TextureTable.Entries[AssignedId] = {
-		Id = AssignedId,
-		Url = NormalizedUrl,
-		Name = ResolvedName,
-	}
+	TextureTable.Entries[AssignedId] = { Id = AssignedId, Url = NormalizedUrl, Name = ResolvedName }
 
 	if DecodeNow ~= false then
 		const DecodedBuffer = TextureTable.DecodeRawUrl(NormalizedUrl)
@@ -133,12 +118,10 @@ function TextureTable.RegisterEntryWithId(TextureId: number, RawUrl: string, Tex
 	if NormalizedUrl == "" then
 		return TextureTable.CachedBuffers[TextureId], false
 	end
-
 	if TextureTable.IdToUrl[TextureId] == NormalizedUrl and TextureTable.CachedBuffers[TextureId] then
 		return TextureTable.CachedBuffers[TextureId], false
 	end
 
-	-- If this URL was already decoded under another slot, reuse its cached 64x64 buffer without re-downloading
 	const ExistingUrlId = TextureTable.UrlToId[NormalizedUrl]
 	if ExistingUrlId and TextureTable.CachedBuffers[ExistingUrlId] then
 		const SharedBuffer = TextureTable.CachedBuffers[ExistingUrlId]
@@ -153,30 +136,18 @@ function TextureTable.RegisterEntryWithId(TextureId: number, RawUrl: string, Tex
 				TextureTable.NameToId[TextureName] = TextureId
 			end
 		end
-		TextureTable.Entries[TextureId] = {
-			Id = TextureId,
-			Url = NormalizedUrl,
-			Name = ResolvedSharedName,
-		}
+		TextureTable.Entries[TextureId] = { Id = TextureId, Url = NormalizedUrl, Name = ResolvedSharedName }
 		return SharedBuffer, true
 	end
 
-	const ResolvedName = if TextureName and TextureName ~= ""
-		then TextureName
-		else ("Decal_" .. tostring(TextureId))
-
+	const ResolvedName = if TextureName and TextureName ~= "" then TextureName else ("Decal_" .. tostring(TextureId))
 	TextureTable.IdToName[TextureId] = ResolvedName
 	if not TextureTable.NameToId[ResolvedName] then
 		TextureTable.NameToId[ResolvedName] = TextureId
 	end
 	TextureTable.IdToUrl[TextureId] = NormalizedUrl
 	TextureTable.UrlToId[NormalizedUrl] = TextureId
-	TextureTable.Entries[TextureId] = {
-		Id = TextureId,
-		Url = NormalizedUrl,
-		Name = ResolvedName,
-	}
-
+	TextureTable.Entries[TextureId] = { Id = TextureId, Url = NormalizedUrl, Name = ResolvedName }
 	if TextureId >= NextDynamicId then
 		NextDynamicId = TextureId + 1
 	end
@@ -186,7 +157,6 @@ function TextureTable.RegisterEntryWithId(TextureId: number, RawUrl: string, Tex
 		TextureTable.CachedBuffers[TextureId] = DecodedBuffer
 		return DecodedBuffer, true
 	end
-
 	return nil, false
 end
 
@@ -229,7 +199,7 @@ end
 
 --[=[
 	Translates a texture name into its numeric ECS TextureId.
-	@param TextureName string -- Registered texture name (e.g. Decal name).
+	@param TextureName string -- Registered texture name.
 	@return number -- Numeric TextureId (0 if not registered).
 ]=]
 function TextureTable.TranslateNameToId(TextureName: string): number

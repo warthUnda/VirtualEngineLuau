@@ -20,7 +20,7 @@ return function()
 	const UtilitiesFolder = SharedFolder:WaitForChild("Utilities")
 	const PlayerFolder = UtilitiesFolder:WaitForChild("Player")
 
-	-- Modules --
+	-- Libraries --
 	const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 	const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
 	const BVH = require(UtilitiesFolder:WaitForChild("BVH"))

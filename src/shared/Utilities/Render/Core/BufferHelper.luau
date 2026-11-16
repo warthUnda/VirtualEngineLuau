@@ -15,7 +15,7 @@ const CLEAR_B = SystemsConfigs.ClearColorB :: number
 const RENDER_BUFFER_LAYOUT_SIZE = SystemsConfigs.RenderBufferLayoutSize :: number
 const PACKED_CLEAR_COLOR = bit32.bor(CLEAR_R, bit32.lshift(CLEAR_G, 8), bit32.lshift(CLEAR_B, 16), 0xFF000000) :: number
 
--- Buffers
+-- Variables --
 local ClearTemplateSize = 0 :: number
 local ClearPixelTemplate: buffer? = nil
 
@@ -24,6 +24,7 @@ local BufferHelper = {}
 
 BufferHelper.RenderBufferLayoutSize = RENDER_BUFFER_LAYOUT_SIZE :: number
 
+-- Functions --
 -- ============================================================================
 -- 1. BUFFER READ / WRITE & FRAME CLEAR HELPERS
 -- ============================================================================

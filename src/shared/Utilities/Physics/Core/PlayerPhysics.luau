@@ -5,7 +5,7 @@
 -- Services --
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- Modules --
+-- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 
 -- Configs --
@@ -23,7 +23,10 @@ const PLAYER_STOP_SPEED = SystemsConfigs.PlayerStopSpeed :: number
 const PLAYER_AIR_CONTROL = SystemsConfigs.PlayerAirControlMultiplier :: number
 const PLAYER_AIR_DRAG = SystemsConfigs.PlayerAirDrag :: number
 
+-- Tables --
 local PlayerPhysics = {}
+
+-- Functions --
 
 -- ============================================================================
 -- 1. PLAYER KINEMATICS - FRICTION, DRIVE INTEGRATION & VELOCITY STEP

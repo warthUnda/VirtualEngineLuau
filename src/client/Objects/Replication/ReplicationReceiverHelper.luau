@@ -30,6 +30,7 @@ export type ReceiverState = {
 -- Tables --
 local ReplicationReceiverHelper = {}
 
+-- Functions --
 -- ============================================================================
 -- 1. STATE INITIALIZATION & BINARY DELTA PAYLOAD INGESTION
 -- ============================================================================

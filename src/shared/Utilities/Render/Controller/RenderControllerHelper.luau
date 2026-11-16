@@ -19,47 +19,14 @@ const HALF_WIDTH = WIDTH * 0.5 :: number
 const HALF_HEIGHT = HEIGHT * 0.5 :: number
 const RENDER_BUFFER_LAYOUT_SIZE = BufferHelper.RenderBufferLayoutSize :: number
 const MIN_TRIANGLE_AREA = SystemsConfigs.MinTriangleArea :: number
-const FRAME_PACING_EPSILON = 1e-5 :: number
 
 -- Tables --
 local RenderControllerHelper = {}
 
+-- Functions --
 -- ============================================================================
--- 1. FRAME PACING, DIRECTION READING, COLOR SHADING & FACE QUAD STAGING
+-- 1. DIRECTION READING, COLOR SHADING, FACE STAGING & TEXTURE SYNC
 -- ============================================================================
-
---[=[
-	Advances the render frame-pacing accumulator and determines whether a new frame should be dispatched.
-	@param Accumulator number -- Current accumulated frame time in seconds.
-	@param DeltaTime number -- Elapsed tick delta time in seconds.
-	@param FrameInterval number -- Target seconds per rendered frame (<= 0 for uncapped).
-	@param IsFrameBlocked boolean -- True when a previous worker frame is still in flight.
-	@return boolean -- True when a render pass should execute this tick.
-	@return number -- Updated accumulator value in seconds.
-]=]
-function RenderControllerHelper.StepFrameAccumulator(
-	Accumulator: number,
-	DeltaTime: number,
-	FrameInterval: number,
-	IsFrameBlocked: boolean
-): (boolean, number)
-	if FrameInterval <= 0 then
-		return not IsFrameBlocked, 0
-	end
-
-	const NextAccumulator = Accumulator + math.max(0, DeltaTime) :: number
-	if NextAccumulator < FrameInterval - FRAME_PACING_EPSILON then
-		return false, NextAccumulator
-	end
-	if IsFrameBlocked then
-		return false, FrameInterval
-	end
-
-	const Remainder = if NextAccumulator >= FrameInterval * 2
-		then 0
-		else math.max(0, NextAccumulator - FrameInterval) :: number
-	return true, Remainder
-end
 
 --[=[
 	Reads a 3-component float direction vector from the directions buffer into a SIMD vector.
@@ -150,37 +117,14 @@ function RenderControllerHelper.SubmitFace(
 
 	const ClippedVertexCount = if V3ByteOffset >= 0
 		then RenderMath.ClipAndProjectQuad(
-			ScreenVertices,
-			V0ByteOffset,
-			V1ByteOffset,
-			V2ByteOffset,
-			V3ByteOffset,
-			ScaleU,
-			ScaleV,
-			ProjectedVertices,
-			ClipBufferA,
-			ClipBufferB,
-			FocalLength,
-			GuardBandX,
-			GuardBandY,
-			HALF_WIDTH,
-			HALF_HEIGHT
+			ScreenVertices, V0ByteOffset, V1ByteOffset, V2ByteOffset, V3ByteOffset,
+			ScaleU, ScaleV, ProjectedVertices, ClipBufferA, ClipBufferB,
+			FocalLength, GuardBandX, GuardBandY, HALF_WIDTH, HALF_HEIGHT
 		)
 		else RenderMath.ClipAndProjectTriangleUV(
-			ScreenVertices,
-			V0ByteOffset,
-			V1ByteOffset,
-			V2ByteOffset,
-			ScaleU,
-			ScaleV,
-			ProjectedVertices,
-			ClipBufferA,
-			ClipBufferB,
-			FocalLength,
-			GuardBandX,
-			GuardBandY,
-			HALF_WIDTH,
-			HALF_HEIGHT
+			ScreenVertices, V0ByteOffset, V1ByteOffset, V2ByteOffset,
+			ScaleU, ScaleV, ProjectedVertices, ClipBufferA, ClipBufferB,
+			FocalLength, GuardBandX, GuardBandY, HALF_WIDTH, HALF_HEIGHT
 		) :: number
 
 	if ClippedVertexCount < 3 then
@@ -188,7 +132,6 @@ function RenderControllerHelper.SubmitFace(
 	end
 
 	local NextTriangleCount = StagedTriangleCount :: number
-
 	const Vertex0X = buffer.readf32(ProjectedVertices, 0) :: number
 	const Vertex0Y = buffer.readf32(ProjectedVertices, 4) :: number
 	const InverseZ0 = buffer.readf32(ProjectedVertices, 8) :: number
@@ -202,13 +145,11 @@ function RenderControllerHelper.SubmitFace(
 
 		const V1Offset = (ClippedTriangleIndex - 1) * 20 :: number
 		const V2Offset = V1Offset + 20 :: number
-
 		const Vertex1X = buffer.readf32(ProjectedVertices, V1Offset) :: number
 		const Vertex1Y = buffer.readf32(ProjectedVertices, V1Offset + 4) :: number
 		const InverseZ1 = buffer.readf32(ProjectedVertices, V1Offset + 8) :: number
 		const TexCoordU1 = buffer.readf32(ProjectedVertices, V1Offset + 12) :: number
 		const TexCoordV1 = buffer.readf32(ProjectedVertices, V1Offset + 16) :: number
-
 		const Vertex2X = buffer.readf32(ProjectedVertices, V2Offset) :: number
 		const Vertex2Y = buffer.readf32(ProjectedVertices, V2Offset + 4) :: number
 		const InverseZ2 = buffer.readf32(ProjectedVertices, V2Offset + 8) :: number
@@ -225,42 +166,33 @@ function RenderControllerHelper.SubmitFace(
 		const MaxX = math.min(WIDTH - 1, math.max(Vertex0X, Vertex1X, Vertex2X)) :: number
 		const MinY = math.max(0, math.min(Vertex0Y, Vertex1Y, Vertex2Y)) :: number
 		const MaxY = math.min(HEIGHT - 1, math.max(Vertex0Y, Vertex1Y, Vertex2Y)) :: number
-
 		if MinX > MaxX or MinY > MaxY then
 			continue
 		end
 
 		const InverseTriangleArea = 1 / SignedDoubleTriangleArea :: number
-
 		const ScaledInverseZ0 = InverseZ0 * InverseTriangleArea :: number
 		const ScaledInverseZ1 = InverseZ1 * InverseTriangleArea :: number
 		const ScaledInverseZ2 = InverseZ2 * InverseTriangleArea :: number
-
-		const ScaledU0 = ScaledInverseZ0 * TexCoordU0 :: number
-		const ScaledV0 = ScaledInverseZ0 * TexCoordV0 :: number
-		const ScaledU1 = ScaledInverseZ1 * TexCoordU1 :: number
-		const ScaledV1 = ScaledInverseZ1 * TexCoordV1 :: number
-		const ScaledU2 = ScaledInverseZ2 * TexCoordU2 :: number
-		const ScaledV2 = ScaledInverseZ2 * TexCoordV2 :: number
 
 		const StageOffset = NextTriangleCount * RENDER_BUFFER_LAYOUT_SIZE :: number
 		buffer.writei16(StagedTriangles, StageOffset, Vertex0X)
 		buffer.writei16(StagedTriangles, StageOffset + 2, Vertex0Y)
 		buffer.writef32(StagedTriangles, StageOffset + 4, ScaledInverseZ0)
-		buffer.writef32(StagedTriangles, StageOffset + 8, ScaledU0)
-		buffer.writef32(StagedTriangles, StageOffset + 12, ScaledV0)
+		buffer.writef32(StagedTriangles, StageOffset + 8, ScaledInverseZ0 * TexCoordU0)
+		buffer.writef32(StagedTriangles, StageOffset + 12, ScaledInverseZ0 * TexCoordV0)
 
 		buffer.writei16(StagedTriangles, StageOffset + 16, Vertex1X)
 		buffer.writei16(StagedTriangles, StageOffset + 18, Vertex1Y)
 		buffer.writef32(StagedTriangles, StageOffset + 20, ScaledInverseZ1)
-		buffer.writef32(StagedTriangles, StageOffset + 24, ScaledU1)
-		buffer.writef32(StagedTriangles, StageOffset + 28, ScaledV1)
+		buffer.writef32(StagedTriangles, StageOffset + 24, ScaledInverseZ1 * TexCoordU1)
+		buffer.writef32(StagedTriangles, StageOffset + 28, ScaledInverseZ1 * TexCoordV1)
 
 		buffer.writei16(StagedTriangles, StageOffset + 32, Vertex2X)
 		buffer.writei16(StagedTriangles, StageOffset + 34, Vertex2Y)
 		buffer.writef32(StagedTriangles, StageOffset + 36, ScaledInverseZ2)
-		buffer.writef32(StagedTriangles, StageOffset + 40, ScaledU2)
-		buffer.writef32(StagedTriangles, StageOffset + 44, ScaledV2)
+		buffer.writef32(StagedTriangles, StageOffset + 40, ScaledInverseZ2 * TexCoordU2)
+		buffer.writef32(StagedTriangles, StageOffset + 44, ScaledInverseZ2 * TexCoordV2)
 
 		buffer.writeu32(StagedTriangles, StageOffset + 48, PackedColor)
 		buffer.writeu32(StagedTriangles, StageOffset + 52, TextureId)
@@ -268,7 +200,6 @@ function RenderControllerHelper.SubmitFace(
 		const BoundsOffset = NextTriangleCount * 4 :: number
 		buffer.writeu16(StagedBounds, BoundsOffset, MinY)
 		buffer.writeu16(StagedBounds, BoundsOffset + 2, MaxY)
-
 		WorkerPartitionHelper.RecordTriangleRowWork(RowWorkDiff, MinX, MaxX, MinY, MaxY, TextureId)
 		NextTriangleCount += 1
 	end
@@ -277,7 +208,7 @@ function RenderControllerHelper.SubmitFace(
 end
 
 --[=[
-	Decodes synced TextureTable entries received from the server into 64x64 buffers and invokes OnTextureUpdated when cached buffers change.
+	Decodes synced TextureTable entries received from the server into 64x64 buffers and invokes OnTextureUpdated.
 	@param Entries any -- Array of TextureTable.TextureEntry records from TextureSyncEvent.
 	@param OnTextureUpdated ({ [number]: buffer }) -> () -- Callback invoked with updated cached texture buffers.
 ]=]
@@ -290,14 +221,12 @@ function RenderControllerHelper.ApplySyncedTextures(Entries: any, OnTextureUpdat
 		if typeof(Entry) ~= "table" then
 			continue
 		end
-
 		const TextureId = Entry.Id :: number?
 		const RawUrl = Entry.Url :: string?
 		const TextureName = Entry.Name :: string?
 		if typeof(TextureId) ~= "number" or typeof(RawUrl) ~= "string" then
 			continue
 		end
-
 		task.spawn(function()
 			const _Buf: buffer?, Updated: boolean = TextureTable.RegisterEntryWithId(
 				TextureId,

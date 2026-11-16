@@ -5,10 +5,11 @@
 -- Services --
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- Modules --
+-- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const BufferHelper = require(script.Parent.BufferHelper)
-const MathModule = require(script.Parent.MathModule)
+const RasterizerMath = require(script.Parent.RasterizerMath)
+const PolygonClipMath = require(script.Parent.PolygonClipMath)
 
 -- Configs --
 const NEAR_CLIP = SystemsConfigs.RenderNearClip :: number
@@ -16,17 +17,16 @@ const FAR_CLIP = SystemsConfigs.RenderFarClip :: number
 const GUARD_BAND_SCALE = SystemsConfigs.GuardBandScale :: number
 const BUFFER_LAYOUT_SIZE = SystemsConfigs.RenderBufferLayoutSize :: number
 
-const PLANE_NEAR = vector.create(0, 0, 1)
-const PLANE_FAR = vector.create(0, 0, -1)
-
+-- Tables --
 local RenderMath = {}
 
+-- Functions --
 -- ============================================================================
--- 1. FUNCTIONS - RENDERING MATH
+-- 1. CAMERA-SPACE OBB TRANSFORM, PROJECTION PARAMS & BATCH DISPATCH FACADE
 -- ============================================================================
 
 --[=[
-	Transforms an arbitrary shape's unit local vertices from VerticeFile into camera space and computes local camera/sun vectors for face culling and lighting.
+	Transforms an arbitrary shape's unit local vertices into camera space and computes local camera/sun vectors.
 	@param PositionBuffer buffer -- Entity position component buffer.
 	@param DirectionsBuffer buffer -- Entity basis directions buffer.
 	@param SizeBuffer buffer -- Entity size component buffer.
@@ -40,6 +40,8 @@ local RenderMath = {}
 	@param CamUp vector -- Camera UpVector.
 	@param CamLook vector -- Camera LookVector.
 	@param SunVec vector -- Normalized world-space sun direction vector.
+	@param GuardBandX number? -- Optional horizontal guardband slope factor.
+	@param GuardBandY number? -- Optional vertical guardband slope factor.
 	@return (boolean, vector, vector, vector) -- (IsVisible, LocalCameraPos, HalfSize, LocalSun).
 ]=]
 function RenderMath.TransformShapeCameraVertices(
@@ -61,8 +63,6 @@ function RenderMath.TransformShapeCameraVertices(
 ): (boolean, vector, vector, vector)
 	const PartPosition = BufferHelper.ReadVec3(PositionBuffer, ComponentOffset)
 	const HalfSize = BufferHelper.ReadVec3(SizeBuffer, ComponentOffset) * 0.5
-	const HalfSizeX: number, HalfSizeY: number, HalfSizeZ: number = HalfSize.x, HalfSize.y, HalfSize.z
-
 	const RelativePosition = PartPosition - CamPos
 	const CameraSpaceCenterZ = vector.dot(RelativePosition, CamLook) :: number
 
@@ -70,16 +70,15 @@ function RenderMath.TransformShapeCameraVertices(
 	const UpAxis = BufferHelper.ReadVec3(DirectionsBuffer, DirectionOffset + 12)
 	const RightAxis = BufferHelper.ReadVec3(DirectionsBuffer, DirectionOffset + 24)
 
-	const WorldRightAxis = RightAxis * HalfSizeX
-	const WorldUpAxis = UpAxis * HalfSizeY
-	const WorldLookAxis = LookAxis * HalfSizeZ
+	const WorldRightAxis = RightAxis * HalfSize.x
+	const WorldUpAxis = UpAxis * HalfSize.y
+	const WorldLookAxis = LookAxis * HalfSize.z
 
 	const RightAxisCameraZ = vector.dot(WorldRightAxis, CamLook) :: number
 	const UpAxisCameraZ = vector.dot(WorldUpAxis, CamLook) :: number
 	const LookAxisCameraZ = vector.dot(WorldLookAxis, CamLook) :: number
+	const CameraSpaceExtentZ = math.abs(RightAxisCameraZ) + math.abs(UpAxisCameraZ) + math.abs(LookAxisCameraZ) :: number
 
-	const CameraSpaceExtentZ =
-		math.abs(RightAxisCameraZ) + math.abs(UpAxisCameraZ) + math.abs(LookAxisCameraZ) :: number
 	if CameraSpaceCenterZ + CameraSpaceExtentZ < NEAR_CLIP or CameraSpaceCenterZ - CameraSpaceExtentZ > FAR_CLIP then
 		return false, vector.zero, vector.zero, vector.zero
 	end
@@ -107,15 +106,13 @@ function RenderMath.TransformShapeCameraVertices(
 
 	if GuardBandX and GuardBandY then
 		const MaxDepth = math.max(CameraSpaceCenterZ + CameraSpaceExtentZ, NEAR_CLIP) :: number
-		const ExtentX =
-			math.abs(CameraSpaceRightAxis.X) + math.abs(CameraSpaceUpAxis.X) + math.abs(CameraSpaceLookAxis.X) :: number
+		const ExtentX = math.abs(CameraSpaceRightAxis.X) + math.abs(CameraSpaceUpAxis.X) + math.abs(CameraSpaceLookAxis.X) :: number
 		const HalfFrustumX = MaxDepth * GuardBandX :: number
 		if CameraSpaceCenter.X + ExtentX < -HalfFrustumX or CameraSpaceCenter.X - ExtentX > HalfFrustumX then
 			return false, vector.zero, vector.zero, vector.zero
 		end
 
-		const ExtentY =
-			math.abs(CameraSpaceRightAxis.Y) + math.abs(CameraSpaceUpAxis.Y) + math.abs(CameraSpaceLookAxis.Y) :: number
+		const ExtentY = math.abs(CameraSpaceRightAxis.Y) + math.abs(CameraSpaceUpAxis.Y) + math.abs(CameraSpaceLookAxis.Y) :: number
 		const HalfFrustumY = MaxDepth * GuardBandY :: number
 		if CameraSpaceCenter.Y + ExtentY < -HalfFrustumY or CameraSpaceCenter.Y - ExtentY > HalfFrustumY then
 			return false, vector.zero, vector.zero, vector.zero
@@ -124,11 +121,12 @@ function RenderMath.TransformShapeCameraVertices(
 
 	for VertexIndex = 1, VertexCount do
 		const LocalVertex = LocalVertices[VertexIndex]
-		const CameraVertex = CameraSpaceCenter
-			+ CameraSpaceRightAxis * LocalVertex.x
-			+ CameraSpaceUpAxis * LocalVertex.y
-			+ CameraSpaceLookAxis * LocalVertex.z
-		BufferHelper.WriteVec3(CameraVertices, (VertexIndex - 1) * 12, CameraVertex)
+		const VertexOffset = (VertexIndex - 1) * 12 :: number
+		BufferHelper.WriteVec3(
+			CameraVertices,
+			VertexOffset,
+			CameraSpaceCenter + CameraSpaceRightAxis * LocalVertex.x + CameraSpaceUpAxis * LocalVertex.y + CameraSpaceLookAxis * LocalVertex.z
+		)
 	end
 
 	const LocalCameraPos = vector.create(
@@ -136,11 +134,7 @@ function RenderMath.TransformShapeCameraVertices(
 		-vector.dot(RelativePosition, UpAxis),
 		-vector.dot(RelativePosition, LookAxis)
 	)
-	const LocalSun = vector.create(
-		vector.dot(RightAxis, SunVec),
-		vector.dot(UpAxis, SunVec),
-		vector.dot(LookAxis, SunVec)
-	)
+	const LocalSun = vector.create(vector.dot(RightAxis, SunVec), vector.dot(UpAxis, SunVec), vector.dot(LookAxis, SunVec))
 
 	return true, LocalCameraPos, HalfSize, LocalSun
 end
@@ -159,188 +153,8 @@ function RenderMath.GetProjectionParameters(FovY: number, WIDTH: number, HEIGHT:
 	return FocalLength, GuardBandX, GuardBandY
 end
 
---[=[
-	Clips a camera-space quad against frustum planes and projects vertices with UVs onto the screen.
-	@param CameraVertices buffer -- Buffer containing camera-space vertices.
-	@param V0ByteOffset number -- Byte offset for quad vertex 0.
-	@param V1ByteOffset number -- Byte offset for quad vertex 1.
-	@param V2ByteOffset number -- Byte offset for quad vertex 2.
-	@param V3ByteOffset number -- Byte offset for quad vertex 3.
-	@param ScaleU number -- Horizontal UV tile scale for the quad.
-	@param ScaleV number -- Vertical UV tile scale for the quad.
-	@param ProjectedVertices buffer -- Buffer to receive projected 20-byte vertices (X, Y, InvZ, U, V).
-	@param ClipBufferA buffer -- Temporary scratch buffer for 20-byte polygon clipping.
-	@param ClipBufferB buffer -- Secondary scratch buffer for 20-byte polygon clipping.
-	@param FocalLength number -- Camera focal length.
-	@param GuardBandX number -- Horizontal guardband slope factor.
-	@param GuardBandY number -- Vertical guardband slope factor.
-	@param HalfWidth number -- Half screen width in pixels.
-	@param HalfHeight number -- Half screen height in pixels.
-	@return number -- Total projected vertex count (0 if culled).
-]=]
-function RenderMath.ClipAndProjectQuad(
-	CameraVertices: buffer,
-	V0ByteOffset: number,
-	V1ByteOffset: number,
-	V2ByteOffset: number,
-	V3ByteOffset: number,
-	ScaleU: number,
-	ScaleV: number,
-	ProjectedVertices: buffer,
-	ClipBufferA: buffer,
-	ClipBufferB: buffer,
-	FocalLength: number,
-	GuardBandX: number,
-	GuardBandY: number,
-	HalfWidth: number,
-	HalfHeight: number
-): number
-	const QuadVertex0 = BufferHelper.ReadVec3(CameraVertices, V0ByteOffset)
-	const QuadVertex1 = BufferHelper.ReadVec3(CameraVertices, V1ByteOffset)
-	const QuadVertex2 = BufferHelper.ReadVec3(CameraVertices, V2ByteOffset)
-	const QuadVertex3 = BufferHelper.ReadVec3(CameraVertices, V3ByteOffset)
-
-	if
-		MathModule.IsVertexInside(QuadVertex0, GuardBandX, GuardBandY)
-		and MathModule.IsVertexInside(QuadVertex1, GuardBandX, GuardBandY)
-		and MathModule.IsVertexInside(QuadVertex2, GuardBandX, GuardBandY)
-		and MathModule.IsVertexInside(QuadVertex3, GuardBandX, GuardBandY)
-	then
-		MathModule.ProjectVertexUV(ProjectedVertices, 0, QuadVertex0, 0, ScaleV, FocalLength, HalfWidth, HalfHeight)
-		MathModule.ProjectVertexUV(ProjectedVertices, 20, QuadVertex1, 0, 0, FocalLength, HalfWidth, HalfHeight)
-		MathModule.ProjectVertexUV(ProjectedVertices, 40, QuadVertex2, ScaleU, 0, FocalLength, HalfWidth, HalfHeight)
-		MathModule.ProjectVertexUV(ProjectedVertices, 60, QuadVertex3, ScaleU, ScaleV, FocalLength, HalfWidth, HalfHeight)
-		return 4
-	end
-
-	BufferHelper.WriteVec3(ClipBufferA, 0, QuadVertex0)
-	buffer.writef32(ClipBufferA, 12, 0)
-	buffer.writef32(ClipBufferA, 16, ScaleV)
-
-	BufferHelper.WriteVec3(ClipBufferA, 20, QuadVertex1)
-	buffer.writef32(ClipBufferA, 32, 0)
-	buffer.writef32(ClipBufferA, 36, 0)
-
-	BufferHelper.WriteVec3(ClipBufferA, 40, QuadVertex2)
-	buffer.writef32(ClipBufferA, 52, ScaleU)
-	buffer.writef32(ClipBufferA, 56, 0)
-
-	BufferHelper.WriteVec3(ClipBufferA, 60, QuadVertex3)
-	buffer.writef32(ClipBufferA, 72, ScaleU)
-	buffer.writef32(ClipBufferA, 76, ScaleV)
-
-	local VertexCount = MathModule.ClipPolygonUV(ClipBufferA, 4, ClipBufferB, PLANE_NEAR, -NEAR_CLIP)
-	VertexCount = MathModule.ClipPolygonUV(ClipBufferB, VertexCount, ClipBufferA, PLANE_FAR, FAR_CLIP)
-	VertexCount = MathModule.ClipPolygonUV(ClipBufferA, VertexCount, ClipBufferB, vector.create(1, 0, GuardBandX), 0)
-	VertexCount = MathModule.ClipPolygonUV(ClipBufferB, VertexCount, ClipBufferA, vector.create(-1, 0, GuardBandX), 0)
-	VertexCount = MathModule.ClipPolygonUV(ClipBufferA, VertexCount, ClipBufferB, vector.create(0, 1, GuardBandY), 0)
-	VertexCount = MathModule.ClipPolygonUV(ClipBufferB, VertexCount, ClipBufferA, vector.create(0, -1, GuardBandY), 0)
-
-	for i = 1, VertexCount do
-		const Offset = (i - 1) * 20 :: number
-		MathModule.ProjectVertexUV(
-			ProjectedVertices,
-			Offset,
-			BufferHelper.ReadVec3(ClipBufferA, Offset),
-			buffer.readf32(ClipBufferA, Offset + 12),
-			buffer.readf32(ClipBufferA, Offset + 16),
-			FocalLength,
-			HalfWidth,
-			HalfHeight
-		)
-	end
-
-	return VertexCount
-end
-
---[=[
-	Clips a camera-space triangle face against frustum planes and projects vertices with UVs onto the screen.
-	@param CameraVertices buffer -- Buffer containing camera-space vertices.
-	@param V0ByteOffset number -- Byte offset for triangle vertex 0.
-	@param V1ByteOffset number -- Byte offset for triangle vertex 1.
-	@param V2ByteOffset number -- Byte offset for triangle vertex 2.
-	@param ScaleU number -- Horizontal UV tile scale for the face.
-	@param ScaleV number -- Vertical UV tile scale for the face.
-	@param ProjectedVertices buffer -- Buffer to receive projected 20-byte vertices (X, Y, InvZ, U, V).
-	@param ClipBufferA buffer -- Temporary scratch buffer for 20-byte polygon clipping.
-	@param ClipBufferB buffer -- Secondary scratch buffer for 20-byte polygon clipping.
-	@param FocalLength number -- Camera focal length.
-	@param GuardBandX number -- Horizontal guardband slope factor.
-	@param GuardBandY number -- Vertical guardband slope factor.
-	@param HalfWidth number -- Half screen width in pixels.
-	@param HalfHeight number -- Half screen height in pixels.
-	@return number -- Total projected vertex count (0 if culled).
-]=]
-function RenderMath.ClipAndProjectTriangleUV(
-	CameraVertices: buffer,
-	V0ByteOffset: number,
-	V1ByteOffset: number,
-	V2ByteOffset: number,
-	ScaleU: number,
-	ScaleV: number,
-	ProjectedVertices: buffer,
-	ClipBufferA: buffer,
-	ClipBufferB: buffer,
-	FocalLength: number,
-	GuardBandX: number,
-	GuardBandY: number,
-	HalfWidth: number,
-	HalfHeight: number
-): number
-	const TriVertex0 = BufferHelper.ReadVec3(CameraVertices, V0ByteOffset)
-	const TriVertex1 = BufferHelper.ReadVec3(CameraVertices, V1ByteOffset)
-	const TriVertex2 = BufferHelper.ReadVec3(CameraVertices, V2ByteOffset)
-
-	if
-		MathModule.IsVertexInside(TriVertex0, GuardBandX, GuardBandY)
-		and MathModule.IsVertexInside(TriVertex1, GuardBandX, GuardBandY)
-		and MathModule.IsVertexInside(TriVertex2, GuardBandX, GuardBandY)
-	then
-		MathModule.ProjectVertexUV(ProjectedVertices, 0, TriVertex0, 0, ScaleV, FocalLength, HalfWidth, HalfHeight)
-		MathModule.ProjectVertexUV(ProjectedVertices, 20, TriVertex1, 0, 0, FocalLength, HalfWidth, HalfHeight)
-		MathModule.ProjectVertexUV(ProjectedVertices, 40, TriVertex2, ScaleU, ScaleV, FocalLength, HalfWidth, HalfHeight)
-		return 3
-	end
-
-	BufferHelper.WriteVec3(ClipBufferA, 0, TriVertex0)
-	buffer.writef32(ClipBufferA, 12, 0)
-	buffer.writef32(ClipBufferA, 16, ScaleV)
-
-	BufferHelper.WriteVec3(ClipBufferA, 20, TriVertex1)
-	buffer.writef32(ClipBufferA, 32, 0)
-	buffer.writef32(ClipBufferA, 36, 0)
-
-	BufferHelper.WriteVec3(ClipBufferA, 40, TriVertex2)
-	buffer.writef32(ClipBufferA, 52, ScaleU)
-	buffer.writef32(ClipBufferA, 56, ScaleV)
-
-	local VertexCount = MathModule.ClipPolygonUV(ClipBufferA, 3, ClipBufferB, PLANE_NEAR, -NEAR_CLIP)
-	VertexCount = MathModule.ClipPolygonUV(ClipBufferB, VertexCount, ClipBufferA, PLANE_FAR, FAR_CLIP)
-	VertexCount = MathModule.ClipPolygonUV(ClipBufferA, VertexCount, ClipBufferB, vector.create(1, 0, GuardBandX), 0)
-	VertexCount = MathModule.ClipPolygonUV(ClipBufferB, VertexCount, ClipBufferA, vector.create(-1, 0, GuardBandX), 0)
-	VertexCount = MathModule.ClipPolygonUV(ClipBufferA, VertexCount, ClipBufferB, vector.create(0, 1, GuardBandY), 0)
-	VertexCount = MathModule.ClipPolygonUV(ClipBufferB, VertexCount, ClipBufferA, vector.create(0, -1, GuardBandY), 0)
-
-	for i = 1, VertexCount do
-		const Offset = (i - 1) * 20 :: number
-		MathModule.ProjectVertexUV(
-			ProjectedVertices,
-			Offset,
-			BufferHelper.ReadVec3(ClipBufferA, Offset),
-			buffer.readf32(ClipBufferA, Offset + 12),
-			buffer.readf32(ClipBufferA, Offset + 16),
-			FocalLength,
-			HalfWidth,
-			HalfHeight
-		)
-	end
-
-	return VertexCount
-end
-
--- ============================================================================
--- 2. DRAWING OBJECTS - EXACT SPAN RASTERIZATION
--- ============================================================================
+RenderMath.ClipAndProjectQuad = PolygonClipMath.ClipAndProjectQuad
+RenderMath.ClipAndProjectTriangleUV = PolygonClipMath.ClipAndProjectTriangleUV
 
 --[=[
 	Iterates and rasterizes a packed batch of textured triangles from a render command buffer.
@@ -353,6 +167,8 @@ end
 	@param HEIGHT number -- Screen height in pixels.
 	@param PixelBuffer buffer -- Destination color pixel buffer.
 	@param ZBuffer buffer -- Destination 32-bit depth buffer.
+	@param BandStartY number? -- Optional inclusive scanline band start Y.
+	@param BandEndY number? -- Optional inclusive scanline band end Y.
 	@return (number, number) -- Modified scanline row range (DirtyMinY, DirtyMaxY).
 ]=]
 function RenderMath.DrawTriangleBatch(
@@ -369,6 +185,7 @@ function RenderMath.DrawTriangleBatch(
 	BandEndY: number?
 ): (number, number)
 	const RowStride = WIDTH * 4 :: number
+	const RasterizeSpan = RasterizerMath.RasterizeTriangleSpan
 	local DirtyMinY = HEIGHT :: number
 	local DirtyMaxY = -1 :: number
 	local ReadOffset = 0 :: number
@@ -377,7 +194,7 @@ function RenderMath.DrawTriangleBatch(
 		const TextureId = buffer.readu32(RenderBuffer, ReadOffset + 52) :: number
 		const TriangleTextureBuffer: buffer? = if TextureId > 0 then TextureBuffers[TextureId] else nil
 
-		const TriangleMinY: number, TriangleMaxY: number = MathModule.RasterizeTriangleSpan(
+		const TriangleMinY: number, TriangleMaxY: number = RasterizeSpan(
 			buffer.readi16(RenderBuffer, ReadOffset),
 			buffer.readi16(RenderBuffer, ReadOffset + 2),
 			buffer.readf32(RenderBuffer, ReadOffset + 4),
@@ -412,7 +229,6 @@ function RenderMath.DrawTriangleBatch(
 		if TriangleMaxY > DirtyMaxY then
 			DirtyMaxY = TriangleMaxY
 		end
-
 		ReadOffset += BUFFER_LAYOUT_SIZE
 	end
 

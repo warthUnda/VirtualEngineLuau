@@ -7,13 +7,14 @@ const Players = game:GetService("Players")
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const ServerScriptService = game:GetService("ServerScriptService")
 
--- Modules --
+-- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const TextureTable = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Texture"):WaitForChild("TextureTable"))
-const Storage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
 const PlayerCuller = require(ServerScriptService.Server.Objects.Replication.Core.PlayerCuller)
 const PlayerFunctions = require(ServerScriptService.Server.Objects.Replication.Core.PlayerFunctions)
 
+-- Storage --
+const Storage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
 const ECSData = Storage.ECSData
 
 -- Configs --
@@ -23,7 +24,7 @@ const OBSERVER_REMOTE_EVENT_NAME = SystemsConfigs.ObserverRemoteEventName :: str
 const TEXTURE_SYNC_REMOTE_EVENT_NAME = SystemsConfigs.TextureSyncRemoteEventName :: string
 const REPLICATION_TICK_INTERVAL = SystemsConfigs.ReplicationTickInterval :: number
 
--- Static References --
+-- Remote Events --
 -- Ensure CoreEvents and its 3 child RemoteEvents exist whether pre-placed in Studio or starting from a fresh Rojo tree.
 local CoreEvents = ReplicatedStorage:FindFirstChild(CORE_EVENTS_FOLDER_NAME) :: Folder?
 if not CoreEvents then
@@ -57,18 +58,23 @@ if not TextureSyncEvent then
 	TextureSyncEvent = NewTextureSyncEvent
 end
 
-(ReplicateEvent :: RemoteEvent).OnServerEvent:Connect(function(PlayerObject: Player)
+const ReplicateRemote = ReplicateEvent :: RemoteEvent
+const ObserverEventAny = ObserverStateEvent :: any
+const TextureSyncRemote = TextureSyncEvent :: RemoteEvent
+
+ReplicateRemote.OnServerEvent:Connect(function(PlayerObject: Player)
 	PlayerFunctions.MarkClientReady(PlayerObject, ECSData.GetCounts().EntityECSCount)
-end);
-
-(ObserverStateEvent :: any).OnServerEvent:Connect(function(PlayerObject: Player, Payload: buffer)
-	PlayerFunctions.UpdateObserverFromBuffer(PlayerObject, Payload, ECSData.GetCounts().EntityECSCount)
-end);
-
-(TextureSyncEvent :: RemoteEvent).OnServerEvent:Connect(function(PlayerObject: Player)
-	(TextureSyncEvent :: RemoteEvent):FireClient(PlayerObject, TextureTable.ExportEntries())
 end)
 
+ObserverEventAny.OnServerEvent:Connect(function(PlayerObject: Player, Payload: buffer)
+	PlayerFunctions.UpdateObserverFromBuffer(PlayerObject, Payload, ECSData.GetCounts().EntityECSCount)
+end)
+
+TextureSyncRemote.OnServerEvent:Connect(function(PlayerObject: Player)
+	TextureSyncRemote:FireClient(PlayerObject, TextureTable.ExportEntries())
+end)
+
+-- Functions --
 -- ============================================================================
 -- 1. REPLICATION LOOP - BROADCASTS VISIBLE SNAPSHOTS TO CLIENTS
 -- ============================================================================
@@ -86,7 +92,7 @@ while true do
 
 		const DeltaPacket = PlayerCuller.CullObjects(Player, true)
 		if DeltaPacket then
-			(ReplicateEvent :: RemoteEvent):FireClient(Player, DeltaPacket)
+			ReplicateRemote:FireClient(Player, DeltaPacket)
 		end
 	end
 

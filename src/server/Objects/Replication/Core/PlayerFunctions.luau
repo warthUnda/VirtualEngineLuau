@@ -9,9 +9,9 @@ const ServerScriptService = game:GetService("ServerScriptService")
 
 -- Modules --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
-const Storage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
 
--- Storage Tables
+-- Storage --
+const Storage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
 const ECSData = Storage.ECSData
 const PositionData = Storage.PositionData
 const VisualData = Storage.VisualData
@@ -77,10 +77,24 @@ export type PlayerDeltaState = {
 	FovDegrees: number,
 	LastEntityCount: number,
 	SentVersion: buffer,
+	ForceResync: buffer,
 }
 
 -- Tables --
 local PlayerStates = {} :: { [Player]: PlayerDeltaState }
+
+ECSData.SetSwapPopCallback(function(DeletedEntityId: number, MovedFromEntityId: number)
+	if DeletedEntityId ~= MovedFromEntityId and DeletedEntityId >= 1 and DeletedEntityId <= MAX_ENTITIES then
+		const FlagOffset = DeletedEntityId - 1 :: number
+		const VersionOffset = FlagOffset * 4 :: number
+		for _, State in pairs(PlayerStates) do
+			if buffer.readu32(State.SentVersion, VersionOffset) > 0 then
+				buffer.writeu8(State.ForceResync, FlagOffset, 1)
+				buffer.writeu32(State.SentVersion, VersionOffset, 0)
+			end
+		end
+	end
+end)
 
 local PlayerFunctions = {}
 
@@ -161,6 +175,7 @@ function PlayerFunctions.GetOrCreatePlayerState(PlayerObject: Player, EntityCoun
 			FovDegrees = DEFAULT_CAMERA_FOV,
 			LastEntityCount = EntityCount,
 			SentVersion = buffer.create(MAX_ENTITIES * 4),
+			ForceResync = buffer.create(MAX_ENTITIES),
 		}
 		PlayerFunctions.TrySeedObserverFromCharacter(NewState, PlayerObject.Character)
 		PlayerStates[PlayerObject] = NewState
@@ -172,7 +187,9 @@ function PlayerFunctions.GetOrCreatePlayerState(PlayerObject: Player, EntityCoun
 	end
 
 	if EntityCount < State.LastEntityCount then
-		buffer.fill(State.SentVersion, EntityCount * 4, 0, (State.LastEntityCount - EntityCount) * 4)
+		const ShrankCount = State.LastEntityCount - EntityCount :: number
+		buffer.fill(State.SentVersion, EntityCount * 4, 0, ShrankCount * 4)
+		buffer.fill(State.ForceResync, EntityCount, 0, ShrankCount)
 	end
 
 	return State

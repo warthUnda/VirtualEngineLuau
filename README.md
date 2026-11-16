@@ -59,7 +59,7 @@ For in-depth architectural mechanisms, mathematical formulations, and API specif
 | **BVH & Spatial Raycasting** | [`BVH.md`](file:///C:/Users/Startklar/Documents/Development/Roblox/CustomRenderer/src/shared/Utilities/BVH/BVH.md) | Ray/OBB entry-exit interval solving, broadphase AABB bounding queries, and live dynamic OOP entity tracking. |
 | **Contiguous Memory ECS** | [`ECS.md`](file:///C:/Users/Startklar/Documents/Development/Roblox/CustomRenderer/src/server/Objects/ObjectsECS/ECS.md) | Flat linear byte buffer layout, 32-bit property bitfield packing, and $O(1)$ swap-and-pop entity compaction. |
 | **Replication & Streaming** | [`Replication.md`](file:///C:/Users/Startklar/Documents/Development/Roblox/CustomRenderer/src/server/Objects/Replication/Replication.md) | Observer view-cone culling, binary delta buffer compression, and persistent client-to-server slot ingestion. |
-| **Player Lifecycle Service** | [`Player.md`](file:///C:/Users/Startklar/Documents/Development/Roblox/CustomRenderer/src/shared/Utilities/Player/Player.md) | Connection management, character spatial tracking, and clean resource de-allocation on disconnect. |
+| **Player Lifecycle Service** | [`Player.md`](file:///C:/Users/Startklar/Documents/Development/Roblox/CustomRenderer/src/shared/Utilities/Player/Player.md) | Renderable ECS player entity registration, `DynamicObjectsList` OOP linking, 20-byte binary transform sync, and local self-collision suppression. |
 
 ---
 
@@ -78,9 +78,9 @@ The codebase strictly follows standard architectural roles across directories:
 The project includes dual-boundary automated test coverage executable directly within Roblox Studio or via TestEZ:
 
 - **Server Test Suite:** [`src/server/Tests/TestRunner.server.luau`](file:///C:/Users/Startklar/Documents/Development/Roblox/CustomRenderer/src/server/Tests/TestRunner.server.luau)
-  - Specs: `BVH.spec.luau`, `ECS.spec.luau`, `Physics.spec.luau`, `RenderMath.spec.luau`, `Replication.spec.luau`.
+  - Specs: `BVH.spec.luau`, `ECS.spec.luau`, `Physics.spec.luau`, `Player.spec.luau`, `RenderMath.spec.luau`, `Replication.spec.luau`.
 - **Client Test Suite:** [`src/client/Tests/ClientTestRunner.client.luau`](file:///C:/Users/Startklar/Documents/Development/Roblox/CustomRenderer/src/client/Tests/ClientTestRunner.client.luau)
-  - Specs: `Camera.spec.luau`, `Cleaner.spec.luau`, `ClientInput.spec.luau`, `ReplicationReceiver.spec.luau`.
+  - Specs: `Camera.spec.luau`, `Cleaner.spec.luau`, `ClientInput.spec.luau`, `PlayerClient.spec.luau`, `ReplicationReceiver.spec.luau`.
 
 ---
 

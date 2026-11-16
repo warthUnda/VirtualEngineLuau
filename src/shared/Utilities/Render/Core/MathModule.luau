@@ -268,31 +268,24 @@ function MathModule.RasterizeTriangleSpan(
 	const Edge1StepY = Vertex2X - Vertex0X :: number
 	const Edge2StepY = Vertex0X - Vertex1X :: number
 
-	const ScaledInverseZVector = vector.create(ScaledInverseZ0, ScaledInverseZ1, ScaledInverseZ2)
-	const EdgeStepVectorX = vector.create(Edge0StepX, Edge1StepX, Edge2StepX)
-	const EdgeStepVectorY = vector.create(Edge0StepY, Edge1StepY, Edge2StepY)
+	const InverseZStepX = Edge0StepX * ScaledInverseZ0
+		+ Edge1StepX * ScaledInverseZ1
+		+ Edge2StepX * ScaledInverseZ2 :: number
 
-	const InverseZStepX = vector.dot(EdgeStepVectorX, ScaledInverseZVector) :: number
-	const InverseZStepY = vector.dot(EdgeStepVectorY, ScaledInverseZVector) :: number
-
-	const InitialEdgeWeight0 = (MinX - Vertex1X) * Edge0StepX + (MinY - Vertex1Y) * Edge0StepY :: number
-	const InitialEdgeWeight1 = (MinX - Vertex2X) * Edge1StepX + (MinY - Vertex2Y) * Edge1StepY :: number
-	const InitialEdgeWeight2 = (MinX - Vertex0X) * Edge2StepX + (MinY - Vertex0Y) * Edge2StepY :: number
-	local RowEdgeWeights = vector.create(InitialEdgeWeight0, InitialEdgeWeight1, InitialEdgeWeight2)
-	local RowInverseZ = vector.dot(RowEdgeWeights, ScaledInverseZVector) :: number
+	local EdgeWeight0 = (MinX - Vertex1X) * Edge0StepX + (MinY - Vertex1Y) * Edge0StepY :: number
+	local EdgeWeight1 = (MinX - Vertex2X) * Edge1StepX + (MinY - Vertex2Y) * Edge1StepY :: number
+	local EdgeWeight2 = (MinX - Vertex0X) * Edge2StepX + (MinY - Vertex0Y) * Edge2StepY :: number
 
 	const MaxSpanOffsetX = MaxX - MinX :: number
 	local RowOffset = ((MinY - EffectiveBandStartY) * WIDTH + MinX) * 4 :: number
 
 	if TextureBuffer then
-		const ScaledUOverZVector = vector.create(ScaledUOverZ0, ScaledUOverZ1, ScaledUOverZ2)
-		const ScaledVOverZVector = vector.create(ScaledVOverZ0, ScaledVOverZ1, ScaledVOverZ2)
-		const UOverZStepX = vector.dot(EdgeStepVectorX, ScaledUOverZVector) :: number
-		const UOverZStepY = vector.dot(EdgeStepVectorY, ScaledUOverZVector) :: number
-		const VOverZStepX = vector.dot(EdgeStepVectorX, ScaledVOverZVector) :: number
-		const VOverZStepY = vector.dot(EdgeStepVectorY, ScaledVOverZVector) :: number
-		local RowUOverZ = vector.dot(RowEdgeWeights, ScaledUOverZVector) :: number
-		local RowVOverZ = vector.dot(RowEdgeWeights, ScaledVOverZVector) :: number
+		const UOverZStepX = Edge0StepX * ScaledUOverZ0
+			+ Edge1StepX * ScaledUOverZ1
+			+ Edge2StepX * ScaledUOverZ2 :: number
+		const VOverZStepX = Edge0StepX * ScaledVOverZ0
+			+ Edge1StepX * ScaledVOverZ1
+			+ Edge2StepX * ScaledVOverZ2 :: number
 
 		const TextureWidthMask = TextureWidth - 1 :: number
 		const TextureHeightMask = TextureHeight - 1 :: number
@@ -314,17 +307,27 @@ function MathModule.RasterizeTriangleSpan(
 
 		for _ = MinY, MaxY do
 			local SpanStartOffsetX: number, SpanEndOffsetX: number =
-				ClipSpanEdge(RowEdgeWeights.x, Edge0StepX, 0, MaxSpanOffsetX)
+				ClipSpanEdge(EdgeWeight0, Edge0StepX, 0, MaxSpanOffsetX)
 			if SpanStartOffsetX <= SpanEndOffsetX then
 				SpanStartOffsetX, SpanEndOffsetX =
-					ClipSpanEdge(RowEdgeWeights.y, Edge1StepX, SpanStartOffsetX, SpanEndOffsetX)
+					ClipSpanEdge(EdgeWeight1, Edge1StepX, SpanStartOffsetX, SpanEndOffsetX)
 			end
 			if SpanStartOffsetX <= SpanEndOffsetX then
 				SpanStartOffsetX, SpanEndOffsetX =
-					ClipSpanEdge(RowEdgeWeights.z, Edge2StepX, SpanStartOffsetX, SpanEndOffsetX)
+					ClipSpanEdge(EdgeWeight2, Edge2StepX, SpanStartOffsetX, SpanEndOffsetX)
 			end
 
 			if SpanStartOffsetX <= SpanEndOffsetX then
+				const RowInverseZ = EdgeWeight0 * ScaledInverseZ0
+					+ EdgeWeight1 * ScaledInverseZ1
+					+ EdgeWeight2 * ScaledInverseZ2 :: number
+				const RowUOverZ = EdgeWeight0 * ScaledUOverZ0
+					+ EdgeWeight1 * ScaledUOverZ1
+					+ EdgeWeight2 * ScaledUOverZ2 :: number
+				const RowVOverZ = EdgeWeight0 * ScaledVOverZ0
+					+ EdgeWeight1 * ScaledVOverZ1
+					+ EdgeWeight2 * ScaledVOverZ2 :: number
+
 				local BufferOffset = RowOffset + SpanStartOffsetX * 4 :: number
 				const EndOffset = RowOffset + SpanEndOffsetX * 4 :: number
 				local InterpolatedInverseZ = RowInverseZ + SpanStartOffsetX * InverseZStepX :: number
@@ -381,26 +384,28 @@ function MathModule.RasterizeTriangleSpan(
 				end
 			end
 
-			RowEdgeWeights += EdgeStepVectorY
-			RowInverseZ += InverseZStepY
-			RowUOverZ += UOverZStepY
-			RowVOverZ += VOverZStepY
+			EdgeWeight0 += Edge0StepY
+			EdgeWeight1 += Edge1StepY
+			EdgeWeight2 += Edge2StepY
 			RowOffset += RowStride
 		end
 	else
 		for _ = MinY, MaxY do
 			local SpanStartOffsetX: number, SpanEndOffsetX: number =
-				ClipSpanEdge(RowEdgeWeights.x, Edge0StepX, 0, MaxSpanOffsetX)
+				ClipSpanEdge(EdgeWeight0, Edge0StepX, 0, MaxSpanOffsetX)
 			if SpanStartOffsetX <= SpanEndOffsetX then
 				SpanStartOffsetX, SpanEndOffsetX =
-					ClipSpanEdge(RowEdgeWeights.y, Edge1StepX, SpanStartOffsetX, SpanEndOffsetX)
+					ClipSpanEdge(EdgeWeight1, Edge1StepX, SpanStartOffsetX, SpanEndOffsetX)
 			end
 			if SpanStartOffsetX <= SpanEndOffsetX then
 				SpanStartOffsetX, SpanEndOffsetX =
-					ClipSpanEdge(RowEdgeWeights.z, Edge2StepX, SpanStartOffsetX, SpanEndOffsetX)
+					ClipSpanEdge(EdgeWeight2, Edge2StepX, SpanStartOffsetX, SpanEndOffsetX)
 			end
 
 			if SpanStartOffsetX <= SpanEndOffsetX then
+				const RowInverseZ = EdgeWeight0 * ScaledInverseZ0
+					+ EdgeWeight1 * ScaledInverseZ1
+					+ EdgeWeight2 * ScaledInverseZ2 :: number
 				local BufferOffset = RowOffset + SpanStartOffsetX * 4 :: number
 				const EndOffset = RowOffset + SpanEndOffsetX * 4 :: number
 				local InterpolatedInverseZ = RowInverseZ + SpanStartOffsetX * InverseZStepX :: number
@@ -416,8 +421,9 @@ function MathModule.RasterizeTriangleSpan(
 				end
 			end
 
-			RowEdgeWeights += EdgeStepVectorY
-			RowInverseZ += InverseZStepY
+			EdgeWeight0 += Edge0StepY
+			EdgeWeight1 += Edge1StepY
+			EdgeWeight2 += Edge2StepY
 			RowOffset += RowStride
 		end
 	end

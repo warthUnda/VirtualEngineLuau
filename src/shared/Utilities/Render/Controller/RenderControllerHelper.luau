@@ -5,29 +5,27 @@
 -- Services --
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- Modules --
+-- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper)
 const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath)
 const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Texture.TextureTable)
+const WorkerPartitionHelper = require(script.Parent.WorkerPartitionHelper)
 
 -- Configs --
 const WIDTH = SystemsConfigs.RenderWidth :: number
 const HEIGHT = SystemsConfigs.RenderHeight :: number
 const HALF_WIDTH = WIDTH * 0.5 :: number
 const HALF_HEIGHT = HEIGHT * 0.5 :: number
-const TOTAL_PIXELS = WIDTH * HEIGHT :: number
-const ACTOR_COUNT = SystemsConfigs.ActorCount :: number
-const WORKER_BUFFER_MULTIPLIER = SystemsConfigs.WorkerBufferMultiplier :: number
-const WORKER_BUFFER_CAPACITY = TOTAL_PIXELS * WORKER_BUFFER_MULTIPLIER :: number
 const RENDER_BUFFER_LAYOUT_SIZE = BufferHelper.RenderBufferLayoutSize :: number
 const MIN_TRIANGLE_AREA = SystemsConfigs.MinTriangleArea :: number
 const FRAME_PACING_EPSILON = 1e-5 :: number
 
+-- Tables --
 local RenderControllerHelper = {}
 
 -- ============================================================================
--- 1. FRAME PACING, DIRECTION READING, COLOR SHADING & FACE QUAD SUBMISSION
+-- 1. FRAME PACING, DIRECTION READING, COLOR SHADING & FACE QUAD STAGING
 -- ============================================================================
 
 --[=[
@@ -39,7 +37,12 @@ local RenderControllerHelper = {}
 	@return boolean -- True when a render pass should execute this tick.
 	@return number -- Updated accumulator value in seconds.
 ]=]
-function RenderControllerHelper.StepFrameAccumulator(Accumulator: number, DeltaTime: number, FrameInterval: number, IsFrameBlocked: boolean): (boolean, number)
+function RenderControllerHelper.StepFrameAccumulator(
+	Accumulator: number,
+	DeltaTime: number,
+	FrameInterval: number,
+	IsFrameBlocked: boolean
+): (boolean, number)
 	if FrameInterval <= 0 then
 		return not IsFrameBlocked, 0
 	end
@@ -52,7 +55,9 @@ function RenderControllerHelper.StepFrameAccumulator(Accumulator: number, DeltaT
 		return false, FrameInterval
 	end
 
-	const Remainder = if NextAccumulator >= FrameInterval * 2 then 0 else math.max(0, NextAccumulator - FrameInterval) :: number
+	const Remainder = if NextAccumulator >= FrameInterval * 2
+		then 0
+		else math.max(0, NextAccumulator - FrameInterval) :: number
 	return true, Remainder
 end
 
@@ -93,34 +98,40 @@ function RenderControllerHelper.PackShadedColor(
 end
 
 --[=[
-	Clips a quad face, tessellates it into triangles, and dispatches them to parallel worker queues based on lowest estimated raster work.
-	@param ScreenVertices buffer -- Camera-space box vertex buffer.
+	Clips a face polygon, tessellates it into screen-space triangles, stages each 56-byte triangle once,
+	and records O(1) scanline row work into RowWorkDiff for dynamic worker band partitioning.
+	@param ScreenVertices buffer -- Camera-space vertex buffer.
 	@param ProjectedVertices buffer -- Scratch buffer for projected 2D coordinates.
 	@param ClipBufferA buffer -- First polygon clipping scratch buffer.
 	@param ClipBufferB buffer -- Second polygon clipping scratch buffer.
-	@param BandHeight number -- Vertical scanline height of each worker band.
-	@param WorkerOffsets { number } -- Buffer write offsets per worker.
-	@param BufferTable { buffer } -- Array of worker render command buffers.
+	@param StagedTriangles buffer -- Contiguous staged 56-byte triangle command buffer.
+	@param StagedBounds buffer -- Contiguous 4-byte (u16 MinY, u16 MaxY) bounds buffer.
+	@param StagedTriangleCount number -- Current staged triangle count.
+	@param MaxStagedTriangles number -- Maximum triangle capacity in StagedTriangles.
+	@param RowWorkDiff buffer -- Scanline difference buffer of size (Height + 1) * 4.
 	@param V0ByteOffset number -- Byte offset for vertex 0.
 	@param V1ByteOffset number -- Byte offset for vertex 1.
 	@param V2ByteOffset number -- Byte offset for vertex 2.
-	@param V3ByteOffset number -- Byte offset for vertex 3.
-	@param ScaleU number -- Horizontal UV tile scale for the face quad.
-	@param ScaleV number -- Vertical UV tile scale for the face quad.
+	@param V3ByteOffset number -- Byte offset for vertex 3 (-1 for triangle face).
+	@param ScaleU number -- Horizontal UV tile scale for the face.
+	@param ScaleV number -- Vertical UV tile scale for the face.
 	@param PackedColor number -- Shaded 32-bit RGBA color.
 	@param TextureId number -- TextureTable numeric ID.
 	@param FocalLength number -- Camera focal length.
 	@param GuardBandX number -- Horizontal guardband slope factor.
 	@param GuardBandY number -- Vertical guardband slope factor.
+	@return number -- Updated staged triangle count.
 ]=]
 function RenderControllerHelper.SubmitFace(
 	ScreenVertices: buffer,
 	ProjectedVertices: buffer,
 	ClipBufferA: buffer,
 	ClipBufferB: buffer,
-	BandHeight: number,
-	WorkerOffsets: { number },
-	BufferTable: { buffer },
+	StagedTriangles: buffer,
+	StagedBounds: buffer,
+	StagedTriangleCount: number,
+	MaxStagedTriangles: number,
+	RowWorkDiff: buffer,
 	V0ByteOffset: number,
 	V1ByteOffset: number,
 	V2ByteOffset: number,
@@ -132,7 +143,11 @@ function RenderControllerHelper.SubmitFace(
 	FocalLength: number,
 	GuardBandX: number,
 	GuardBandY: number
-)
+): number
+	if StagedTriangleCount >= MaxStagedTriangles then
+		return StagedTriangleCount
+	end
+
 	const ClippedVertexCount = if V3ByteOffset >= 0
 		then RenderMath.ClipAndProjectQuad(
 			ScreenVertices,
@@ -169,8 +184,10 @@ function RenderControllerHelper.SubmitFace(
 		) :: number
 
 	if ClippedVertexCount < 3 then
-		return
+		return StagedTriangleCount
 	end
+
+	local NextTriangleCount = StagedTriangleCount :: number
 
 	const Vertex0X = buffer.readf32(ProjectedVertices, 0) :: number
 	const Vertex0Y = buffer.readf32(ProjectedVertices, 4) :: number
@@ -179,6 +196,10 @@ function RenderControllerHelper.SubmitFace(
 	const TexCoordV0 = buffer.readf32(ProjectedVertices, 16) :: number
 
 	for ClippedTriangleIndex = 2, ClippedVertexCount - 1 do
+		if NextTriangleCount >= MaxStagedTriangles then
+			break
+		end
+
 		const V1Offset = (ClippedTriangleIndex - 1) * 20 :: number
 		const V2Offset = V1Offset + 20 :: number
 
@@ -222,40 +243,37 @@ function RenderControllerHelper.SubmitFace(
 		const ScaledU2 = ScaledInverseZ2 * TexCoordU2 :: number
 		const ScaledV2 = ScaledInverseZ2 * TexCoordV2 :: number
 
-		const FirstBand = math.clamp(math.floor(MinY / BandHeight) + 1, 1, ACTOR_COUNT) :: number
-		const LastBand = math.clamp(math.floor(MaxY / BandHeight) + 1, 1, ACTOR_COUNT) :: number
+		const StageOffset = NextTriangleCount * RENDER_BUFFER_LAYOUT_SIZE :: number
+		buffer.writei16(StagedTriangles, StageOffset, Vertex0X)
+		buffer.writei16(StagedTriangles, StageOffset + 2, Vertex0Y)
+		buffer.writef32(StagedTriangles, StageOffset + 4, ScaledInverseZ0)
+		buffer.writef32(StagedTriangles, StageOffset + 8, ScaledU0)
+		buffer.writef32(StagedTriangles, StageOffset + 12, ScaledV0)
 
-		for WorkerIdx = FirstBand, LastBand do
-			const RenderBufferOffset = WorkerOffsets[WorkerIdx] :: number
-			if RenderBufferOffset + RENDER_BUFFER_LAYOUT_SIZE > WORKER_BUFFER_CAPACITY then
-				continue
-			end
+		buffer.writei16(StagedTriangles, StageOffset + 16, Vertex1X)
+		buffer.writei16(StagedTriangles, StageOffset + 18, Vertex1Y)
+		buffer.writef32(StagedTriangles, StageOffset + 20, ScaledInverseZ1)
+		buffer.writef32(StagedTriangles, StageOffset + 24, ScaledU1)
+		buffer.writef32(StagedTriangles, StageOffset + 28, ScaledV1)
 
-			WorkerOffsets[WorkerIdx] = RenderBufferOffset + RENDER_BUFFER_LAYOUT_SIZE
+		buffer.writei16(StagedTriangles, StageOffset + 32, Vertex2X)
+		buffer.writei16(StagedTriangles, StageOffset + 34, Vertex2Y)
+		buffer.writef32(StagedTriangles, StageOffset + 36, ScaledInverseZ2)
+		buffer.writef32(StagedTriangles, StageOffset + 40, ScaledU2)
+		buffer.writef32(StagedTriangles, StageOffset + 44, ScaledV2)
 
-			const RenderBuffer = BufferTable[WorkerIdx] :: buffer
-			buffer.writei16(RenderBuffer, RenderBufferOffset, Vertex0X)
-			buffer.writei16(RenderBuffer, RenderBufferOffset + 2, Vertex0Y)
-			buffer.writef32(RenderBuffer, RenderBufferOffset + 4, ScaledInverseZ0)
-			buffer.writef32(RenderBuffer, RenderBufferOffset + 8, ScaledU0)
-			buffer.writef32(RenderBuffer, RenderBufferOffset + 12, ScaledV0)
+		buffer.writeu32(StagedTriangles, StageOffset + 48, PackedColor)
+		buffer.writeu32(StagedTriangles, StageOffset + 52, TextureId)
 
-			buffer.writei16(RenderBuffer, RenderBufferOffset + 16, Vertex1X)
-			buffer.writei16(RenderBuffer, RenderBufferOffset + 18, Vertex1Y)
-			buffer.writef32(RenderBuffer, RenderBufferOffset + 20, ScaledInverseZ1)
-			buffer.writef32(RenderBuffer, RenderBufferOffset + 24, ScaledU1)
-			buffer.writef32(RenderBuffer, RenderBufferOffset + 28, ScaledV1)
+		const BoundsOffset = NextTriangleCount * 4 :: number
+		buffer.writeu16(StagedBounds, BoundsOffset, MinY)
+		buffer.writeu16(StagedBounds, BoundsOffset + 2, MaxY)
 
-			buffer.writei16(RenderBuffer, RenderBufferOffset + 32, Vertex2X)
-			buffer.writei16(RenderBuffer, RenderBufferOffset + 34, Vertex2Y)
-			buffer.writef32(RenderBuffer, RenderBufferOffset + 36, ScaledInverseZ2)
-			buffer.writef32(RenderBuffer, RenderBufferOffset + 40, ScaledU2)
-			buffer.writef32(RenderBuffer, RenderBufferOffset + 44, ScaledV2)
-
-			buffer.writeu32(RenderBuffer, RenderBufferOffset + 48, PackedColor)
-			buffer.writeu32(RenderBuffer, RenderBufferOffset + 52, TextureId)
-		end
+		WorkerPartitionHelper.RecordTriangleRowWork(RowWorkDiff, MinX, MaxX, MinY, MaxY, TextureId)
+		NextTriangleCount += 1
 	end
+
+	return NextTriangleCount
 end
 
 --[=[

@@ -12,12 +12,17 @@ return function()
 	const it = SpecEnv.it
 	const expect = SpecEnv.expect
 
+	-- Services --
 	const ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+	-- Static References --
 	const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
 
+	-- Libraries --
 	const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
 	const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 
+	-- Configs --
 	const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 
 	describe("1. ECS Property Packing & Bit Extraction", function()
@@ -116,6 +121,10 @@ return function()
 			const Entity2 = Storage.ECSData.RegisterEntity(false)
 			const Entity3 = Storage.ECSData.RegisterEntity(false)
 
+			const Obj2 = { Tag = "DeletedMiddleObj" }
+			const Dyn2 = Storage.DynamicObjectsList.AddObject(Obj2, Entity2)
+			Storage.PropertiesData.CreateLayout((Entity2 - 1) * SystemsConfigs.ECSPropertiesStride, true, true, false, Dyn2)
+
 			const Obj3 = { Tag = "TailObj" }
 			const Dyn3 = Storage.DynamicObjectsList.AddObject(Obj3, Entity3)
 			Storage.PropertiesData.CreateLayout((Entity3 - 1) * SystemsConfigs.ECSPropertiesStride, true, true, false, Dyn3)
@@ -140,6 +149,8 @@ return function()
 			Storage.ECSData.DeleteEntity(Entity2)
 			expect(CallbackDeleted).to.equal(Entity2)
 			expect(CallbackMovedFrom).to.equal(Entity3)
+			expect(Storage.DynamicObjectsList.GetObject(Dyn2)).to.equal(nil)
+			expect(Storage.DynamicObjectsList.GetBoundEntityId(Dyn2)).to.equal(0)
 			expect(Storage.DynamicObjectsList.GetBoundEntityId(Dyn3)).to.equal(Entity2)
 			expect(Storage.DynamicObjectsList.GetObjectByEntityId(Entity2)).to.equal(Obj3)
 			expect(Storage.DynamicObjectsList.GetObjectByEntityId(Entity3)).to.equal(nil)
@@ -163,6 +174,23 @@ return function()
 			Storage.DynamicObjectsList.RemoveObject(DynamicId)
 			expect(Storage.DynamicObjectsList.GetObject(DynamicId)).to.equal(nil)
 			expect(Storage.DynamicObjectsList.GetObjectByEntityId(EntityId)).to.equal(nil)
+		end)
+
+		it("should bind OOP object instances at explicit replicated DynamicIds via SetObjectAtId", function()
+			const Storage = ECSMain.CreateStorage(false)
+			const EntityId = Storage.ECSData.RegisterEntity(false)
+			const ReplicatedDynamicId = 17 :: number
+			const PlayerOOP = { ClassName = "PlayerService", UserId = 9001 }
+
+			const BoundOk = Storage.DynamicObjectsList.SetObjectAtId(ReplicatedDynamicId, PlayerOOP, EntityId)
+			expect(BoundOk).to.equal(true)
+			expect(Storage.DynamicObjectsList.GetObject(ReplicatedDynamicId)).to.equal(PlayerOOP)
+			expect(Storage.DynamicObjectsList.GetBoundEntityId(ReplicatedDynamicId)).to.equal(EntityId)
+			expect(Storage.DynamicObjectsList.GetObjectByEntityId(EntityId)).to.equal(PlayerOOP)
+
+			Storage.DynamicObjectsList.RemoveObject(ReplicatedDynamicId)
+			expect(Storage.DynamicObjectsList.GetObject(ReplicatedDynamicId)).to.equal(nil)
+			expect(Storage.DynamicObjectsList.GetBoundEntityId(ReplicatedDynamicId)).to.equal(0)
 		end)
 	end)
 end

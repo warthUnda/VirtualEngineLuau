@@ -5,7 +5,7 @@
 -- Services --
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- Modules --
+-- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 
 -- Configs --
@@ -105,6 +105,7 @@ export type DynamicObjectsComponent = {
 	ObjectsTable: { [number]: any },
 	Counts: DynamicListCounts,
 	AddObject: (ObjectInstance: any, EntityId: number?) -> number,
+	SetObjectAtId: (DynamicId: number, ObjectInstance: any, EntityId: number?) -> boolean,
 	GetObject: (DynamicId: number) -> any,
 	GetObjectFromRegister: (Register: number) -> any,
 	GetObjectByEntityId: (EntityId: number) -> any,
@@ -125,6 +126,7 @@ export type ECSStorage = {
 	DynamicObjectsList: DynamicObjectsComponent,
 }
 
+-- Tables --
 local ECSMain = {}
 
 -- ============================================================================
@@ -721,6 +723,33 @@ function ECSMain.CreateDynamicObjectsComponent(PropertiesBuffer: buffer): Dynami
 		return DynamicId
 	end
 
+	function DynamicObjectsList.SetObjectAtId(DynamicId: number, ObjectInstance: any, EntityId: number?): boolean
+		if DynamicId <= 0 or DynamicId > MAX_DYNAMIC_ID or ObjectInstance == nil then
+			return false
+		end
+
+		const FreeIndex = table.find(FreeIds, DynamicId)
+		if FreeIndex then
+			table.remove(FreeIds, FreeIndex)
+		end
+
+		if ObjectsTable[DynamicId] == nil then
+			Counts.ActiveCount += 1
+		end
+		if DynamicId > Counts.NextId then
+			Counts.NextId = DynamicId
+		end
+
+		ObjectsTable[DynamicId] = ObjectInstance
+
+		if EntityId and EntityId > 0 then
+			buffer.writeu32(EntityIdByDynamicId, DynamicId * 4, EntityId)
+			ECSMain.SetEntityDynamicId(PropertiesBuffer, EntityId, DynamicId)
+		end
+
+		return true
+	end
+
 	function DynamicObjectsList.GetObject(DynamicId: number): any
 		if DynamicId <= 0 or DynamicId > MAX_DYNAMIC_ID then
 			return nil
@@ -781,7 +810,13 @@ function ECSMain.CreateDynamicObjectsComponent(PropertiesBuffer: buffer): Dynami
 		const BoundEntityId = buffer.readu32(EntityIdByDynamicId, DynamicId * 4) :: number
 		if BoundEntityId > 0 then
 			buffer.writeu32(EntityIdByDynamicId, DynamicId * 4, 0)
-			ECSMain.SetEntityDynamicId(PropertiesBuffer, BoundEntityId, 0)
+			const BoundOffset = (BoundEntityId - 1) * PROPERTIES_STRIDE :: number
+			if BoundOffset + PROPERTIES_STRIDE <= buffer.len(PropertiesBuffer) then
+				const BoundRegister = buffer.readu32(PropertiesBuffer, BoundOffset) :: number
+				if ECSMain.GetEntityDynamicId(BoundRegister) == DynamicId then
+					ECSMain.SetEntityDynamicId(PropertiesBuffer, BoundEntityId, 0)
+				end
+			end
 		end
 
 		ObjectsTable[DynamicId] = nil
@@ -910,6 +945,9 @@ function ECSMain.CreateStorage(IncludeStaticBuffer: boolean?): ECSStorage
 
 		const DeletedProp = buffer.readu32(PropertiesBuffer, (EntityId - 1) * PROPERTIES_STRIDE) :: number
 		const DeletedDynId = ECSMain.GetEntityDynamicId(DeletedProp) :: number
+		if DeletedDynId > 0 then
+			DynamicObjectsList.RemoveObject(DeletedDynId)
+		end
 
 		ECSMain.DeleteEntity(
 			EntityId,
@@ -922,10 +960,6 @@ function ECSMain.CreateStorage(IncludeStaticBuffer: boolean?): ECSStorage
 			StaticBuffer,
 			PropertiesBuffer
 		)
-
-		if DeletedDynId > 0 then
-			DynamicObjectsList.RemoveObject(DeletedDynId)
-		end
 
 		if EntityId ~= LastEntityId then
 			const MovedProp = buffer.readu32(PropertiesBuffer, (EntityId - 1) * PROPERTIES_STRIDE) :: number

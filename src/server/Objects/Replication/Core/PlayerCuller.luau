@@ -92,6 +92,7 @@ function PlayerCuller.CullObjects(PlayerObject: Player, SkipVersionSync: boolean
 	end
 
 	const SentVersion = State.SentVersion :: buffer
+	const ForceResync = State.ForceResync :: buffer
 	const OriginX = State.OriginX :: number
 	const OriginY = State.OriginY :: number
 	const OriginZ = State.OriginZ :: number
@@ -121,9 +122,10 @@ function PlayerCuller.CullObjects(PlayerObject: Player, SkipVersionSync: boolean
 		const FlagOffset = i - 1 :: number
 		const VersionOffset = FlagOffset * 4 :: number
 		const SentVer = buffer.readu32(SentVersion, VersionOffset) :: number
+		const ForcedSlot = (buffer.readu8(ForceResync, FlagOffset) == 1) :: boolean
 		const IsStatic = (buffer.readu8(StaticBuffer, FlagOffset) == 1) :: boolean
 
-		if IsStatic then
+		if not ForcedSlot and IsStatic then
 			if SentVer > 0 then
 				const Mask, _ = PlayerFunctions.GetEntityDeltaMask(i, SentVer)
 				if Mask == 0 then
@@ -138,7 +140,7 @@ function PlayerCuller.CullObjects(PlayerObject: Player, SkipVersionSync: boolean
 					continue
 				end
 			end
-		else
+		elseif not ForcedSlot then
 			if ViewCulling.IsEntityCulled(i, PositionBuffer, SizeBuffer) then
 				continue
 			end
@@ -146,6 +148,9 @@ function PlayerCuller.CullObjects(PlayerObject: Player, SkipVersionSync: boolean
 
 		const Mask, CurrentVer = PlayerFunctions.GetEntityDeltaMask(i, SentVer)
 		if Mask == 0 then
+			if ForcedSlot then
+				buffer.writeu8(ForceResync, FlagOffset, 0)
+			end
 			continue
 		end
 
@@ -154,6 +159,9 @@ function PlayerCuller.CullObjects(PlayerObject: Player, SkipVersionSync: boolean
 			break
 		end
 
+		if ForcedSlot then
+			buffer.writeu8(ForceResync, FlagOffset, 0)
+		end
 		buffer.writeu32(SentVersion, VersionOffset, CurrentVer)
 		buffer.writeu16(ScratchPayload, WriteOffset, i)
 		buffer.writeu8(ScratchPayload, WriteOffset + 2, Mask)

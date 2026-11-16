@@ -12,17 +12,24 @@ return function()
 	const it = SpecEnv.it
 	const expect = SpecEnv.expect
 
+	-- Services --
 	const ReplicatedStorage = game:GetService("ReplicatedStorage")
 	const ServerScriptService = game:GetService("ServerScriptService")
+
+	-- Static References --
 	const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
 
+	-- Storage --
+	const ServerStorage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
+
+	-- Modules --
 	const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 	const ViewCulling = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("ViewCulling"))
 	const PlayerCuller = require(ServerScriptService.Server.Objects.Replication.Core.PlayerCuller)
 	const PlayerFunctions = require(ServerScriptService.Server.Objects.Replication.Core.PlayerFunctions)
-	const ServerStorage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
 	const TestHelper = require(ServerScriptService.Server.Tests.TestHelper)
 
+	-- Configs --
 	const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 
 	describe("1. Frustum & View Cone Culling", function()
@@ -215,6 +222,45 @@ return function()
 			ViewCulling.PrepassDominantOccluder(2, PosBuf, SizeBuf, PropBuf)
 			expect(ViewCulling.IsEntityCulled(1, PosBuf, SizeBuf)).to.equal(true)
 			expect(ViewCulling.IsEntityCulled(2, PosBuf, SizeBuf)).to.equal(false)
+			ViewCulling.UpdateObserverFromVectors(0, 0, 0, 0, 0, -1, 0, 1, 0, 1, 0, 0, 0, 70)
+		end)
+
+		it("should force-resync a swap-popped slot even when the moved tail entity is outside the frustum", function()
+			const FrontEntity = TestHelper.SpawnBoxEntity(ServerStorage, CFrame.new(0, 0, -25), Vector3.new(4, 4, 4), false)
+			const BehindTailEntity = TestHelper.SpawnBoxEntity(ServerStorage, CFrame.new(0, 0, 80), Vector3.new(4, 4, 4), false)
+			const MockPlayer = ({ Character = nil } :: any) :: Player
+
+			const ForwardPayload = buffer.create(ViewCulling.ObserverPayloadBytes)
+			buffer.writef32(ForwardPayload, 12, 0)
+			buffer.writef32(ForwardPayload, 16, 0)
+			buffer.writef32(ForwardPayload, 20, -1)
+			buffer.writef32(ForwardPayload, 24, 0)
+			buffer.writef32(ForwardPayload, 28, 1)
+			buffer.writef32(ForwardPayload, 32, 0)
+			buffer.writef32(ForwardPayload, 36, 1)
+			buffer.writef32(ForwardPayload, 40, 0)
+			buffer.writef32(ForwardPayload, 44, 0)
+			buffer.writef32(ForwardPayload, 52, 70)
+
+			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, ForwardPayload, BehindTailEntity)
+			for _ = 1, 64 do
+				const InitPacket = PlayerCuller.CullObjects(MockPlayer)
+				if not InitPacket then
+					break
+				end
+			end
+
+			-- Delete FrontEntity: BehindTailEntity (+80 Z, outside frustum) swap-pops into FrontEntity's slot
+			ServerStorage.ECSData.DeleteEntity(FrontEntity)
+			const SwapPopPacket = PlayerCuller.CullObjects(MockPlayer)
+			expect(SwapPopPacket ~= nil).to.equal(true)
+			if SwapPopPacket then
+				expect(buffer.readu16(SwapPopPacket, 0) >= 1).to.equal(true)
+			end
+
+			-- Clean up remaining entity (now residing in FrontEntity's slot)
+			ServerStorage.ECSData.DeleteEntity(FrontEntity)
+			PlayerFunctions.RemovePlayerState(MockPlayer)
 			ViewCulling.UpdateObserverFromVectors(0, 0, 0, 0, 0, -1, 0, 1, 0, 1, 0, 0, 0, 70)
 		end)
 	end)

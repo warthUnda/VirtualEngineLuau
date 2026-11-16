@@ -5,7 +5,7 @@
 -- Services --
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- Modules --
+-- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 
 -- Configs --
@@ -19,6 +19,7 @@ const PACKED_CLEAR_COLOR = bit32.bor(CLEAR_R, bit32.lshift(CLEAR_G, 8), bit32.ls
 local ClearTemplateSize = 0 :: number
 local ClearPixelTemplate: buffer? = nil
 
+-- Tables --
 local BufferHelper = {}
 
 BufferHelper.RenderBufferLayoutSize = RENDER_BUFFER_LAYOUT_SIZE :: number
@@ -119,12 +120,13 @@ end
 	Composites a worker's disjoint scanline band into FinalPixel in O(rows) native buffer.copy calls,
 	copying dirty rasterized rows from WorkerPixelBuffer and template-clearing clean rows in [BandStartY..BandEndY].
 	@param FinalPixel buffer -- Full-screen destination pixel buffer.
-	@param WorkerPixelBuffer buffer -- Worker band-local pixel buffer.
+	@param WorkerPixelBuffer buffer -- Worker band-local pixel buffer or compact dirty-row slice.
 	@param Width number -- Screen width in pixels.
 	@param BandStartY number -- Inclusive screen Y start of the worker band.
 	@param BandEndY number -- Inclusive screen Y end of the worker band.
 	@param DirtyMinY number -- First screen Y touched by triangles in this band.
 	@param DirtyMaxY number -- Last screen Y touched by triangles in this band.
+	@param IsCompactDirtySlice boolean? -- True when WorkerPixelBuffer starts directly at ClampedMinY (offset 0).
 ]=]
 function BufferHelper.CompositeWorkerBand(
 	FinalPixel: buffer,
@@ -133,7 +135,8 @@ function BufferHelper.CompositeWorkerBand(
 	BandStartY: number,
 	BandEndY: number,
 	DirtyMinY: number,
-	DirtyMaxY: number
+	DirtyMaxY: number,
+	IsCompactDirtySlice: boolean?
 )
 	if BandStartY > BandEndY then
 		return
@@ -157,7 +160,7 @@ function BufferHelper.CompositeWorkerBand(
 	end
 
 	const DirtyBytes = (ClampedMaxY - ClampedMinY + 1) * RowStride :: number
-	const SourceOffset = (ClampedMinY - BandStartY) * RowStride :: number
+	const SourceOffset = if IsCompactDirtySlice then 0 else (ClampedMinY - BandStartY) * RowStride :: number
 	buffer.copy(FinalPixel, ClampedMinY * RowStride, WorkerPixelBuffer, SourceOffset, DirtyBytes)
 
 	if ClampedMaxY < BandEndY then

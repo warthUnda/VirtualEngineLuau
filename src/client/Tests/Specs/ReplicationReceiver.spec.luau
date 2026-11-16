@@ -12,14 +12,22 @@ return function()
 	const it = SpecEnv.it
 	const expect = SpecEnv.expect
 
+	-- Services --
 	const ReplicatedStorage = game:GetService("ReplicatedStorage")
-	const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
 
+	-- Static References --
+	const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
+	const ReplicationFolder = script.Parent.Parent.Parent
+		:WaitForChild("Objects")
+		:WaitForChild("Replication")
+
+	-- Libraries --
 	const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 	const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
+	const ReplicationReceiverHelper = require(ReplicationFolder:WaitForChild("ReplicationReceiverHelper"))
 
+	-- Configs --
 	const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
-	const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
 	const VISUAL_STRIDE = SystemsConfigs.ECSVisualStride :: number
 	const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 	const HEADER_BYTES = 8 :: number
@@ -29,29 +37,41 @@ return function()
 			const ClientStorage = ECSMain.CreateStorage(false)
 			const ECSData = ClientStorage.ECSData
 			const LocalPositionBuffer = ClientStorage.PositionData.GetData()
-			const LocalSizeBuffer = ClientStorage.SizeData.GetData()
 			const LocalDirectionsBuffer = ClientStorage.DirectionsData.GetData()
 			const LocalVisualBuffer = ClientStorage.VisualData.GetData()
 			const LocalPropertiesBuffer = ClientStorage.PropertiesData.GetData()
 
-			const ClientSlotByServerId = buffer.create((100 + 1) * 4)
-			const ServerIdByClientSlot = buffer.create((100 + 1) * 4)
-			ECSData.SetSwapPopCallback(function(DeletedSlot: number, MovedFromSlot: number)
-				if DeletedSlot ~= MovedFromSlot then
-					const MovedServerId = buffer.readu32(ServerIdByClientSlot, MovedFromSlot * 4)
-					buffer.writeu32(ServerIdByClientSlot, DeletedSlot * 4, MovedServerId)
-					if MovedServerId > 0 then
-						buffer.writeu32(ClientSlotByServerId, MovedServerId * 4, DeletedSlot)
-					end
-				end
-				buffer.writeu32(ServerIdByClientSlot, MovedFromSlot * 4, 0)
-			end)
+			const ReceiverState = ReplicationReceiverHelper.CreateReceiverState(ClientStorage, 501)
 
-			-- Helper matching PlayerCuller -> ReplicationReceiver binary packet format
+			-- Pre-register a local player OOP record at DynamicId = 1 to verify OOP EntityId linking & self-collision suppression
+			const LinkedPlayerRecord = {
+				ClassName = "PlayerService",
+				UserId = 501,
+				EntityId = 0,
+			}
+			ClientStorage.DynamicObjectsList.SetObjectAtId(1, LinkedPlayerRecord, nil)
+
+			--[=[
+				Builds a binary replication packet matching server PlayerCuller format for testing delta ingestion.
+				@param UpdatedCount number -- Count of updated entity entries in packet.
+				@param WorldEntityCount number -- Total active server ECS entities.
+				@param Entries any -- Array of entity delta descriptors.
+				@return buffer -- Serialized binary payload buffer.
+			]=]
 			local function BuildBinaryPacket(
 				UpdatedCount: number,
 				WorldEntityCount: number,
-				Entries: { { ServerId: number, Mask: number, Pos: Vector3?, VisualRGBA: number?, Look: Vector3?, Up: Vector3? } }
+				Entries: {
+					{
+						ServerId: number,
+						Mask: number,
+						Pos: Vector3?,
+						VisualRGBA: number?,
+						Look: Vector3?,
+						Up: Vector3?,
+						PropReg: number?,
+					}
+				}
 			): buffer
 				const Payload = buffer.create(HEADER_BYTES + UpdatedCount * 64)
 				buffer.writeu16(Payload, 0, UpdatedCount)
@@ -85,91 +105,26 @@ return function()
 						buffer.writeu32(Payload, WriteOffset, Entry.VisualRGBA)
 						WriteOffset += VISUAL_STRIDE
 					end
+
+					if bit32.band(Entry.Mask, 16) ~= 0 and Entry.PropReg then
+						buffer.writeu32(Payload, WriteOffset, Entry.PropReg)
+						WriteOffset += PROPERTIES_STRIDE
+					end
 				end
 
 				return Payload
 			end
 
-			local LastWorldEntityCount = 0
-			local function IngestPacket(Payload: buffer)
-				const UpdatedCount = buffer.readu16(Payload, 0)
-				const WorldEntityCount = buffer.readu16(Payload, 2)
-				if WorldEntityCount < LastWorldEntityCount then
-					for ServerId = WorldEntityCount + 1, LastWorldEntityCount do
-						const StaleSlot = buffer.readu32(ClientSlotByServerId, ServerId * 4)
-						if StaleSlot > 0 then
-							buffer.writeu32(ClientSlotByServerId, ServerId * 4, 0)
-							ECSData.DeleteEntity(StaleSlot)
-						end
-					end
-				end
-				LastWorldEntityCount = WorldEntityCount
-
-				local ReadOffset = HEADER_BYTES
-				for _ = 1, UpdatedCount do
-					const ServerId = buffer.readu16(Payload, ReadOffset)
-					const Mask = buffer.readu8(Payload, ReadOffset + 2)
-					ReadOffset += 3
-
-					local TargetSlot = buffer.readu32(ClientSlotByServerId, ServerId * 4)
-					if TargetSlot == 0 then
-						TargetSlot = ECSData.RegisterEntity()
-						buffer.writeu32(ClientSlotByServerId, ServerId * 4, TargetSlot)
-						buffer.writeu32(ServerIdByClientSlot, TargetSlot * 4, ServerId)
-					end
-
-					const WriteOffset = (TargetSlot - 1) * COMPONENT_STRIDE
-					const DirOffset = (TargetSlot - 1) * DIRECTION_STRIDE
-					const VisOffset = (TargetSlot - 1) * VISUAL_STRIDE
-					const PropOffset = (TargetSlot - 1) * PROPERTIES_STRIDE
-
-					if bit32.band(Mask, 1) ~= 0 then
-						buffer.copy(LocalPositionBuffer, WriteOffset, Payload, ReadOffset, COMPONENT_STRIDE)
-						ReadOffset += COMPONENT_STRIDE
-					end
-					if bit32.band(Mask, 2) ~= 0 then
-						buffer.copy(LocalSizeBuffer, WriteOffset, Payload, ReadOffset, COMPONENT_STRIDE)
-						ReadOffset += COMPONENT_STRIDE
-					end
-					if bit32.band(Mask, 4) ~= 0 then
-						const LookX = buffer.readf32(Payload, ReadOffset)
-						const LookY = buffer.readf32(Payload, ReadOffset + 4)
-						const LookZ = buffer.readf32(Payload, ReadOffset + 8)
-						const UpX = buffer.readf32(Payload, ReadOffset + 12)
-						const UpY = buffer.readf32(Payload, ReadOffset + 16)
-						const UpZ = buffer.readf32(Payload, ReadOffset + 20)
-						ReadOffset += 24
-						buffer.writef32(LocalDirectionsBuffer, DirOffset, LookX)
-						buffer.writef32(LocalDirectionsBuffer, DirOffset + 4, LookY)
-						buffer.writef32(LocalDirectionsBuffer, DirOffset + 8, LookZ)
-						buffer.writef32(LocalDirectionsBuffer, DirOffset + 12, UpX)
-						buffer.writef32(LocalDirectionsBuffer, DirOffset + 16, UpY)
-						buffer.writef32(LocalDirectionsBuffer, DirOffset + 20, UpZ)
-						buffer.writef32(LocalDirectionsBuffer, DirOffset + 24, LookY * UpZ - LookZ * UpY)
-						buffer.writef32(LocalDirectionsBuffer, DirOffset + 28, LookZ * UpX - LookX * UpZ)
-						buffer.writef32(LocalDirectionsBuffer, DirOffset + 32, LookX * UpY - LookY * UpX)
-					end
-					if bit32.band(Mask, 8) ~= 0 then
-						buffer.copy(LocalVisualBuffer, VisOffset, Payload, ReadOffset, VISUAL_STRIDE)
-						ReadOffset += VISUAL_STRIDE
-					end
-					if bit32.band(Mask, 16) ~= 0 then
-						buffer.copy(LocalPropertiesBuffer, PropOffset, Payload, ReadOffset, PROPERTIES_STRIDE)
-						ReadOffset += PROPERTIES_STRIDE
-					end
-					ECSData.MarkDirty(TargetSlot)
-				end
-			end
-
-			-- Packet 1: Spawn ServerId = 1 (with orientation Look/Up + visual) and ServerId = 2
+			-- Packet 1: Spawn ServerId = 1 (with orientation Look/Up + visual + DynamicId=1) and ServerId = 2
 			const Packet1 = BuildBinaryPacket(2, 2, {
 				{
 					ServerId = 1,
-					Mask = 1 + 4 + 8,
+					Mask = 1 + 4 + 8 + 16,
 					Pos = Vector3.new(15, 25, 35),
 					Look = Vector3.new(0, 0, -1),
 					Up = Vector3.new(0, 1, 0),
 					VisualRGBA = 0xFF00AAFF,
+					PropReg = ECSMain.PackProperties(true, true, true, 1, 0, 1),
 				},
 				{
 					ServerId = 2,
@@ -177,11 +132,13 @@ return function()
 					Pos = Vector3.new(50, 60, 70),
 				},
 			})
-			IngestPacket(Packet1)
+			ReplicationReceiverHelper.IngestPayload(ReceiverState, Packet1)
 
 			expect(ECSData.GetCounts().EntityECSCount).to.equal(2)
-			expect(buffer.readu32(ClientSlotByServerId, 1 * 4)).to.equal(1)
-			expect(buffer.readu32(ClientSlotByServerId, 2 * 4)).to.equal(2)
+			expect(buffer.readu32(ReceiverState.ClientSlotByServerId, 1 * 4)).to.equal(1)
+			expect(buffer.readu32(ReceiverState.ClientSlotByServerId, 2 * 4)).to.equal(2)
+			expect(LinkedPlayerRecord.EntityId).to.equal(1)
+			expect(ECSMain.CanEntityCollide(buffer.readu32(LocalPropertiesBuffer, 0))).to.equal(false)
 			expect(buffer.readf32(LocalPositionBuffer, 0)).to.equal(15)
 			expect(buffer.readf32(LocalPositionBuffer, COMPONENT_STRIDE)).to.equal(50)
 			-- Verify RightVector = Look(0,0,-1) x Up(0,1,0) = (1, 0, 0)
@@ -196,10 +153,10 @@ return function()
 					Pos = Vector3.new(99, 99, 99),
 				},
 			})
-			IngestPacket(Packet2)
+			ReplicationReceiverHelper.IngestPayload(ReceiverState, Packet2)
 
 			expect(ECSData.GetCounts().EntityECSCount).to.equal(1)
-			expect(buffer.readu32(ClientSlotByServerId, 2 * 4)).to.equal(0)
+			expect(buffer.readu32(ReceiverState.ClientSlotByServerId, 2 * 4)).to.equal(0)
 			expect(buffer.readf32(LocalPositionBuffer, 0)).to.equal(99)
 		end)
 	end)

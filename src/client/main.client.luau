@@ -20,6 +20,8 @@ const Utilities = SharedFolder:WaitForChild("Utilities")
 const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 const PhysicsController =
 	require(Utilities:WaitForChild("Physics"):WaitForChild("Controller"):WaitForChild("PhysicsController"))
+const PlayerController =
+	require(Utilities:WaitForChild("Player"):WaitForChild("Controller"):WaitForChild("PlayerController"))
 const Renderer = require(Utilities:WaitForChild("Render"):WaitForChild("Controller"):WaitForChild("RenderController"))
 const ViewCulling = require(Utilities:WaitForChild("Render"):WaitForChild("Core"):WaitForChild("ViewCulling"))
 
@@ -43,6 +45,7 @@ const ObserverPayload = buffer.create(ViewCulling.ObserverPayloadBytes) :: buffe
 -- ============================================================================
 
 PhysicsController.InitializePhysics()
+PlayerController.Initialize()
 Renderer.Init()
 
 -- ============================================================================
@@ -53,6 +56,7 @@ while true do
 	const DeltaTime = RunService.RenderStepped:Wait() :: number
 	debug.profilebegin("SimulatePhysics")
 	PhysicsController.SimulatePhysicsFrame(DeltaTime)
+	PlayerController.StepClient(DeltaTime)
 	debug.profileend()
 	debug.profilebegin("Render all instances")
 	Renderer.DrawFrame(DeltaTime)

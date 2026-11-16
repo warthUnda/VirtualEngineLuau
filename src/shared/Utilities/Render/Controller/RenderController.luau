@@ -12,7 +12,7 @@ const Player = Players.LocalPlayer :: Player
 const PlayerGui = Player:WaitForChild("PlayerGui") :: PlayerGui
 const PlayerScripts = Player:WaitForChild("PlayerScripts")
 
--- Modules --
+-- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
 const VerticeFile = require(ReplicatedStorage.Shared.Utilities.Render.Core.VerticeFile)
@@ -20,6 +20,7 @@ const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.Render
 const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper)
 const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Texture.TextureTable)
 const RenderControllerHelper = require(script.Parent.RenderControllerHelper)
+const WorkerPartitionHelper = require(script.Parent.WorkerPartitionHelper)
 
 const CameraStore = require(
 	ReplicatedStorage:WaitForChild("Shared")
@@ -37,6 +38,7 @@ const CameraService = require(
 		:WaitForChild("CameraService")
 )
 
+-- Storage --
 -- The controller renders from the active Render ECSStorage populated by RendererCleaner.
 const ECSStorage = require(
 	ReplicatedStorage:WaitForChild("Shared")
@@ -63,6 +65,8 @@ const DIFFUSE_LIGHT = 1 - AMBIENT_LIGHT :: number
 const ACTOR_COUNT = SystemsConfigs.ActorCount :: number
 const WORKER_BUFFER_MULTIPLIER = SystemsConfigs.WorkerBufferMultiplier :: number
 const WORKER_BUFFER_CAPACITY = TOTAL_PIXELS * WORKER_BUFFER_MULTIPLIER :: number
+const RENDER_BUFFER_LAYOUT_SIZE = BufferHelper.RenderBufferLayoutSize :: number
+const STAGED_TRIANGLE_CAPACITY = (WORKER_BUFFER_CAPACITY * 2) // RENDER_BUFFER_LAYOUT_SIZE :: number
 const SCRIPTABLE_CAMERA_PARK_POSITION = SystemsConfigs.ScriptableCameraParkPosition :: Vector3
 const DEFAULT_CAMERA_VIEW = SystemsConfigs.DefaultCameraView :: string
 
@@ -80,6 +84,7 @@ const RENDER_TARGET_FPS = SystemsConfigs.RenderTargetFPS :: number
 const RENDER_FRAME_INTERVAL = if RENDER_TARGET_FPS > 0 then 1 / RENDER_TARGET_FPS else 0 :: number
 const FRAME_IN_FLIGHT_TIMEOUT = 0.25 :: number
 
+-- Tables --
 local Initialized = false :: boolean
 local Received = 0 :: number
 local ExpectedWorkers = 0 :: number
@@ -90,9 +95,10 @@ local RenderAccumulator = 0 :: number
 local PendingTextureSyncFrames = 0 :: number
 local LoadedTextureBuffers: { [number]: buffer }? = nil
 
--- Tables --
 local WorkerActors = {} :: { Actor }
 local WorkerOffsets = table.create(ACTOR_COUNT, 0) :: { number }
+local BandStarts = table.create(ACTOR_COUNT, 0) :: { number }
+local BandEnds = table.create(ACTOR_COUNT, 0) :: { number }
 local BufferTable = {} :: { buffer }
 
 -- Buffers
@@ -103,6 +109,11 @@ const ECSSizeBuffer = SizeData.GetData() :: buffer
 const ECSDirectionsBuffer = DirectionsData.GetData() :: buffer
 const ECSVisualBuffer = VisualData.GetData() :: buffer
 const ECSPropertiesBuffer = PropertiesData.GetData() :: buffer
+const StagedTriangles = buffer.create(STAGED_TRIANGLE_CAPACITY * RENDER_BUFFER_LAYOUT_SIZE) :: buffer
+const StagedBounds = buffer.create(STAGED_TRIANGLE_CAPACITY * 4) :: buffer
+const RowWorkDiff = buffer.create((HEIGHT + 1) * 4) :: buffer
+const CumulativeWork = buffer.create(HEIGHT * 4) :: buffer
+const RowToWorker = buffer.create(HEIGHT) :: buffer
 local ScreenVertices = buffer.create(VerticeFile.MaxShapeVertices * 12) :: buffer
 local ProjectedVertices = buffer.create(12 * 20) :: buffer
 local ClipBufferA = buffer.create(12 * 20) :: buffer
@@ -128,15 +139,19 @@ function Renderer.Init()
 	const SelfActor = PlayerScripts:WaitForChild("Controller") :: Actor
 	WorkerActors = (PlayerScripts:WaitForChild("WorkerFolder"):GetChildren() :: any) :: { Actor }
 
-	-- Create Information Data for workers
-	for i = 1, ACTOR_COUNT do
+	const WorkerPoolSize = math.max(ACTOR_COUNT, #WorkerActors) :: number
+	for i = 1, WorkerPoolSize do
 		BufferTable[i] = buffer.create(WORKER_BUFFER_CAPACITY)
 		WorkerOffsets[i] = 0
+		BandStarts[i] = 0
+		BandEnds[i] = HEIGHT - 1
 	end
 
 	for i, TargetActor: Actor in ipairs(WorkerActors) do
 		const BandStartY = (i - 1) * BAND_HEIGHT :: number
 		const BandEndY = math.min(i * BAND_HEIGHT - 1, HEIGHT - 1) :: number
+		BandStarts[i] = BandStartY
+		BandEnds[i] = BandEndY
 		TargetActor:SendMessage("Set Band Range", BandStartY, BandEndY)
 	end
 
@@ -174,7 +189,16 @@ function Renderer.Init()
 				return
 			end
 
-			BufferHelper.CompositeWorkerBand(FinalPixel, WorkerPixelBuffer, WIDTH, BandStartY, BandEndY, DirtyMinY, DirtyMaxY)
+			BufferHelper.CompositeWorkerBand(
+				FinalPixel,
+				WorkerPixelBuffer,
+				WIDTH,
+				BandStartY,
+				BandEndY,
+				DirtyMinY,
+				DirtyMaxY,
+				true
+			)
 
 			Received += 1
 
@@ -206,11 +230,11 @@ function Renderer.Init()
 end
 
 -- ============================================================================
--- 2. GATHER DATA - SEND DATA TO WORKERS
+-- 2. GATHER DATA - DYNAMICALLY PARTITION & SEND DATA TO WORKERS
 -- ============================================================================
 
 --[=[
-	Gathers visible ECS entities, projects and clips faces into worker bands, and dispatches parallel rasterization at RenderTargetFPS.
+	Gathers visible ECS entities, stages clipped faces, dynamically balances worker scanline bands, and dispatches rasterization at RenderTargetFPS.
 	@param DeltaTime number -- Elapsed client frame delta time in seconds.
 	@return boolean -- True when a render frame was dispatched, or false when throttled or in-flight.
 ]=]
@@ -237,7 +261,7 @@ function Renderer.DrawFrame(DeltaTime: number): boolean
 		return false
 	end
 
-	-- Tables
+	-- Active Entity Count --
 	local EntityCount = ECSData.GetCounts().EntityECSCount :: number
 
 	const CamTable = CameraStore.GetCameraTable()
@@ -252,12 +276,12 @@ function Renderer.DrawFrame(DeltaTime: number): boolean
 	const CamUpVec = vector.create(CamUp.X, CamUp.Y, CamUp.Z)
 	const CamLookVec = vector.create(CamLook.X, CamLook.Y, CamLook.Z)
 
-	-- Configs
+	-- Projection Parameters --
 	const CamFOV = CamTable.CameraFOV :: number
 	const FocalLength: number, GuardBandX: number, GuardBandY: number =
 		RenderMath.GetProjectionParameters(CamFOV, WIDTH, HEIGHT)
 
-	-- Pre loop Updates --
+	-- Pre-Loop State Reset --
 	CurrentFrame += 1
 	Received = 0
 	ExpectedWorkers = #WorkerActors
@@ -271,13 +295,24 @@ function Renderer.DrawFrame(DeltaTime: number): boolean
 	if PendingTextureSyncFrames > 0 and LoadedTextureBuffers then
 		PendingTextureSyncFrames -= 1
 		for _, TargetActor: Actor in ipairs(WorkerActors) do
-			TargetActor:SendMessage("Set Texture Table", LoadedTextureBuffers :: { [number]: buffer }, TEXTURE_SIZE, TEXTURE_SIZE)
+			TargetActor:SendMessage(
+				"Set Texture Table",
+				LoadedTextureBuffers :: { [number]: buffer },
+				TEXTURE_SIZE,
+				TEXTURE_SIZE
+			)
 		end
 	end
 
-	for i = 1, ACTOR_COUNT do
+	const ActiveWorkerCount = if ExpectedWorkers > 0 then ExpectedWorkers else ACTOR_COUNT :: number
+	for i = 1, ActiveWorkerCount do
 		WorkerOffsets[i] = 0
+		if not BufferTable[i] then
+			BufferTable[i] = buffer.create(WORKER_BUFFER_CAPACITY)
+		end
 	end
+
+	local StagedTriangleCount = 0 :: number
 
 	-- Loop through all parts
 	for i = 1, EntityCount do
@@ -309,9 +344,21 @@ function Renderer.DrawFrame(DeltaTime: number): boolean
 		local TileScaleY = 1 :: number
 		local TileScaleZ = 1 :: number
 		if EntityTextureId > 0 and INV_TEXTURE_STUDS_PER_TILE > 0 then
-			TileScaleX = math.clamp(math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset) * INV_TEXTURE_STUDS_PER_TILE + 0.5), 1, 8)
-			TileScaleY = math.clamp(math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset + 4) * INV_TEXTURE_STUDS_PER_TILE + 0.5), 1, 8)
-			TileScaleZ = math.clamp(math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset + 8) * INV_TEXTURE_STUDS_PER_TILE + 0.5), 1, 8)
+			TileScaleX = math.clamp(
+				math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset) * INV_TEXTURE_STUDS_PER_TILE + 0.5),
+				1,
+				8
+			)
+			TileScaleY = math.clamp(
+				math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset + 4) * INV_TEXTURE_STUDS_PER_TILE + 0.5),
+				1,
+				8
+			)
+			TileScaleZ = math.clamp(
+				math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset + 8) * INV_TEXTURE_STUDS_PER_TILE + 0.5),
+				1,
+				8
+			)
 		end
 
 		const IsVisible: boolean, LocalCameraPos: vector, HalfSize: vector, LocalSun: vector =
@@ -351,17 +398,25 @@ function Renderer.DrawFrame(DeltaTime: number): boolean
 					PartColorB,
 					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, FaceSunDot)
 				)
-				const ScaleU = if Face.UAxisIndex == 1 then TileScaleX elseif Face.UAxisIndex == 2 then TileScaleY else TileScaleZ
-				const ScaleV = if Face.VAxisIndex == 1 then TileScaleX elseif Face.VAxisIndex == 2 then TileScaleY else TileScaleZ
+				const ScaleU = if Face.UAxisIndex == 1
+					then TileScaleX
+					elseif Face.UAxisIndex == 2 then TileScaleY
+					else TileScaleZ
+				const ScaleV = if Face.VAxisIndex == 1
+					then TileScaleX
+					elseif Face.VAxisIndex == 2 then TileScaleY
+					else TileScaleZ
 
-				RenderControllerHelper.SubmitFace(
+				StagedTriangleCount = RenderControllerHelper.SubmitFace(
 					ScreenVertices,
 					ProjectedVertices,
 					ClipBufferA,
 					ClipBufferB,
-					BAND_HEIGHT,
-					WorkerOffsets,
-					BufferTable,
+					StagedTriangles,
+					StagedBounds,
+					StagedTriangleCount,
+					STAGED_TRIANGLE_CAPACITY,
+					RowWorkDiff,
 					Face.V0ByteOffset,
 					Face.V1ByteOffset,
 					Face.V2ByteOffset,
@@ -403,17 +458,25 @@ function Renderer.DrawFrame(DeltaTime: number): boolean
 					PartColorB,
 					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, FaceSunDot)
 				)
-				const ScaleU = if Face.UAxisIndex == 1 then TileScaleX elseif Face.UAxisIndex == 2 then TileScaleY else TileScaleZ
-				const ScaleV = if Face.VAxisIndex == 1 then TileScaleX elseif Face.VAxisIndex == 2 then TileScaleY else TileScaleZ
+				const ScaleU = if Face.UAxisIndex == 1
+					then TileScaleX
+					elseif Face.UAxisIndex == 2 then TileScaleY
+					else TileScaleZ
+				const ScaleV = if Face.VAxisIndex == 1
+					then TileScaleX
+					elseif Face.VAxisIndex == 2 then TileScaleY
+					else TileScaleZ
 
-				RenderControllerHelper.SubmitFace(
+				StagedTriangleCount = RenderControllerHelper.SubmitFace(
 					ScreenVertices,
 					ProjectedVertices,
 					ClipBufferA,
 					ClipBufferB,
-					BAND_HEIGHT,
-					WorkerOffsets,
-					BufferTable,
+					StagedTriangles,
+					StagedBounds,
+					StagedTriangleCount,
+					STAGED_TRIANGLE_CAPACITY,
+					RowWorkDiff,
 					Face.V0ByteOffset,
 					Face.V1ByteOffset,
 					Face.V2ByteOffset,
@@ -430,7 +493,30 @@ function Renderer.DrawFrame(DeltaTime: number): boolean
 		end
 	end
 
-	-- Sends the information to all workers
+	-- Dynamically partition scanline bands to equalize per-worker raster work and zero RowWorkDiff
+	WorkerPartitionHelper.PartitionWorkerBands(
+		RowWorkDiff,
+		CumulativeWork,
+		RowToWorker,
+		HEIGHT,
+		ActiveWorkerCount,
+		BandStarts,
+		BandEnds
+	)
+
+	if StagedTriangleCount > 0 and ExpectedWorkers > 0 then
+		WorkerPartitionHelper.DispatchStagedTriangles(
+			StagedTriangles,
+			StagedBounds,
+			StagedTriangleCount,
+			RowToWorker,
+			WorkerOffsets,
+			BufferTable,
+			WORKER_BUFFER_CAPACITY
+		)
+	end
+
+	-- Sends compact triangle slices and dynamic band bounds to all workers
 	for i, TargetActor: Actor in ipairs(WorkerActors) do
 		const ByteCount = WorkerOffsets[i] :: number
 		local PayloadBuffer = EmptyPayload :: buffer
@@ -448,7 +534,9 @@ function Renderer.DrawFrame(DeltaTime: number): boolean
 			"Execute Rendering",
 			PayloadBuffer,
 			ByteCount,
-			CurrentFrame
+			CurrentFrame,
+			BandStarts[i],
+			BandEnds[i]
 		)
 	end
 

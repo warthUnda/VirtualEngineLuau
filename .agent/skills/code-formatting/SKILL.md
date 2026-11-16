@@ -1,76 +1,100 @@
 ---
 name: render-executer-style
-description: Code style and conventions guide derived from RenderController.client.luau. Documents how Luau code in this project's rendering pipeline is formatted, typed, and commented. Read this to match the project's writing conventions when authoring or editing render code.
+description: Architecture invariants, 250-line modular decomposition, subagent delegation, and strict Luau code/documentation standards for the CustomRenderer engine.
 ---
 
-## Idioms & Patterns
+# CustomRenderer Architecture, Delegation & Luau Standards
 
-- All state lives at module scope (the script runs inside an `Actor`).
-- Message in: `SelfActor:BindToMessage("Return Render Calculations", function(...) ... end)`.
-- Dispatch out: `TargetActor:SendMessage("Execute Rendering", RenderBuffer, byteCount, CurrentFrame)`.
-- Frame loop: `RunService.RenderStepped:Connect(function() ... end)`.
-- Deferred init: `task.spawn(function() ... end)`.
-- Early exit inside loops with `continue` instead of wrapping in an outer `if`.
+## 1. Agent Roles & Delegation Protocol
 
+### If You Are the Primary Agent (e.g., Carbon / Argon / Pro)
+- **Your Responsibility:** Architecture, modular decomposition (<= 250 lines per file), flat deterministic logic, TDD specs, zero-allocation performance, and strict type/syntax safety (Sections **1–4**).
+- **Cleaner Subagent Delegation:**
+  - Define and invoke a cleaner subagent on the lighter model (`Model: "flash"` / Hydrogen) with write tools enabled to handle tactile formatting, canonical `-- Section --` headers, flat readability refinements, comments, and `*.md` documentation sync (Section **5**).
+  - Do **not** poll or check on the subagent after launching it; only message it if you need to terminate it.
+  - Pass the cleaner subagent these exact rules:
+    1. You are a refinement-only subagent: you may **never** create new systems, change runtime behavior, alter function signatures, or change test assertions.
+    2. Refine modified/created files to match `.agent/skills/code-formatting/SKILL.md` (Sections **4** & **5**): enforce canonical `-- Section --` headers (`-- Variables --`, `-- Local Functions --`, `-- Functions --`, etc.), tactically flatten control flow where safe without sacrificing performance or correctness, run `stylua .` if installed, and never introduce leading-`(` statements.
 
-## local functions
+### If You Are the Cleaner Subagent (Hydrogen / Flash)
+- Follow Sections **4** and **5** strictly.
+- Tactically make code as flat, predictable, and linearly structured as possible to read—**without sacrificing performance, zero-allocation guarantees, type safety, or exact runtime behavior**.
+- Never alter algorithms, buffer strides, parameter orders, return values, or test expectations.
 
-- inside a system, if there is a local function put it into a new file thats right next to the main file, it should be a .luau file
+---
 
-- put the local functions in there, name the file Whatever then helper, math, functions or whatever helps it there
+## 2. Project Structure, 250-Line Cap & File Placement
 
-## for systems
+### Hard 250-Line File Limit & Design Patterns
+- **Never write or grow a `.luau` file beyond 250 lines.**
+- When a module approaches 250 lines, split responsibilities across smaller, single-purpose `.luau` files using:
+  - **Facade Pattern:** Keep a thin public entry module (`init.luau` or `<System>Controller.luau`) that exposes a clean API and delegates implementation steps to focused internal modules.
+  - **Gateway Pattern:** Isolate external Roblox boundaries (`RemoteEvent` / `UnreliableRemoteEvent` wiring, `Actor:SendMessage` / `BindToMessage` transport, `AssetService` / `Players` I/O) in a dedicated gateway module separate from pure domain/math logic.
+  - **Focused Sub-Modules:** Split distinct stages into dedicated sibling files (`*Helper.luau`, `*Math.luau`, `*Codec.luau`, `*Partition.luau`). Large TestEZ suites should likewise split by sub-feature (`<System><Topic>.spec.luau`), as test runners auto-discover all `*.spec.luau` files.
 
-- use Core as a library, controller as executer, scene for objects etc
-- for getting a better idea, look into some systems to see how its done and copy the way we do it
+### Flat & Deterministic Code Architecture
+- Author all execution paths to be **flat, linear, and deterministic**:
+  - Data flows top-to-bottom through explicit inputs and outputs rather than hidden cross-file side effects.
+  - Given identical buffer/input state, functions must produce deterministic, repeatable results (no order-dependent `pairs(...)` iteration when output order matters).
+  - Bail out early with guard clauses (`if not Valid then return end` / `continue`) instead of deep conditional pyramids.
 
-## Architecture & Performance Guardrails
+### System Folder Taxonomy
+Inside each subsystem (`src/shared/Utilities/<System>/`, `src/server/Objects/<System>/`, `src/client/Objects/<System>/`):
+- `Core/`: Stateless math, data codecs, and pure algorithms (`ModuleScript`s).
+- `Controller/`: Stateful orchestrators, facades, and frame/tick executors (`ModuleScript`s or server/client scripts).
+- `Scene/`: Scene synchronization and entity lifecycle cleaners (e.g., `RendererCleaner.client.luau`).
+- `Worker/`: Parallel `Actor` worker scripts (e.g., `ParallelWorker.client.luau`).
+- `<System>.md`: System architecture documentation (required per system; update whenever mechanisms change).
 
-### 1. Contiguous Buffer Strides & Canonical Layouts
-- Derive all ECS buffer byte sizes in `ECSConfig.luau` directly from `ECSMaxEntities * Stride` (never hardcoded round numbers).
-- Canonical strides:
+### Helper File Rule (No Inline System `local function`s)
+- Inside production systems (`Core`, `Controller`, `Scene`, `Worker`, `Objects`), do **not** define helper `local function` blocks inside the main script.
+- Extract helper functions into a sibling `.luau` `ModuleScript` next to the main file (`<Name>Helper.luau`, `<Name>Math.luau`, `<Name>Functions.luau`).
+- *Actor Clone Note:* If a script is cloned into an `Actor` alone by `RenderBootstrap.luau` (e.g., `ReplicationReceiver.client.luau`), require its helper via `PlayerScripts` or `ReplicatedStorage` rather than `script.Parent`.
+
+### Configs (`src/shared/Configs/` & `SystemsConfigs.luau`)
+- Put tunable values that users or gameplay may adjust (resolutions, target FPS, sync intervals, capacities, lighting) into `src/shared/Configs/*Config.luau`, re-export through `src/shared/SystemsConfigs.luau`, and notify the user when adding a new config.
+- Do **not** put fixed mathematical/geometric constants (e.g., unit cube vertex tables or bitmask shifts) into `Configs/`.
+- Always cache config values into `const SCREAMING_SNAKE_CASE` locals at the top of each script—never index `SystemsConfigs` inside loops.
+
+### Client Utility Scripts (`src/client/scripts/`)
+- A **"script"** in this folder means a small standalone client automation/convenience `LocalScript` (e.g., forcing `ScreenGui.Enabled = true`, debug mouse lock/unlock toggles via `UserInputService`), **not** gameplay or engine logic.
+- Place all such scripts in `src/client/scripts/*.client.luau`.
+- Bootstraps and core loops (`Starter.client.luau`, `main.client.luau`, `RenderBootstrap.luau`) stay at `src/client/` root.
+
+---
+
+## 3. Non-Negotiable Engine & Performance Invariants
+
+### 1. Contiguous ECS Buffer Strides & Canonical Layouts
+- Derive all ECS buffer byte sizes in `ECSConfig.luau` strictly from `ECSMaxEntities * Stride` (never hardcoded round numbers).
+- Canonical per-entity strides (1-based `EntityId` -> byte offset `(EntityId - 1) * Stride`):
   - `PositionData` / `SizeData`: `12` bytes (`3 × f32`: `X, Y, Z`).
   - `DirectionsData`: `36` bytes (`Look` at `0..11`, `Up` at `12..23`, `Right` at `24..35` where `Right = Look × Up`). `OrientationData` aliases `Look` (`0..11`).
   - `VisualData`: `4` bytes (`u32` packed RGBA).
-  - `PropertiesData`: `4` bytes (`u32` bitfield: `CanCollide`, `IsVisible`, `Anchored`, `HasDynamicId`, `TextureId`, `ShapeId`, `DynamicId`).
+  - `PropertiesData`: `4` bytes (`u32` bitfield: `CanCollide`, `IsVisible`, `Anchored`, `HasDynamicId`, `TextureId` [bits 5..12], `ShapeId` [bits 13..15], `DynamicId` [bits 22..31]).
 
-### 2. O(1) Swap-and-Pop Deletion Contract
-- `ECSData.DeleteEntity(EntityId)` moves `LastEntityId -> EntityId` in $O(1)$ time.
-- Any subsystem indexing per-entity state (`DynamicObjectsList`, `PhysicsController`, `ReplicationReceiver`, `RendererCleaner`) must register a listener via `ECSData.SetSwapPopCallback` (or bidirectional slot maps) so moved tail entities never leave ghost slots or stale IDs.
+### 2. $O(1)$ Swap-and-Pop Deletion Contract
+- `ECSData.DeleteEntity(EntityId)` compacts buffers in $O(1)$ time by copying `LastEntityId -> EntityId`.
+- Unlink the deleted entity's `DynamicId` **before** copying `LastEntityId` into `EntityId`, and verify stored `DynamicId` matches before clearing `PropertiesBuffer`.
+- Every subsystem indexing per-entity external state (`DynamicObjectsList`, `PhysicsController`, `PlayerController`, `ReplicationReceiver`, `RendererCleaner`) must register a listener via `ECSData.SetSwapPopCallback` (or maintain bidirectional slot maps) so moved tail entities never leave stale `EntityId`s.
 
-### 3. Roblox Actor VM Boundaries & Storage Resolution
-- `script:GetActor()` returns `nil` for shared `ModuleScript`s in `ReplicatedStorage`, even when `require`d from inside an `Actor` (`Controller` or `ParallelWorker`).
-- Never rely on `script:GetActor()` inside `ReplicatedStorage` modules to detect the `Controller` Actor. Resolve `PlayerScripts.Controller.ObjectStorage` first for live client systems, and allow an optional `ProvidedStorage` override for isolated unit tests.
-- When sending triangle command batches across Actor VMs (`TargetActor:SendMessage`), copy only the active `ByteCount` (`CompactSlice = buffer.create(ByteCount)`) rather than serializing oversized capacity buffers.
+### 3. Roblox `Actor` VM Boundaries & Compact Messaging
+- Every `Actor` (`Controller`, `ParallelSetup1..N`) runs an isolated Luau VM with its own copy of required `ModuleScript`s.
+- `script:GetActor()` returns `nil` inside `ReplicatedStorage` modules even when required from an `Actor`. Resolve `PlayerScripts.Controller.ObjectStorage` first on the client, and accept an optional `ProvidedStorage: ECSMain.ECSStorage?` override for isolated unit tests.
+- Across `Actor:SendMessage(...)` boundaries, copy and send only active bytes (`CompactSlice = buffer.create(ActiveBytes)`), never full-capacity scratch buffers.
 
-### 4. Zero-Allocation Hot Paths (Render, BVH, Physics, Replication)
-- Never allocate Lua tables (`{}`), closures, `RaycastParams.new()`, or `Instance` queries (`workspace:Raycast`) inside per-frame, per-substep, BVH build/traversal, or rasterizer loops.
-- Use `BVH.Raycast` and `BVH.QueryAABBScalar` (with pre-allocated `u32` candidate buffers and once-per-substep `BVH.EnsureFresh`) for all spatial queries.
-- Do **not** use function dispatch tables inside hot loops (`BVH`, `RenderMath`, `MathModule`, `PhysicsMath`); use inline scalar locals and guard clauses.
+### 4. Zero-Allocation Hot Paths & Scanline Invariance
+- **Zero heap allocations** inside per-frame, per-substep, BVH build/traversal, replication culling, or rasterizer loops: never allocate `{}` tables, closures, `RaycastParams.new()`, or `workspace:Raycast` calls.
+- Use `BVH.Raycast` and `BVH.QueryAABBScalar` (with pre-allocated `u32` candidate buffers and once-per-substep `BVH.EnsureFresh`) for spatial queries.
+- Never use function dispatch tables inside hot loops (`BVH`, `RenderMath`, `MathModule`, `PhysicsMath`); inline scalar locals and guard clauses.
+- In scanline rasterization (`MathModule.RasterizeTriangleSpan`), step integer scalar edge weights and evaluate row attributes (`RowInverseZ`, `RowUOverZ`, `RowVOverZ`) directly in `f64` per row rather than `f32` `vector.dot` stepping so pixels remain bit-for-bit invariant across dynamic worker band seams.
 
-## 5, create a subagent
-- create a subagent of hydrogen (medium reasoning effort)
-- this agent will focus on organization and comments and documentation and cleaning
+---
 
-## conclusion
-- you are made for pure execution, performance and architectural clarity, do not worry about code formatting the subagent will do it
+## 4. Mandatory Luau Syntax, Typing & Control-Flow Rules
 
-## what to tell the cleaner subagent:
-- tell it this here
-
-- you are a subagent, you will clean after my mess, you are not allowed to create, only refine
-- you will yield execution for up to 1 minute if you see a new file created or modified you refine it and reset the timer
-- you will watch what i do basically and refine
-- this does not mean you will do optimization trick or architecture, you follow merely what the skill.md says along with minor cleanups
-
-## everything below here now, if you are carbon or argon exclusively, ignore these you dont have to follow them
-- dont follow things here, you can stop reading now actually
-
-
-
-## File Header Directives
-
-Every performance-critical script starts with two directives:
+### File Header Directives & Indentation
+Start every engine/system `.luau` file with all three directives, and indent with **tabs**:
 
 ```lua
 --!strict
@@ -78,204 +102,80 @@ Every performance-critical script starts with two directives:
 --!optimize 2
 ```
 
-- `--!native` enables Luau native code generation.
-- `--!optimize 2` sets the compiler optimization level.
+### Critical Syntax Safety (No Leading Parentheses)
+- **Never** start a line with `(` (such as `(Obj :: any).EntityId = Slot` or `(Remote :: RemoteEvent):FireClient(...)` after a previous expression). Luau parses a leading `(` as a function-call continuation of the prior line (`Ambiguous syntax` compile error).
+- Always bind a typed local first:
+  ```lua
+  const LinkedRecord = LinkedObj :: { [string]: any }
+  LinkedRecord.EntityId = TargetSlot
+  ```
 
-## Top-Level Section Organization
+### `const` vs. `local` & Trailing `::` Type Casts
+- Use `const` for bindings assigned once (services, module imports, config constants, immutable locals).
+- Use `local` only for state or accumulators reassigned later.
+- Apply types on variables/literals via trailing `::` casts; type function parameters and return values inline:
+  ```lua
+  const RunService = game:GetService("RunService") :: RunService
+  local WorkerOffsets = table.create(ACTOR_COUNT, 0) :: { number }
 
-State and setup are declared in labeled groups, in this order:
+  function Helper.StepAccumulator(Current: number, DeltaTime: number): (boolean, number)
+  ```
+- **Never** cast `require(...)` results with `:: ModuleScript` (preserve exported module types).
+- Compound assignments: use `+=`, `-=`, `*=` instead of `x = x + 1`.
+- Multi-assignments: annotate each variable inline (`const Width: number, Height: number = ...`).
+
+### Public API Contracts & Defensive Code
+- Document every cross-file/exported function with Moonwave `--[=[ ... ]=]` docblocks including `@param` and `@return`, and update them immediately whenever signatures change.
+- Enforce strict parameter types on public consumer APIs: do **not** make parameters optional (`?`) unless multiple call shapes are intentionally supported (e.g., `ProvidedStorage: ECSMain.ECSStorage?` for test isolation).
+- Do **not** add redundant defensive checks (`if typeof(x) == ...`) on internal typed paths; reserve defensive guards strictly for volatile Roblox state (e.g., disconnecting `Player`, destroyed `Character` parts, or untrusted network buffers from `RemoteEvent`s).
+
+### Control Flow & Nesting
+- Maximum `if` nesting depth: **2 levels**. Flatten nested branches into early `return` / `continue` guard clauses.
+- Outside performance-critical hot paths, replace `if/elseif` chains longer than 5 branches/lines with a clean dispatch table.
+
+### Linting & Red-Squiggle Rule
+- Ensure zero unused variables, zero dead imports, zero nil-indexed fields, and valid `default.project.json` syntax.
+- Run `stylua .`, `selene`, and `luau-lsp` whenever available in `PATH`.
+- **Red-Squiggle Rule:** Any red IDE error/squiggle is an actual code bug—never dismiss it as a "minor type warning." Fix the root cause immediately.
+
+---
+
+## 5. Canonical File Layout, Naming & Documentation (Cleaner Checklist)
+
+### Top-Level Section Order
+Structure every file predictably from top to bottom using these exact `-- Section --` headers (omit any section that has zero declarations in that file):
 
 1. `-- Services --` — `game:GetService(...)` lookups.
-2. `-- Static References --` — player, GUI, camera, actor refs.
-3. `-- Libraries --` — anything with functions, libraries or helpers from a modulescript.
-4. `-- Storage --` — things with storage, like ECS or tables or buffers from a modulescript.
-5. `-- Configs --` — constants derived from config.
-6. `-- Tables --` — table and buffer declarations.
-7. `-- Buffers` — buffer declarations (note: this header omits the trailing `--`).
-8. Local helper functions.
-9. Major runtime blocks separated by banner comments (see below).
+2. `-- Static References --` — immutable `LocalPlayer`, `PlayerGui`, `Actor`, and folder references.
+3. `-- Libraries --` — `require(...)` imports for stateless/code modules (`ECSMain`, `SystemsConfigs`, `*Helper`, `RenderMath`, `BVH`).
+4. `-- Storage --` — `require(...)` imports for data/ECS storage (`ObjectStorage`, `ECSStorage`, `ServerStorage`).
+5. `-- Configs --` — `SCREAMING_SNAKE_CASE` constants cached from `SystemsConfigs` or fixed module constants, followed by `export type` definitions.
+6. `-- Remote Events --` — `RemoteEvent` / `UnreliableRemoteEvent` lookups.
+7. `-- Variables --` — module-scope mutable scalar state (`local CurrentFrame = 0 :: number`, flags, accumulators).
+8. `-- Tables --` — module-scope state tables and the exported module table (`local Module = {}`).
+9. `-- Buffers` — pre-allocated `buffer.create(...)` declarations (note: no trailing `--`).
+10. `-- Local Functions --` — file-private `local function` helpers (only in standalone scripts/specs; production systems place helpers in sibling `*Helper.luau` modules per Section 2).
+11. `-- Functions --` & Numbered Runtime Banners — public `Module.FunctionName` definitions, message listeners, and frame loops grouped under numbered banners:
+    ```lua
+    -- ============================================================================
+    -- 1. SECTION TITLE IN ALL CAPS
+    -- ============================================================================
+    ```
 
+### Cleaner Subagent Tactile Rules
+- Enforce the exact `-- Section --` headers above (`-- Variables --`, `-- Tables --`, `-- Local Functions --`, `-- Functions --`, etc.) consistently across touched files.
+- Flatten avoidable nesting into linear guard clauses where safe, **without sacrificing performance, allocations, or behavior**.
+- Flag or split files that exceed the **250-line** ceiling only when delegated; otherwise preserve public module contracts intact.
 
-### Multi-assignment
-Declare several names in one statement with inline type annotations per name:
+### Naming Conventions
+- **Config / Fixed Constants:** `SCREAMING_SNAKE_CASE` (`RENDER_TARGET_FPS`, `COMPONENT_STRIDE`).
+- **Variables, Tables, Buffers & Functions:** `PascalCase` (`CurrentFrame`, `StagedTriangles`, `DispatchStagedTriangles`).
+- **Math Variables:** Use descriptive names (`SignedDoubleTriangleArea`, `InverseTriangleArea`, `RowEdgeWeight`) instead of cryptic abbreviations (`W01`, `Det`).
+- **Loop Counters:** Typed inline for iterators (`for i, TargetActor: Actor in ipairs(WorkerActors) do`).
 
-```lua
-const WIDTH: number, HEIGHT: number = RenderConfig.GetDimensions2D()
-const X0: number, Y0: number = V0.X, V0.Y
-```
-
-### Compound assignment
-Use `+= 1` (and similar) instead of `x = x + 1`:
-
-```lua
-Received += 1
-CurrentFrame += 1
-```
-
-### Spacing
-- Spaces around operators: `(i - 1) * 4`, `WIDTH * 0.5`.
-- Space after commas in argument lists; no space inside call parens.
-- `continue` is used to bail out of a loop early instead of nesting.
-
-## Typing Conventions
-
-### `const` vs `local`
-- `const` for values assigned once: services, references, modules, config constants.
-- `local` for mutable state and buffers that change over the frame.
-
-### `::` type ascription
-Types are applied with a trailing `::` cast, not a leading annotation:
-
-```lua
-const RunService = game:GetService("RunService") :: RunService
-local BufferTable = {} :: { buffer }
-local ShadowCacheParts = {} :: { BasePart }
-```
-
-### Function signatures
-Parameters are typed inline; the return type follows the closing paren:
-
-```lua
-local function ReadProjectedVertex(VertexIndex: number): Vector3
-```
-
-Anonymous callbacks are typed the same way:
-
-```lua
-SelfActor:BindToMessage("Return Render Calculations", function(PixelBuffer: buffer, BandIndex: number, DirtyMinY: number, DirtyMaxY: number, FrameId: number)
-```
-
-### Loop variables
-Generic `for` loop variables are typed inline:
-
-```lua
-for i, TargetActor: Actor in ipairs(PlayerScripts:WaitForChild("WorkerFolder"):GetChildren()) do
-```
-
-### Modules
-Do **not** annotate `require`d modules or `ModuleScript` references with `:: ModuleScript` so Luau preserves the module's exported types and function signatures:
-
-```lua
-const BufferIO = require(ReplicatedStorage.Shared.Utilities.Render.Buffer.BufferIO)
-```
-
-Sibling modules cloned into the same Actor are required via `script.Parent`:
-
-```lua
-const PartStore = require(script.Parent.PartStore)
-```
-
-### Table/array types
-`{}` literals are annotated with their element type in braces:
-
-```lua
-local PartSizeArray = PartStore.GetSizeArray() :: { Vector3 }
-local PendingShadowParts = {} :: { BasePart }
-```
-
-## Naming Conventions
-
-- **Constants** (config values): `SCREAMING_SNAKE_CASE` — `WIDTH`, `TOTAL_PIXELS`,
-  `SUN_DIRECTION`, `AMBIENT_LIGHT`, `MAX_SHADOW_RAYS_PER_FRAME`.
-- **Variables** (mutable state, locals, buffers): `PascalCase` — `CurrentFrame`,
-  `Received`, `OffsetBuffer`, `BufferTable`, `SmallestValue`, `RenderResult`.
-- **Functions**: `PascalCase` — `ReadProjectedVertex`, `QueueShadowSample`.
-- **Booleans** read naturally: `Moved`, `Expired`, `FullyInside`, `CachedShadow`.
-
-Known exceptions (do not treat these as the rule): `targetPosition` is camelCase,
-and `ActorCount` / `SphereVertices` are PascalCase despite being constants.
-
-## Comment Conventions
-
-### Banner comments (major blocks)
-Separate large sections with a full-width `=` rule and an ALL-CAPS, numbered title:
-
-```lua
--- ============================================================================
--- 1. LISTENER - LISTENS TO RETURNING DATA
--- ============================================================================
-```
-
-### Inline block comments
-One-line comments explain non-obvious intent before a block:
-
-```lua
--- Find the smallest value then increase it
--- Apply changes and create a information buffer for workers
--- Sends the information to all workers workers
-```
-
-### Trailing inline comments
-Brief clarifications sit at the end of a line:
-
-```lua
-const RBOffset = buffer.readu32(OffsetBuffer, (SVIndex - 1) * 4) :: number -- Render buffer memory offset
-if FrameId ~= CurrentFrame then -- ignore stale frames
-for i = 1, TOTAL_PIXELS do -- Overwrites the FinalZ and FinalPixel buffers
-```
-
-### What NOT to comment
-Comments are short, technical, and only explain intent or performance. Obvious
-mechanics (a `buffer.readf32`, a simple `for`) are left uncommented.
-
-## Math
-
-- for mathematical variables like W01 (for triangles in rendering as a example) use a clearer name
-- it can be bigger, and should have a descriptive name
-
-
-## params
-- every function that will be used outside of the system its in, add @param and document its parameters
-- if you change it, update it
-
-- for public ends that the consumer would regularly use, do not let them do whatever they want with the params
-- ensure conformity, do not use ? unless there are multiple options and force the user to bend to whatever you want
-- if the user does not comply you should just leave them and let the compiler hit them like a dumptruck
-
-## documentation
-- for every system, make a .md file that is documentation for a specific system
-- use terms and classification at the top of the documentation with highly descriptive writing and terminology to make the user understand whats happening immediately
-
-- afterwards, keep it short and describe how its mechanisms work
-- update it once you change it
-
-## read me
-- if the read me is outdated, empty or just a 10 line template messsage
-- look at the project and describe it
-- make it short and at the start of the read me use terms and classifications so people would understand it 
-
-## defensive programming
-- do not use defensive programming unless managing volatile state like a player that could have a certain part deleted due to ingame death
-
-## if statements
-- do not nest deeper than 2 recursions
-- if if statements in a block are getting bigger than 5 lines and its not a performance critical system or a part that would not make it matter use a dispatch table thats clean and clear
-
-- always use guard clauses unless its a one line thing or something that would make it clearer like
-- if shouldexecute == true then execute()
-
-## modules
-- When requiring modules for data/storage (`Storage`, `ObjectStorage`, `ECSStorage`), place them under `-- Storage --`.
-- When requiring modules for functions, math, or libraries (`RenderMath`, `BVH`, `PhysicsMath`), place them under `-- Modules --` (or `-- Libraries --`).
-- Never annotate `require(...)` results with `:: ModuleScript` so Luau preserves exported function and type signatures.
-
-## linting
-- Every time you write or modify Luau code, run linting / static verification (`selene` / `luau-lsp` when available, plus symbol/reference and JSON checks) before finishing.
-- **Red File / Red Squiggle Rule:** If a file turns red in the IDE with `1` or `2` (or more) red squiggles/problems, treat it as an **actual code/logic issue** (such as an undefined symbol, nil-indexed field, or broken call signature), **never** dismiss it as a "petty type error." Investigate and fix the root cause immediately.
-- Ensure strict `--!strict` compliance: zero unused variables, zero dead imports, zero nil-indexed fields, and exact parameter count/type matching across module boundaries.
-
-## Maintainability and configs
-
-- Once you think there is something worth to add as a config that would get changed alot, add a config to Configs and tell the user
-- If the change is somethng that would almost never change like vertex data for a cube, do NOT include it
-- Cache it at the top of the script in whatever script the systemConfigs config is asking for as to not hurt performance
-
-- you will see multiple files, put them into whatever category you are doing
-- do not add types to module script references via require()
-
-## commands:
-- call stylua via stylua . once you are done
-
-## conclusion
-- you the subagent are purely for cleaning up after your boss
-- do not focus on creation only tactile refinement
+### Comment & Documentation Standards
+- **Inline comments:** Short, technical, and explain *why* (intent/invariants), never obvious mechanics (`buffer.readf32`, `i += 1`).
+- **System `<System>.md` & `README.md`:**
+  - Start with a **Classification & Domain Terminology** block (`Domain`, `Subsystem`, `Architecture` / `Memory Model`) so readers grasp the system immediately.
+  - Follow with concise **Architectural Mechanisms** bullets describing how the active code works.
+  - Keep `<System>.md` and `README.md` updated whenever architecture or behavior changes.

@@ -31,7 +31,8 @@
 - **Workspace Decal Discovery (`ECSBuilderHelper`)**: Scans `Workspace` for `Decal` instances before populating parts, registers unique `Decal.Texture` URLs into `TextureTable.Entries`, syncs `TextureTable.Entries` to clients via `CoreEvents.TextureSyncEvent` for `64×64` decoding, and assigns matching `TextureId`s to parts.
 - **ECS Bitfield Integration (`ECSMain`)**: Stores each entity's `TextureId` in bits `5..12` of the 32-bit `Properties` register, replicated to clients and read per-entity in `RenderController.DrawFrame` so different parts render with different cached `64×64` textures in the same frame.
 
-### 5. Scanline-Band Parallel Worker Distribution
+### 5. Frame Pacing & Scanline-Band Parallel Worker Distribution
+- **Decoupled Target FPS (`RenderConfig.RenderTargetFPS`, `RenderControllerHelper.StepFrameAccumulator`)**: `RenderController.DrawFrame(DeltaTime)` paces rasterization to `RenderTargetFPS` (`40` FPS default, configurable via `RenderConfig` / `SystemsConfigs`) using a fractional remainder accumulator while client physics and camera stay at full `RenderStepped` rate (60+ Hz). Lag spikes reset the remainder to prevent catch-up bursts, and in-flight worker batches hold the accumulator primed for the next unblocked tick.
 - `RenderControllerHelper` bins visible faces directly by projected vertical scanline bands (`BAND_HEIGHT = ceil(ScreenHeight / WorkerCount)`), dispatching exact-sized triangle command slices (`CompactSlice`) to `Actor` workers via `SendMessage`.
 - **`ParallelWorker.client.luau`**: Owns only its disjoint horizontal band (`BandStartY..BandEndY`) with band-local `PixelBuffer` and `ZBuffer` (`BAND_PIXELS * 4`), eliminating client-side Z-buffer merging. `RenderController` composites each worker's dirty row span into `FinalPixel` via `BufferHelper.CompositeWorkerBand`.
 

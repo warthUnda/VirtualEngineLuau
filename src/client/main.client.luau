@@ -55,7 +55,7 @@ while true do
 	PhysicsController.SimulatePhysicsFrame(DeltaTime)
 	debug.profileend()
 	debug.profilebegin("Render all instances")
-	Renderer.DrawFrame()
+	Renderer.DrawFrame(DeltaTime)
 	debug.profileend()
 
 	debug.profilebegin("Send replication info")

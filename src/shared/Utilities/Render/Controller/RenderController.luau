@@ -76,6 +76,8 @@ const TEXTURE_STUDS_PER_TILE = SystemsConfigs.TextureStudsPerTile :: number
 const INV_TEXTURE_STUDS_PER_TILE = if TEXTURE_STUDS_PER_TILE > 0 then 1 / TEXTURE_STUDS_PER_TILE else 0 :: number
 const CORE_EVENTS_FOLDER_NAME = SystemsConfigs.CoreEventsFolderName :: string
 const TEXTURE_SYNC_REMOTE_EVENT_NAME = SystemsConfigs.TextureSyncRemoteEventName :: string
+const RENDER_TARGET_FPS = SystemsConfigs.RenderTargetFPS :: number
+const RENDER_FRAME_INTERVAL = if RENDER_TARGET_FPS > 0 then 1 / RENDER_TARGET_FPS else 0 :: number
 const FRAME_IN_FLIGHT_TIMEOUT = 0.25 :: number
 
 local Initialized = false :: boolean
@@ -84,6 +86,7 @@ local ExpectedWorkers = 0 :: number
 local CurrentFrame = 0 :: number
 local FrameInFlight = false :: boolean
 local LastDispatchClock = 0 :: number
+local RenderAccumulator = 0 :: number
 local PendingTextureSyncFrames = 0 :: number
 local LoadedTextureBuffers: { [number]: buffer }? = nil
 
@@ -111,7 +114,9 @@ local Renderer = {}
 -- 1. INITIALIZATION & WORKER MESSAGE LISTENER
 -- ============================================================================
 
--- Starter function
+--[=[
+	Initializes the client software renderer, worker scanline band ranges, EditableImage binding, and texture sync listener.
+]=]
 function Renderer.Init()
 	if Initialized then
 		return
@@ -204,14 +209,32 @@ end
 -- 2. GATHER DATA - SEND DATA TO WORKERS
 -- ============================================================================
 
-function Renderer.DrawFrame()
+--[=[
+	Gathers visible ECS entities, projects and clips faces into worker bands, and dispatches parallel rasterization at RenderTargetFPS.
+	@param DeltaTime number -- Elapsed client frame delta time in seconds.
+	@return boolean -- True when a render frame was dispatched, or false when throttled or in-flight.
+]=]
+function Renderer.DrawFrame(DeltaTime: number): boolean
 	if not Initialized then
 		Renderer.Init()
 	end
 
 	const NowClock = os.clock() :: number
-	if FrameInFlight and (NowClock - LastDispatchClock) < FRAME_IN_FLIGHT_TIMEOUT then
-		return
+	const IsFrameBlocked = FrameInFlight and (NowClock - LastDispatchClock) < FRAME_IN_FLIGHT_TIMEOUT :: boolean
+
+	if CurrentFrame > 0 then
+		local ShouldDraw = false :: boolean
+		ShouldDraw, RenderAccumulator = RenderControllerHelper.StepFrameAccumulator(
+			RenderAccumulator,
+			DeltaTime,
+			RENDER_FRAME_INTERVAL,
+			IsFrameBlocked
+		)
+		if not ShouldDraw then
+			return false
+		end
+	elseif IsFrameBlocked then
+		return false
 	end
 
 	-- Tables
@@ -428,6 +451,8 @@ function Renderer.DrawFrame()
 			CurrentFrame
 		)
 	end
+
+	return true
 end
 
 Renderer.RenderFrame = Renderer.DrawFrame

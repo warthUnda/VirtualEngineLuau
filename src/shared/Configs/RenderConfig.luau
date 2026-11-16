@@ -6,14 +6,17 @@ local RenderConfig = {}
 
 -- Display & Worker Settings --
 
-RenderConfig.RenderWidth = 250 :: number
+RenderConfig.RenderWidth = 1000 :: number
 -- Horizontal pixel resolution of the renderer's EditableImage and frame buffers.
 
-RenderConfig.RenderHeight = 200 :: number
+RenderConfig.RenderHeight = 1000 :: number
 -- Vertical pixel resolution of the renderer's EditableImage and frame buffers.
 
 RenderConfig.RenderTotalPixels = RenderConfig.RenderWidth * RenderConfig.RenderHeight :: number
 -- Total pixel count of the renderer canvas (RenderWidth * RenderHeight).
+
+RenderConfig.RenderTargetFPS = 40 :: number
+-- Target frames per second for Renderer.DrawFrame() execution (set <= 0 to run uncapped on every RenderStepped).
 
 RenderConfig.ActorCount = 3 :: number
 -- Number of parallel worker Actors spawned to rasterize triangles across frames.

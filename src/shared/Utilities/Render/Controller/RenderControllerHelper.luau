@@ -22,12 +22,39 @@ const WORKER_BUFFER_MULTIPLIER = SystemsConfigs.WorkerBufferMultiplier :: number
 const WORKER_BUFFER_CAPACITY = TOTAL_PIXELS * WORKER_BUFFER_MULTIPLIER :: number
 const RENDER_BUFFER_LAYOUT_SIZE = BufferHelper.RenderBufferLayoutSize :: number
 const MIN_TRIANGLE_AREA = SystemsConfigs.MinTriangleArea :: number
+const FRAME_PACING_EPSILON = 1e-5 :: number
 
 local RenderControllerHelper = {}
 
 -- ============================================================================
--- 1. DIRECTION READING, COLOR SHADING & FACE QUAD SUBMISSION
+-- 1. FRAME PACING, DIRECTION READING, COLOR SHADING & FACE QUAD SUBMISSION
 -- ============================================================================
+
+--[=[
+	Advances the render frame-pacing accumulator and determines whether a new frame should be dispatched.
+	@param Accumulator number -- Current accumulated frame time in seconds.
+	@param DeltaTime number -- Elapsed tick delta time in seconds.
+	@param FrameInterval number -- Target seconds per rendered frame (<= 0 for uncapped).
+	@param IsFrameBlocked boolean -- True when a previous worker frame is still in flight.
+	@return boolean -- True when a render pass should execute this tick.
+	@return number -- Updated accumulator value in seconds.
+]=]
+function RenderControllerHelper.StepFrameAccumulator(Accumulator: number, DeltaTime: number, FrameInterval: number, IsFrameBlocked: boolean): (boolean, number)
+	if FrameInterval <= 0 then
+		return not IsFrameBlocked, 0
+	end
+
+	const NextAccumulator = Accumulator + math.max(0, DeltaTime) :: number
+	if NextAccumulator < FrameInterval - FRAME_PACING_EPSILON then
+		return false, NextAccumulator
+	end
+	if IsFrameBlocked then
+		return false, FrameInterval
+	end
+
+	const Remainder = if NextAccumulator >= FrameInterval * 2 then 0 else math.max(0, NextAccumulator - FrameInterval) :: number
+	return true, Remainder
+end
 
 --[=[
 	Reads a 3-component float direction vector from the directions buffer into a SIMD vector.

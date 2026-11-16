@@ -2,12 +2,71 @@
 name: render-executer-style
 description: Code style and conventions guide derived from RenderController.client.luau. Documents how Luau code in this project's rendering pipeline is formatted, typed, and commented. Read this to match the project's writing conventions when authoring or editing render code.
 ---
-# Render Code Style Guide
 
-Reference file: `src/shared/Utilities/Render/Controller/RenderController.luau`
+## Idioms & Patterns
 
-This is the canonical example of how rendering-pipeline code is written in this
-project. Match these conventions when adding or refactoring render code.
+- All state lives at module scope (the script runs inside an `Actor`).
+- Message in: `SelfActor:BindToMessage("Return Render Calculations", function(...) ... end)`.
+- Dispatch out: `TargetActor:SendMessage("Execute Rendering", RenderBuffer, byteCount, CurrentFrame)`.
+- Frame loop: `RunService.RenderStepped:Connect(function() ... end)`.
+- Deferred init: `task.spawn(function() ... end)`.
+- Early exit inside loops with `continue` instead of wrapping in an outer `if`.
+
+
+## local functions
+
+- inside a system, if there is a local function put it into a new file thats right next to the main file, it should be a .luau file
+
+- put the local functions in there, name the file Whatever then helper, math, functions or whatever helps it there
+
+## for systems
+
+- use Core as a library, controller as executer, scene for objects etc
+- for getting a better idea, look into some systems to see how its done and copy the way we do it
+
+## Architecture & Performance Guardrails
+
+### 1. Contiguous Buffer Strides & Canonical Layouts
+- Derive all ECS buffer byte sizes in `ECSConfig.luau` directly from `ECSMaxEntities * Stride` (never hardcoded round numbers).
+- Canonical strides:
+  - `PositionData` / `SizeData`: `12` bytes (`3 × f32`: `X, Y, Z`).
+  - `DirectionsData`: `36` bytes (`Look` at `0..11`, `Up` at `12..23`, `Right` at `24..35` where `Right = Look × Up`). `OrientationData` aliases `Look` (`0..11`).
+  - `VisualData`: `4` bytes (`u32` packed RGBA).
+  - `PropertiesData`: `4` bytes (`u32` bitfield: `CanCollide`, `IsVisible`, `Anchored`, `HasDynamicId`, `TextureId`, `ShapeId`, `DynamicId`).
+
+### 2. O(1) Swap-and-Pop Deletion Contract
+- `ECSData.DeleteEntity(EntityId)` moves `LastEntityId -> EntityId` in $O(1)$ time.
+- Any subsystem indexing per-entity state (`DynamicObjectsList`, `PhysicsController`, `ReplicationReceiver`, `RendererCleaner`) must register a listener via `ECSData.SetSwapPopCallback` (or bidirectional slot maps) so moved tail entities never leave ghost slots or stale IDs.
+
+### 3. Roblox Actor VM Boundaries & Storage Resolution
+- `script:GetActor()` returns `nil` for shared `ModuleScript`s in `ReplicatedStorage`, even when `require`d from inside an `Actor` (`Controller` or `ParallelWorker`).
+- Never rely on `script:GetActor()` inside `ReplicatedStorage` modules to detect the `Controller` Actor. Resolve `PlayerScripts.Controller.ObjectStorage` first for live client systems, and allow an optional `ProvidedStorage` override for isolated unit tests.
+- When sending triangle command batches across Actor VMs (`TargetActor:SendMessage`), copy only the active `ByteCount` (`CompactSlice = buffer.create(ByteCount)`) rather than serializing oversized capacity buffers.
+
+### 4. Zero-Allocation Hot Paths (Render, BVH, Physics, Replication)
+- Never allocate Lua tables (`{}`), closures, `RaycastParams.new()`, or `Instance` queries (`workspace:Raycast`) inside per-frame, per-substep, BVH build/traversal, or rasterizer loops.
+- Use `BVH.Raycast` and `BVH.QueryAABBScalar` (with pre-allocated `u32` candidate buffers and once-per-substep `BVH.EnsureFresh`) for all spatial queries.
+- Do **not** use function dispatch tables inside hot loops (`BVH`, `RenderMath`, `MathModule`, `PhysicsMath`); use inline scalar locals and guard clauses.
+
+## 5, create a subagent
+- create a subagent of hydrogen (medium reasoning effort)
+- this agent will focus on organization and comments and documentation and cleaning
+
+## conclusion
+- you are made for pure execution, performance and architectural clarity, do not worry about code formatting the subagent will do it
+
+## what to tell the cleaner subagent:
+- tell it this here
+
+- you are a subagent, you will clean after my mess, you are not allowed to create, only refine
+- you will yield execution for up to 1 minute if you see a new file created or modified you refine it and reset the timer
+- you will watch what i do basically and refine
+- this does not mean you will do optimization trick or architecture, you follow merely what the skill.md says along with minor cleanups
+
+## everything below here now, if you are carbon or argon exclusively, ignore these you dont have to follow them
+- dont follow things here, you can stop reading now actually
+
+
 
 ## File Header Directives
 
@@ -36,39 +95,6 @@ State and setup are declared in labeled groups, in this order:
 8. Local helper functions.
 9. Major runtime blocks separated by banner comments (see below).
 
-## Formatting & Layout
-
-### Indentation
-Always use **tabs** (never spaces). Nested method chains indent one tab per level:
-
-```lua
-const CameraState = require(
-	ReplicatedStorage:WaitForChild("Shared")
-		:WaitForChild("Utilities")
-		:WaitForChild("Render")
-		:WaitForChild("Camera")
-		:WaitForChild("CameraState")
-)
-```
-
-### Multi-line calls
-When a call has many arguments, put one argument per line with the closing paren
-at the base indentation:
-
-```lua
-local ClippedVertexCount = RenderMath.ClipAndProjectTriangle(
-	ScreenVertices,
-	V0TRI,
-	V1TRI,
-	V2TRI,
-	ProjectedVertices,
-	ClipBufferA,
-	ClipBufferB,
-	CamFOV,
-	WIDTH,
-	HEIGHT
-)
-```
 
 ### Multi-assignment
 Declare several names in one statement with inline type annotations per name:
@@ -170,18 +196,6 @@ Separate large sections with a full-width `=` rule and an ALL-CAPS, numbered tit
 -- ============================================================================
 ```
 
-### Group header comments (variable groups)
-Short labels mark related declarations:
-
-```lua
--- Services --
--- Static References --
--- Modules --
--- Configs --
--- Tables --
--- Buffers
-```
-
 ### Inline block comments
 One-line comments explain non-obvious intent before a block:
 
@@ -204,40 +218,11 @@ for i = 1, TOTAL_PIXELS do -- Overwrites the FinalZ and FinalPixel buffers
 Comments are short, technical, and only explain intent or performance. Obvious
 mechanics (a `buffer.readf32`, a simple `for`) are left uncommented.
 
-## Idioms & Patterns
-
-- All state lives at module scope (the script runs inside an `Actor`).
-- Message in: `SelfActor:BindToMessage("Return Render Calculations", function(...) ... end)`.
-- Dispatch out: `TargetActor:SendMessage("Execute Rendering", RenderBuffer, byteCount, CurrentFrame)`.
-- Frame loop: `RunService.RenderStepped:Connect(function() ... end)`.
-- Deferred init: `task.spawn(function() ... end)`.
-- Early exit inside loops with `continue` instead of wrapping in an outer `if`.
-
-
-## Maintainability and configs
-
-- Once you think there is something worth to add as a config that would get changed alot, add a config to Configs and tell the user
-- If the change is somethng that would almost never change like vertex data for a cube, do NOT include it
-- Cache it at the top of the script in whatever script the systemConfigs config is asking for as to not hurt performance
-
-- you will see multiple files, put them into whatever category you are doing
-- do not add types to module script references via require()
-
-## local functions
-
-- inside a system, if there is a local function put it into a new file thats right next to the main file, it should be a .luau file
-
-- put the local functions in there, name the file Whatever then helper, math, functions or whatever helps it there
-
 ## Math
 
 - for mathematical variables like W01 (for triangles in rendering as a example) use a clearer name
 - it can be bigger, and should have a descriptive name
 
-## for systems
-
-- use Core as a library, controller as executer, scene for objects etc
-- for getting a better idea, look into some systems to see how its done and copy the way we do it
 
 ## params
 - every function that will be used outside of the system its in, add @param and document its parameters
@@ -269,11 +254,6 @@ mechanics (a `buffer.readf32`, a simple `for`) are left uncommented.
 - always use guard clauses unless its a one line thing or something that would make it clearer like
 - if shouldexecute == true then execute()
 
-## line management
-- if exceeding 300 lines, use different helpers that are specific until it is under 300 lines
-- however, unless its necessary do not do this
-- examples include libraries or services
-
 ## modules
 - When requiring modules for data/storage (`Storage`, `ObjectStorage`, `ECSStorage`), place them under `-- Storage --`.
 - When requiring modules for functions, math, or libraries (`RenderMath`, `BVH`, `PhysicsMath`), place them under `-- Modules --` (or `-- Libraries --`).
@@ -284,26 +264,18 @@ mechanics (a `buffer.readf32`, a simple `for`) are left uncommented.
 - **Red File / Red Squiggle Rule:** If a file turns red in the IDE with `1` or `2` (or more) red squiggles/problems, treat it as an **actual code/logic issue** (such as an undefined symbol, nil-indexed field, or broken call signature), **never** dismiss it as a "petty type error." Investigate and fix the root cause immediately.
 - Ensure strict `--!strict` compliance: zero unused variables, zero dead imports, zero nil-indexed fields, and exact parameter count/type matching across module boundaries.
 
-## Architecture & Performance Guardrails
+## Maintainability and configs
 
-### 1. Contiguous Buffer Strides & Canonical Layouts
-- Derive all ECS buffer byte sizes in `ECSConfig.luau` directly from `ECSMaxEntities * Stride` (never hardcoded round numbers).
-- Canonical strides:
-  - `PositionData` / `SizeData`: `12` bytes (`3 × f32`: `X, Y, Z`).
-  - `DirectionsData`: `36` bytes (`Look` at `0..11`, `Up` at `12..23`, `Right` at `24..35` where `Right = Look × Up`). `OrientationData` aliases `Look` (`0..11`).
-  - `VisualData`: `4` bytes (`u32` packed RGBA).
-  - `PropertiesData`: `4` bytes (`u32` bitfield: `CanCollide`, `IsVisible`, `Anchored`, `HasDynamicId`, `TextureId`, `ShapeId`, `DynamicId`).
+- Once you think there is something worth to add as a config that would get changed alot, add a config to Configs and tell the user
+- If the change is somethng that would almost never change like vertex data for a cube, do NOT include it
+- Cache it at the top of the script in whatever script the systemConfigs config is asking for as to not hurt performance
 
-### 2. O(1) Swap-and-Pop Deletion Contract
-- `ECSData.DeleteEntity(EntityId)` moves `LastEntityId -> EntityId` in $O(1)$ time.
-- Any subsystem indexing per-entity state (`DynamicObjectsList`, `PhysicsController`, `ReplicationReceiver`, `RendererCleaner`) must register a listener via `ECSData.SetSwapPopCallback` (or bidirectional slot maps) so moved tail entities never leave ghost slots or stale IDs.
+- you will see multiple files, put them into whatever category you are doing
+- do not add types to module script references via require()
 
-### 3. Roblox Actor VM Boundaries & Storage Resolution
-- `script:GetActor()` returns `nil` for shared `ModuleScript`s in `ReplicatedStorage`, even when `require`d from inside an `Actor` (`Controller` or `ParallelWorker`).
-- Never rely on `script:GetActor()` inside `ReplicatedStorage` modules to detect the `Controller` Actor. Resolve `PlayerScripts.Controller.ObjectStorage` first for live client systems, and allow an optional `ProvidedStorage` override for isolated unit tests.
-- When sending triangle command batches across Actor VMs (`TargetActor:SendMessage`), copy only the active `ByteCount` (`CompactSlice = buffer.create(ByteCount)`) rather than serializing oversized capacity buffers.
+## commands:
+- call stylua via stylua . once you are done
 
-### 4. Zero-Allocation Hot Paths (Render, BVH, Physics, Replication)
-- Never allocate Lua tables (`{}`), closures, `RaycastParams.new()`, or `Instance` queries (`workspace:Raycast`) inside per-frame, per-substep, BVH build/traversal, or rasterizer loops.
-- Use `BVH.Raycast` and `BVH.QueryAABBScalar` (with pre-allocated `u32` candidate buffers and once-per-substep `BVH.EnsureFresh`) for all spatial queries.
-- Do **not** use function dispatch tables inside hot loops (`BVH`, `RenderMath`, `MathModule`, `PhysicsMath`); use inline scalar locals and guard clauses.
+## conclusion
+- you the subagent are purely for cleaning up after your boss
+- do not focus on creation only tactile refinement

@@ -15,11 +15,14 @@ return function()
 	const ReplicatedStorage = game:GetService("ReplicatedStorage")
 	const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
 
+	const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 	const MathModule = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("MathModule"))
 	const BufferHelper = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("BufferHelper"))
 	const VerticeFile = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("VerticeFile"))
 	const TextureTable = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Texture"):WaitForChild("TextureTable"))
 	const RenderMath = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("RenderMath"))
+	const RenderControllerHelper = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Controller"):WaitForChild("RenderControllerHelper"))
+	const WorkerPartitionHelper = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Controller"):WaitForChild("WorkerPartitionHelper"))
 
 	describe("1. 2D Edge Functions & Geometric Tests", function()
 		it("should return correct signed determinant for 2D edge queries", function()
@@ -383,6 +386,309 @@ return function()
 				1.0
 			)
 			expect(OffScreenRight).to.equal(false)
+		end)
+	end)
+
+	describe("6. Render Target FPS Config & Frame Pacing Accumulator", function()
+		it("should expose RenderTargetFPS set to 40 in RenderConfig and SystemsConfigs", function()
+			expect(SystemsConfigs.RenderTargetFPS).to.equal(40)
+			expect(SystemsConfigs.Render.RenderTargetFPS).to.equal(40)
+		end)
+
+		it("should pace 60 Hz and 120 Hz RenderStepped ticks to exact 40 FPS without drift", function()
+			const TargetInterval = 1 / (SystemsConfigs.RenderTargetFPS :: number) :: number
+
+			local Accumulator60 = 0 :: number
+			local DrawnAt60Hz = 0 :: number
+			for _ = 1, 600 do
+				local ShouldDraw = false :: boolean
+				ShouldDraw, Accumulator60 =
+					RenderControllerHelper.StepFrameAccumulator(Accumulator60, 1 / 60, TargetInterval, false)
+				if ShouldDraw then
+					DrawnAt60Hz += 1
+				end
+			end
+			expect(DrawnAt60Hz).to.equal(400)
+
+			local Accumulator120 = 0 :: number
+			local DrawnAt120Hz = 0 :: number
+			for _ = 1, 120 do
+				local ShouldDraw = false :: boolean
+				ShouldDraw, Accumulator120 =
+					RenderControllerHelper.StepFrameAccumulator(Accumulator120, 1 / 120, TargetInterval, false)
+				if ShouldDraw then
+					DrawnAt120Hz += 1
+				end
+			end
+			expect(DrawnAt120Hz).to.equal(40)
+		end)
+
+		it("should prevent catch-up bursts after lag spikes and preserve readiness when workers are in flight", function()
+			const TargetInterval = 0.025 :: number
+
+			-- 250ms lag spike should draw once and clamp remainder below one interval
+			local ShouldDrawSpike = false :: boolean
+			local RemainderAfterSpike = 0 :: number
+			ShouldDrawSpike, RemainderAfterSpike =
+				RenderControllerHelper.StepFrameAccumulator(0, 0.25, TargetInterval, false)
+			expect(ShouldDrawSpike).to.equal(true)
+			expect(RemainderAfterSpike < TargetInterval).to.equal(true)
+
+			local ShouldDrawNextTick = false :: boolean
+			ShouldDrawNextTick, RemainderAfterSpike =
+				RenderControllerHelper.StepFrameAccumulator(RemainderAfterSpike, 1 / 60, TargetInterval, false)
+			expect(ShouldDrawNextTick).to.equal(false)
+
+			-- When workers are still in flight at budget threshold, hold primed at TargetInterval
+			local ShouldDrawBlocked = false :: boolean
+			local HeldAccumulator = 0 :: number
+			ShouldDrawBlocked, HeldAccumulator =
+				RenderControllerHelper.StepFrameAccumulator(0.01667, 0.01667, TargetInterval, true)
+			expect(ShouldDrawBlocked).to.equal(false)
+			expect(HeldAccumulator).to.equal(TargetInterval)
+
+			local ShouldDrawUnblocked = false :: boolean
+			ShouldDrawUnblocked, HeldAccumulator =
+				RenderControllerHelper.StepFrameAccumulator(HeldAccumulator, 1 / 60, TargetInterval, false)
+			expect(ShouldDrawUnblocked).to.equal(true)
+
+			-- Uncapped interval (<= 0) draws every unblocked tick
+			const UncappedOpen, UncappedRem = RenderControllerHelper.StepFrameAccumulator(0, 1 / 60, 0, false)
+			const UncappedBlocked, _ = RenderControllerHelper.StepFrameAccumulator(0, 1 / 60, 0, true)
+			expect(UncappedOpen).to.equal(true)
+			expect(UncappedRem).to.equal(0)
+			expect(UncappedBlocked).to.equal(false)
+		end)
+	end)
+
+	describe("7. Dynamic Parallel Worker Load Balancing & Exact Z-Buffer Invariance", function()
+		it("should evenly split horizon-clustered triangles across all 3 workers instead of overloading 1 actor", function()
+			const Height = 100 :: number
+			const WorkerCount = 3 :: number
+			const Stride = 56 :: number
+			const TriangleCount = 60 :: number
+			const Capacity = TriangleCount * Stride :: number
+
+			const RowWorkDiff = buffer.create((Height + 1) * 4)
+			const CumulativeWork = buffer.create(Height * 4)
+			const RowToWorker = buffer.create(Height)
+			const StagedTriangles = buffer.create(Capacity)
+			const StagedBounds = buffer.create(TriangleCount * 4)
+			const BandStarts = table.create(WorkerCount, 0) :: { number }
+			const BandEnds = table.create(WorkerCount, 0) :: { number }
+			const WorkerOffsets = table.create(WorkerCount, 0) :: { number }
+			const BufferTable = {
+				buffer.create(Capacity),
+				buffer.create(Capacity),
+				buffer.create(Capacity),
+			} :: { buffer }
+
+			-- Pack all 60 triangles tightly inside the horizon band Y = 38..61 (24 rows)
+			for idx = 0, TriangleCount - 1 do
+				const MinY = 38 + (idx % 22) :: number
+				const MaxY = MinY + 2 :: number
+				buffer.writeu16(StagedBounds, idx * 4, MinY)
+				buffer.writeu16(StagedBounds, idx * 4 + 2, MaxY)
+				buffer.writeu32(StagedTriangles, idx * Stride + 48, 0xFF112233 + idx)
+				WorkerPartitionHelper.RecordTriangleRowWork(RowWorkDiff, 10, 89, MinY, MaxY, 1)
+			end
+
+			WorkerPartitionHelper.PartitionWorkerBands(
+				RowWorkDiff,
+				CumulativeWork,
+				RowToWorker,
+				Height,
+				WorkerCount,
+				BandStarts,
+				BandEnds
+			)
+			WorkerPartitionHelper.DispatchStagedTriangles(
+				StagedTriangles,
+				StagedBounds,
+				TriangleCount,
+				RowToWorker,
+				WorkerOffsets,
+				BufferTable,
+				Capacity
+			)
+
+			-- Contiguous, gap-free full-height partition
+			expect(BandStarts[1]).to.equal(0)
+			expect(BandEnds[1] + 1).to.equal(BandStarts[2])
+			expect(BandEnds[2] + 1).to.equal(BandStarts[3])
+			expect(BandEnds[3]).to.equal(Height - 1)
+
+			-- All 3 workers receive a balanced share instead of 0 / 60 / 0
+			const Count1 = WorkerOffsets[1] // Stride :: number
+			const Count2 = WorkerOffsets[2] // Stride :: number
+			const Count3 = WorkerOffsets[3] // Stride :: number
+			expect(Count1 >= 15 and Count1 <= 30).to.equal(true)
+			expect(Count2 >= 15 and Count2 <= 30).to.equal(true)
+			expect(Count3 >= 15 and Count3 <= 30).to.equal(true)
+
+			-- RowWorkDiff must be zeroed for next frame
+			for Y = 0, Height do
+				expect(buffer.readi32(RowWorkDiff, Y * 4)).to.equal(0)
+			end
+		end)
+
+		it("should produce bit-for-bit identical Z-buffered pixels across dynamic worker bands and occluded textured spans", function()
+			const Width = 32 :: number
+			const Height = 32 :: number
+			const WorkerCount = 3 :: number
+			const Stride = 56 :: number
+			const TotalPixels = Width * Height :: number
+
+			const CheckerTex = buffer.create(4 * 4 * 4)
+			for TexY = 0, 3 do
+				for TexX = 0, 3 do
+					const IsLight = ((TexX + TexY) % 2 == 0) :: boolean
+					const Color = if IsLight then 0xFF44AAFF else 0xFFCC2244 :: number
+					buffer.writeu32(CheckerTex, (TexY * 4 + TexX) * 4, Color)
+				end
+			end
+			const TexMap = { [1] = CheckerTex }
+
+			-- Build 3 overlapping triangles in [Y = 8..26]:
+			-- 1) Near untextured quad/tri (InvZ = 0.5) occluding center
+			-- 2) Farther textured wide tri (InvZ = 0.2) spanning >16px across occluded + visible regions
+			-- 3) Closest foreground small tri (InvZ = 0.8) overwriting both
+			const StagedTris = buffer.create(3 * Stride)
+			const StagedBounds = buffer.create(3 * 4)
+			const RowWorkDiff = buffer.create((Height + 1) * 4)
+
+			local function WriteTestTri(
+				Slot: number,
+				X0: number,
+				Y0: number,
+				X1: number,
+				Y1: number,
+				X2: number,
+				Y2: number,
+				InvZ: number,
+				Color: number,
+				TexId: number
+			)
+				const Area = (X2 - X0) * (Y1 - Y0) - (Y2 - Y0) * (X1 - X0) :: number
+				const ScaledInvZ = InvZ / Area :: number
+				const Base = Slot * Stride :: number
+				buffer.writei16(StagedTris, Base, X0)
+				buffer.writei16(StagedTris, Base + 2, Y0)
+				buffer.writef32(StagedTris, Base + 4, ScaledInvZ)
+				buffer.writef32(StagedTris, Base + 8, 0)
+				buffer.writef32(StagedTris, Base + 12, 0)
+
+				buffer.writei16(StagedTris, Base + 16, X1)
+				buffer.writei16(StagedTris, Base + 18, Y1)
+				buffer.writef32(StagedTris, Base + 20, ScaledInvZ)
+				buffer.writef32(StagedTris, Base + 24, 0)
+				buffer.writef32(StagedTris, Base + 28, ScaledInvZ)
+
+				buffer.writei16(StagedTris, Base + 32, X2)
+				buffer.writei16(StagedTris, Base + 34, Y2)
+				buffer.writef32(StagedTris, Base + 36, ScaledInvZ)
+				buffer.writef32(StagedTris, Base + 40, ScaledInvZ)
+				buffer.writef32(StagedTris, Base + 44, 0)
+
+				buffer.writeu32(StagedTris, Base + 48, Color)
+				buffer.writeu32(StagedTris, Base + 52, TexId)
+
+				const MinX = math.min(X0, X1, X2) :: number
+				const MaxX = math.max(X0, X1, X2) :: number
+				const MinY = math.min(Y0, Y1, Y2) :: number
+				const MaxY = math.max(Y0, Y1, Y2) :: number
+				buffer.writeu16(StagedBounds, Slot * 4, MinY)
+				buffer.writeu16(StagedBounds, Slot * 4 + 2, MaxY)
+				WorkerPartitionHelper.RecordTriangleRowWork(RowWorkDiff, MinX, MaxX, MinY, MaxY, TexId)
+			end
+
+			WriteTestTri(0, 6, 10, 6, 24, 24, 10, 0.5, 0xFF228833, 0)
+			WriteTestTri(1, 2, 8, 2, 28, 30, 8, 0.2, 0xFFCCCCCC, 1)
+			WriteTestTri(2, 10, 12, 10, 20, 20, 12, 0.8, 0xFFDD5511, 0)
+
+			-- Reference single-buffer render
+			const RefPixels = buffer.create(TotalPixels * 4)
+			const RefZ = buffer.create(TotalPixels * 4)
+			BufferHelper.ClearBuffers(TotalPixels, RefPixels, RefZ)
+			RenderMath.DrawTriangleBatch(StagedTris, 3 * Stride, TexMap, 4, 4, Width, Height, RefPixels, RefZ)
+
+			-- Verify closer triangle (0.8) overwrote 0.5, and 0.2 did NOT overwrite 0.5
+			expect(buffer.readu32(RefPixels, (13 * Width + 11) * 4)).to.equal(0xFFDD5511)
+			expect(buffer.readu32(RefPixels, (11 * Width + 7) * 4)).to.equal(0xFF228833)
+
+			-- Dynamic multi-worker render + compact slice composite
+			const CumulativeWork = buffer.create(Height * 4)
+			const RowToWorker = buffer.create(Height)
+			const BandStarts = table.create(WorkerCount, 0) :: { number }
+			const BandEnds = table.create(WorkerCount, 0) :: { number }
+			const WorkerOffsets = table.create(WorkerCount, 0) :: { number }
+			const WorkerCmds = {
+				buffer.create(3 * Stride),
+				buffer.create(3 * Stride),
+				buffer.create(3 * Stride),
+			} :: { buffer }
+
+			WorkerPartitionHelper.PartitionWorkerBands(
+				RowWorkDiff,
+				CumulativeWork,
+				RowToWorker,
+				Height,
+				WorkerCount,
+				BandStarts,
+				BandEnds
+			)
+			WorkerPartitionHelper.DispatchStagedTriangles(
+				StagedTris,
+				StagedBounds,
+				3,
+				RowToWorker,
+				WorkerOffsets,
+				WorkerCmds,
+				3 * Stride
+			)
+
+			const FinalPixels = buffer.create(TotalPixels * 4)
+			const RowStride = Width * 4 :: number
+			for w = 1, WorkerCount do
+				const WorkerPix = buffer.create(TotalPixels * 4)
+				const WorkerZ = buffer.create(TotalPixels * 4)
+				BufferHelper.ClearBuffers(TotalPixels, WorkerPix, WorkerZ)
+
+				const BStart = BandStarts[w] :: number
+				const BEnd = BandEnds[w] :: number
+				local DMin = Height :: number
+				local DMax = -1 :: number
+				if WorkerOffsets[w] > 0 and BStart <= BEnd then
+					DMin, DMax = RenderMath.DrawTriangleBatch(
+						WorkerCmds[w],
+						WorkerOffsets[w],
+						TexMap,
+						4,
+						4,
+						Width,
+						Height,
+						WorkerPix,
+						WorkerZ,
+						BStart,
+						BEnd
+					)
+				end
+
+				if DMin <= DMax then
+					const ClampedMin = math.max(BStart, DMin) :: number
+					const ClampedMax = math.min(BEnd, DMax) :: number
+					const DirtyBytes = (ClampedMax - ClampedMin + 1) * RowStride :: number
+					const CompactSlice = buffer.create(DirtyBytes)
+					buffer.copy(CompactSlice, 0, WorkerPix, (ClampedMin - BStart) * RowStride, DirtyBytes)
+					BufferHelper.CompositeWorkerBand(FinalPixels, CompactSlice, Width, BStart, BEnd, ClampedMin, ClampedMax, true)
+				else
+					BufferHelper.CompositeWorkerBand(FinalPixels, buffer.create(0), Width, BStart, BEnd, DMin, DMax, true)
+				end
+			end
+
+			for Offset = 0, TotalPixels * 4 - 4, 4 do
+				expect(buffer.readu32(FinalPixels, Offset)).to.equal(buffer.readu32(RefPixels, Offset))
+			end
 		end)
 	end)
 end

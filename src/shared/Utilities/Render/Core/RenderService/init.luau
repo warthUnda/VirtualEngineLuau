@@ -44,6 +44,8 @@ export type RenderOptions = {
 
 export type RenderObject = {
 	ClassName: string,
+	BaseWidth: number,
+	BaseHeight: number,
 	Width: number,
 	Height: number,
 	ImageSize: Vector2,
@@ -70,9 +72,13 @@ export type RenderObject = {
 	CurrentFrame: number,
 	FrameInFlight: boolean,
 	LastDispatchClock: number,
+	LastGatherCpuTime: number,
+	MaxWorkerCpuTime: number,
+	CompositeCpuTime: number,
 	PendingTextureSyncFrames: number,
 	LastTextureVersion: number,
 	LoadedTextureBuffers: { [number]: buffer }?,
+	LastStagedTriangleCount: number,
 	WorkerBufferCapacity: number,
 	StagedTriangleCapacity: number,
 	WorkerActors: { Actor },
@@ -94,6 +100,7 @@ export type RenderObject = {
 	DrawFrame: (self: RenderObject) -> boolean,
 	SetCamera: (self: RenderObject, CameraObj: CameraService.CameraObject) -> (),
 	SetStorage: (self: RenderObject, Storage: ECSMain.ECSStorage) -> (),
+	SetResolution: (self: RenderObject, NewWidth: number, NewHeight: number) -> (),
 	SetEnabled: (self: RenderObject, Enabled: boolean) -> (),
 	GetScreenGui: (self: RenderObject) -> ScreenGui?,
 	GetImageLabel: (self: RenderObject) -> ImageLabel?,
@@ -107,6 +114,7 @@ local RenderService = {
 	DrawFrame = RenderInstanceMethods.DrawFrame,
 	SetCamera = RenderInstanceMethods.SetCamera,
 	SetStorage = RenderInstanceMethods.SetStorage,
+	SetResolution = RenderInstanceMethods.SetResolution,
 	SetEnabled = RenderInstanceMethods.SetEnabled,
 	GetScreenGui = RenderInstanceMethods.GetScreenGui,
 	GetImageLabel = RenderInstanceMethods.GetImageLabel,
@@ -127,14 +135,16 @@ RenderService.__index = RenderService
 ]=]
 function RenderService.New(Options: RenderOptions?): RenderObject
 	const Opts: RenderOptions = Options or {}
-	const Width = (Opts.Width or DEFAULT_WIDTH) :: number
-	const Height = (Opts.Height or DEFAULT_HEIGHT) :: number
-	const TotalPixels = Width * Height :: number
-	const WorkerCapacity = TotalPixels * WORKER_BUFFER_MULTIPLIER :: number
+	const Width = math.clamp(math.floor((Opts.Width or DEFAULT_WIDTH) :: number), 1, DEFAULT_WIDTH) :: number
+	const Height = math.clamp(math.floor((Opts.Height or DEFAULT_HEIGHT) :: number), 1, DEFAULT_HEIGHT) :: number
+	const MaxTotalPixels = DEFAULT_WIDTH * DEFAULT_HEIGHT :: number
+	const WorkerCapacity = MaxTotalPixels * WORKER_BUFFER_MULTIPLIER :: number
 	const StagedCapacity = math.max(64, (WorkerCapacity * 2) // RENDER_BUFFER_LAYOUT_SIZE) :: number
 
 	const RawRenderer = {
 		ClassName = "RenderService",
+		BaseWidth = Width,
+		BaseHeight = Height,
 		Width = Width,
 		Height = Height,
 		ImageSize = Vector2.new(Width, Height),
@@ -161,9 +171,13 @@ function RenderService.New(Options: RenderOptions?): RenderObject
 		CurrentFrame = 0,
 		FrameInFlight = false,
 		LastDispatchClock = 0,
+		LastGatherCpuTime = 0,
+		MaxWorkerCpuTime = 0,
+		CompositeCpuTime = 0,
 		PendingTextureSyncFrames = 0,
 		LastTextureVersion = -1,
 		LoadedTextureBuffers = nil :: { [number]: buffer }?,
+		LastStagedTriangleCount = 0,
 		WorkerBufferCapacity = WorkerCapacity,
 		StagedTriangleCapacity = StagedCapacity,
 		WorkerActors = {} :: { Actor },
@@ -171,12 +185,12 @@ function RenderService.New(Options: RenderOptions?): RenderObject
 		BandStarts = table.create(ACTOR_COUNT, 0) :: { number },
 		BandEnds = table.create(ACTOR_COUNT, 0) :: { number },
 		BufferTable = {} :: { buffer },
-		FinalPixel = buffer.create(TotalPixels * 4),
+		FinalPixel = buffer.create(Width * Height * 4),
 		StagedTriangles = buffer.create(StagedCapacity * RENDER_BUFFER_LAYOUT_SIZE),
 		StagedBounds = buffer.create(StagedCapacity * 4),
-		RowWorkDiff = buffer.create((Height + 1) * 4),
-		CumulativeWork = buffer.create(Height * 4),
-		RowToWorker = buffer.create(Height),
+		RowWorkDiff = buffer.create((DEFAULT_HEIGHT + 1) * 4),
+		CumulativeWork = buffer.create(DEFAULT_HEIGHT * 4),
+		RowToWorker = buffer.create(DEFAULT_HEIGHT),
 		ScreenVertices = buffer.create(VerticeFile.MaxShapeVertices * 12),
 		ProjectedVertices = buffer.create(12 * 20),
 		ClipBufferA = buffer.create(12 * 20),

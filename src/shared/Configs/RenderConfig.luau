@@ -65,6 +65,9 @@ RenderConfig.AmbientLight = 0.3 :: number
 RenderConfig.MinTriangleArea = 0.5 :: number
 -- Minimum screen-space signed edge area (2x pixel area; >= 0.5 keeps all visible 1-pixel triangles while culling degenerate slivers).
 
+RenderConfig.PlaneImpostorMaxPixels = 1.25 :: number
+-- Maximum projected screen-space side-face thickness in pixels below which a Cube (ShapeId = 0) renders as a single 4-vertex Plane quad impostor.
+
 -- Clipping & Frustum Culling --
 
 RenderConfig.RenderNearClip = 0.4 :: number

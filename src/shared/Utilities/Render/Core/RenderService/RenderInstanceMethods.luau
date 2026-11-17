@@ -15,31 +15,24 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
 const RenderRoot = SharedFolder:WaitForChild("Utilities"):WaitForChild("Render")
 const ControllerFolder = RenderRoot:WaitForChild("Controller")
+const ControllerTheoryFolder = SharedFolder:WaitForChild("Utilities"):WaitForChild("ControllerTheory")
 
 -- Libraries --
 const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
-const VerticeFile = require(RenderRoot:WaitForChild("Core"):WaitForChild("VerticeFile"))
-const RenderMath = require(RenderRoot:WaitForChild("Core"):WaitForChild("RenderMath"))
+const ResourceController =
+	require(ControllerTheoryFolder:WaitForChild("Controller"):WaitForChild("ResourceController"))
 const TextureTable = require(RenderRoot:WaitForChild("Texture"):WaitForChild("TextureTable"))
 const CameraService = require(RenderRoot:WaitForChild("Camera"):WaitForChild("CameraService"))
 const RenderControllerHelper = require(ControllerFolder:WaitForChild("RenderControllerHelper"))
+const RenderEntityStageHelper = require(ControllerFolder:WaitForChild("RenderEntityStageHelper"))
 const WorkerPartitionHelper = require(ControllerFolder:WaitForChild("WorkerPartitionHelper"))
 const RenderWorkerGateway = require(ControllerFolder:WaitForChild("RenderWorkerGateway"))
+const RenderResolutionHelper = require(script.Parent:WaitForChild("RenderResolutionHelper"))
 
 -- Configs --
-const SUN_DIRECTION = SystemsConfigs.SunDirection :: Vector3
-const SUN_VEC = vector.create(SUN_DIRECTION.X, SUN_DIRECTION.Y, SUN_DIRECTION.Z)
-const AMBIENT_LIGHT = SystemsConfigs.AmbientLight :: number
-const DIFFUSE_LIGHT = 1 - AMBIENT_LIGHT :: number
 const ACTOR_COUNT = SystemsConfigs.ActorCount :: number
 const DEFAULT_CAMERA_VIEW = SystemsConfigs.DefaultCameraView :: string
-const ECS_COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
-const ECS_DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
-const ECS_VISUAL_STRIDE = SystemsConfigs.ECSVisualStride :: number
-const ECS_PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
-const TEXTURE_STUDS_PER_TILE = SystemsConfigs.TextureStudsPerTile :: number
-const INV_TEXTURE_STUDS_PER_TILE = if TEXTURE_STUDS_PER_TILE > 0 then 1 / TEXTURE_STUDS_PER_TILE else 0 :: number
 const FRAME_IN_FLIGHT_TIMEOUT = 0.25 :: number
 
 -- Tables --
@@ -84,16 +77,36 @@ function RenderInstanceMethods.Init(self: any, TargetParent: Instance?, BindWork
 		self.BandEnds,
 		EditableImg,
 		ShouldBindWorkers,
-		function(_FrameId: number, BoundImage: EditableImage)
+		function(_FrameId: number, WorkerCpuTime: number, CompositeCpuTime: number)
+			if WorkerCpuTime > (self.MaxWorkerCpuTime :: number) then
+				self.MaxWorkerCpuTime = WorkerCpuTime
+			end
+			self.CompositeCpuTime = (self.CompositeCpuTime :: number) + CompositeCpuTime
 			self.Received += 1
 			if self.Received >= self.ExpectedWorkers then
-				BoundImage:WritePixelsBuffer(Vector2.zero, ImageSize, FinalPixel)
+				const UploadStart = os.clock() :: number
+				const ActiveImg = self.EditableImage :: EditableImage?
+				const ActiveImageSize = self.ImageSize :: Vector2
+				if ActiveImg then
+					ActiveImg:WritePixelsBuffer(Vector2.zero, ActiveImageSize, self.FinalPixel :: buffer)
+				end
+				const ActiveLabel = self.ImageLabel :: ImageLabel?
+				if ActiveLabel and ActiveLabel.ImageRectSize ~= ActiveImageSize then
+					ActiveLabel.ImageRectOffset = Vector2.zero
+					ActiveLabel.ImageRectSize = ActiveImageSize
+				end
+				const UploadElapsed = (os.clock() - UploadStart) :: number
+				const TotalRenderCpu = (self.LastGatherCpuTime :: number)
+					+ (self.MaxWorkerCpuTime :: number)
+					+ (self.CompositeCpuTime :: number)
+					+ UploadElapsed :: number
 				self.Received = 0
 				self.FrameInFlight = false
+				ResourceController.ReportRendererFeedback(TotalRenderCpu)
 			end
 		end,
-		function(): number
-			return self.CurrentFrame :: number
+		function(): (number, number, buffer)
+			return self.CurrentFrame :: number, self.Width :: number, self.FinalPixel :: buffer
 		end
 	)
 
@@ -120,18 +133,16 @@ function RenderInstanceMethods.DrawFrame(self: any): boolean
 	end
 
 	const NowClock = os.clock() :: number
-	if self.FrameInFlight and (NowClock - (self.LastDispatchClock :: number)) < FRAME_IN_FLIGHT_TIMEOUT then
-		return false
+	if self.FrameInFlight then
+		if (NowClock - (self.LastDispatchClock :: number)) < FRAME_IN_FLIGHT_TIMEOUT then
+			return false
+		end
+		self.FrameInFlight = false
 	end
 
-	const Storage = self.Storage :: ECSMain.ECSStorage
-	const EntityCount = Storage.ECSData.GetCounts().EntityECSCount :: number
-	const ECSPositionBuffer = Storage.PositionData.GetData() :: buffer
-	const ECSSizeBuffer = Storage.SizeData.GetData() :: buffer
-	const ECSDirectionsBuffer = Storage.DirectionsData.GetData() :: buffer
-	const ECSVisualBuffer = Storage.VisualData.GetData() :: buffer
-	const ECSPropertiesBuffer = Storage.PropertiesData.GetData() :: buffer
+	RenderResolutionHelper.SyncAdaptiveResolution(self)
 
+	const Storage = self.Storage :: ECSMain.ECSStorage
 	const BoundCamera = self.Camera :: CameraService.CameraObject
 	const Width = self.Width :: number
 	const Height = self.Height :: number
@@ -156,9 +167,9 @@ function RenderInstanceMethods.DrawFrame(self: any): boolean
 	self.Received = 0
 	self.ExpectedWorkers = ExpectedWorkers
 	self.FrameInFlight = ExpectedWorkers > 0
-	if ExpectedWorkers > 0 then
-		self.LastDispatchClock = NowClock
-	end
+	self.LastDispatchClock = NowClock
+	self.MaxWorkerCpuTime = 0
+	self.CompositeCpuTime = 0
 
 	const CurrentTextureVersion = TextureTable.GetVersion() :: number
 	if CurrentTextureVersion ~= self.LastTextureVersion then
@@ -182,84 +193,61 @@ function RenderInstanceMethods.DrawFrame(self: any): boolean
 		end
 	end
 
-	const ScreenVertices = self.ScreenVertices :: buffer
-	const ProjectedVertices = self.ProjectedVertices :: buffer
-	const ClipBufferA = self.ClipBufferA :: buffer
-	const ClipBufferB = self.ClipBufferB :: buffer
 	const StagedTriangles = self.StagedTriangles :: buffer
 	const StagedBounds = self.StagedBounds :: buffer
 	const RowWorkDiff = self.RowWorkDiff :: buffer
-	const StagedCapacity = self.StagedTriangleCapacity :: number
-
-	local StagedTriangleCount = 0 :: number
-	for i = 1, EntityCount do
-		const ComponentOffset = (i - 1) * ECS_COMPONENT_STRIDE :: number
-		const PropertiesRegister = buffer.readu32(ECSPropertiesBuffer, (i - 1) * ECS_PROPERTIES_STRIDE) :: number
-		if not ECSMain.IsEntityVisible(PropertiesRegister) then
-			continue
-		end
-
-		const EntityShapeId = ECSMain.GetEntityShapeId(PropertiesRegister) :: number
-		const EntityTextureId = ECSMain.GetEntityTextureId(PropertiesRegister) :: number
-		const ShapeMesh = VerticeFile.ShapeData[EntityShapeId] or VerticeFile.ShapeData[0]
-
-		const IsVisible: boolean, LocalCameraPos: vector, HalfSize: vector, LocalSun: vector =
-			RenderMath.TransformShapeCameraVertices(
-				ECSPositionBuffer, ECSDirectionsBuffer, ECSSizeBuffer,
-				ComponentOffset, (i - 1) * ECS_DIRECTION_STRIDE,
-				ShapeMesh.LocalVertices, ShapeMesh.VertexCount, ScreenVertices,
-				CamPosVec, CamRightVec, CamUpVec, CamLookVec,
-				SUN_VEC, GuardBandX, GuardBandY
-			)
-		if not IsVisible then
-			continue
-		end
-
-		const VisualOffset = (i - 1) * ECS_VISUAL_STRIDE :: number
-		const PartColorR = if EntityTextureId == 0 then buffer.readu8(ECSVisualBuffer, VisualOffset) else 255 :: number
-		const PartColorG = if EntityTextureId == 0 then buffer.readu8(ECSVisualBuffer, VisualOffset + 1) else 255 :: number
-		const PartColorB = if EntityTextureId == 0 then buffer.readu8(ECSVisualBuffer, VisualOffset + 2) else 255 :: number
-
-		const HasTiling = EntityTextureId > 0 and INV_TEXTURE_STUDS_PER_TILE > 0
-		const TileScaleX = if HasTiling then math.clamp(math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset) * INV_TEXTURE_STUDS_PER_TILE + 0.5), 1, 8) else 1 :: number
-		const TileScaleY = if HasTiling then math.clamp(math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset + 4) * INV_TEXTURE_STUDS_PER_TILE + 0.5), 1, 8) else 1 :: number
-		const TileScaleZ = if HasTiling then math.clamp(math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset + 8) * INV_TEXTURE_STUDS_PER_TILE + 0.5), 1, 8) else 1 :: number
-
-		const IsUniform = ShapeMesh.IsAxisAligned or (math.abs(HalfSize.x - HalfSize.y) < 1e-4 and math.abs(HalfSize.y - HalfSize.z) < 1e-4) :: boolean
-		const InvHalfSize = if not IsUniform then vector.create(if HalfSize.x > 1e-4 then 1 / HalfSize.x else 1, if HalfSize.y > 1e-4 then 1 / HalfSize.y else 1, if HalfSize.z > 1e-4 then 1 / HalfSize.z else 1) else vector.zero
-
-		for _, Face in ipairs(ShapeMesh.Faces) do
-			const TestNormal = if IsUniform then Face.Normal else Face.Normal * InvHalfSize
-			if vector.dot(LocalCameraPos - Face.PointOnFace * HalfSize, TestNormal) <= -1e-3 then
-				continue
-			end
-
-			const UnitNormal = if IsUniform then Face.Normal else vector.normalize(TestNormal)
-			const Color = RenderControllerHelper.PackShadedColor(
-				PartColorR, PartColorG, PartColorB,
-				AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, vector.dot(UnitNormal, LocalSun))
-			)
-			const ScaleU = if Face.UAxisIndex == 1 then TileScaleX elseif Face.UAxisIndex == 2 then TileScaleY else TileScaleZ
-			const ScaleV = if Face.VAxisIndex == 1 then TileScaleX elseif Face.VAxisIndex == 2 then TileScaleY else TileScaleZ
-
-			StagedTriangleCount = RenderControllerHelper.SubmitFace(
-				ScreenVertices, ProjectedVertices, ClipBufferA, ClipBufferB,
-				StagedTriangles, StagedBounds, StagedTriangleCount, StagedCapacity, RowWorkDiff,
-				Face.V0ByteOffset, Face.V1ByteOffset, Face.V2ByteOffset, Face.V3ByteOffset,
-				ScaleU, ScaleV, Color, EntityTextureId, FocalLength, GuardBandX, GuardBandY
-			)
-		end
-	end
+	const StagedTriangleCount = RenderEntityStageHelper.StageEntities(
+		Storage,
+		self.ScreenVertices :: buffer,
+		self.ProjectedVertices :: buffer,
+		self.ClipBufferA :: buffer,
+		self.ClipBufferB :: buffer,
+		StagedTriangles,
+		StagedBounds,
+		self.StagedTriangleCapacity :: number,
+		RowWorkDiff,
+		CamPosVec,
+		CamRightVec,
+		CamUpVec,
+		CamLookVec,
+		FocalLength,
+		GuardBandX,
+		GuardBandY,
+		Width,
+		Height
+	)
+	self.LastStagedTriangleCount = StagedTriangleCount
 
 	const BandStarts = self.BandStarts :: { number }
 	const BandEnds = self.BandEnds :: { number }
 	WorkerPartitionHelper.PartitionWorkerBands(RowWorkDiff, self.CumulativeWork, self.RowToWorker, Height, ActiveWorkerCount, BandStarts, BandEnds)
 	if StagedTriangleCount > 0 and ExpectedWorkers > 0 then
 		WorkerPartitionHelper.DispatchStagedTriangles(
-			StagedTriangles, StagedBounds, StagedTriangleCount, self.RowToWorker, WorkerOffsets, BufferTable, WorkerCapacity
+			StagedTriangles, StagedBounds, StagedTriangleCount, self.RowToWorker, WorkerOffsets, BufferTable, WorkerCapacity, Height
 		)
 	end
-	RenderWorkerGateway.DispatchWorkerBatches(WorkerActors, BufferTable, WorkerOffsets, WorkerCapacity, BandStarts, BandEnds, self.CurrentFrame)
+	RenderWorkerGateway.DispatchWorkerBatches(
+		WorkerActors,
+		BufferTable,
+		WorkerOffsets,
+		WorkerCapacity,
+		BandStarts,
+		BandEnds,
+		self.CurrentFrame,
+		Width,
+		Height
+	)
+	const GatherElapsed = (os.clock() - NowClock) :: number
+	self.LastGatherCpuTime = GatherElapsed
+	if ExpectedWorkers == 0 then
+		const ActiveLabel = self.ImageLabel :: ImageLabel?
+		const ActiveImageSize = self.ImageSize :: Vector2
+		if ActiveLabel and ActiveLabel.ImageRectSize ~= ActiveImageSize then
+			ActiveLabel.ImageRectOffset = Vector2.zero
+			ActiveLabel.ImageRectSize = ActiveImageSize
+		end
+		ResourceController.ReportRendererFeedback(GatherElapsed)
+	end
 	return true
 end
 
@@ -320,6 +308,16 @@ end
 ]=]
 function RenderInstanceMethods.GetEditableImage(self: any): EditableImage?
 	return self.EditableImage
+end
+
+--[=[
+	Dynamically resizes this RenderObject's viewport resolution within its BaseWidth x BaseHeight ceiling.
+	@param self any -- Target OOP RenderObject instance.
+	@param NewWidth number -- Desired viewport width in pixels.
+	@param NewHeight number -- Desired viewport height in pixels.
+]=]
+function RenderInstanceMethods.SetResolution(self: any, NewWidth: number, NewHeight: number)
+	RenderResolutionHelper.ResizeRenderer(self, NewWidth, NewHeight)
 end
 
 --[=[

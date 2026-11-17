@@ -24,6 +24,9 @@ const SharedFolder = ReplicatedStorage:WaitForChild("Shared") :: Folder
 const Utilities = SharedFolder:WaitForChild("Utilities") :: Folder
 
 -- Libraries --
+const ResourceController = require(
+	Utilities:WaitForChild("ControllerTheory"):WaitForChild("Controller"):WaitForChild("ResourceController")
+)
 const PhysicsController =
 	require(Utilities:WaitForChild("Physics"):WaitForChild("Controller"):WaitForChild("PhysicsController"))
 const PlayerController =
@@ -36,6 +39,7 @@ const RenderLibrary = require(Utilities:WaitForChild("Render"):WaitForChild("Ren
 -- 1. INITIALIZATION
 -- ============================================================================
 
+ResourceController.Initialize()
 PhysicsController.InitializePhysics()
 PlayerController.Initialize()
 RenderLibrary.Init()
@@ -46,6 +50,7 @@ RenderLibrary.Init()
 
 while true do
 	const DeltaTime = RunService.RenderStepped:Wait() :: number
+	ResourceController.BeginFrame()
 	debug.profilebegin("SimulatePhysics")
 	PhysicsController.SimulatePhysicsFrame(DeltaTime)
 	PlayerController.StepClient(DeltaTime)
@@ -54,4 +59,5 @@ while true do
 	debug.profilebegin("Render all instances")
 	RenderLibrary.DrawFrame()
 	debug.profileend()
+	ResourceController.EndFrame(DeltaTime)
 end

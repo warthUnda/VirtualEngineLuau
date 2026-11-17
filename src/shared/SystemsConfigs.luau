@@ -12,6 +12,7 @@ const ECSConfig = require(ConfigsFolder:WaitForChild("ECSConfig"))
 const PhysicsConfig = require(ConfigsFolder:WaitForChild("PhysicsConfig"))
 const BVHConfig = require(ConfigsFolder:WaitForChild("BVHConfig"))
 const PlayerConfig = require(ConfigsFolder:WaitForChild("PlayerConfig"))
+const ControllerTheoryConfig = require(ConfigsFolder:WaitForChild("ControllerTheoryConfig"))
 
 -- Configs --
 export type SystemsConfigsType = {
@@ -21,6 +22,7 @@ export type SystemsConfigsType = {
 	Physics: typeof(PhysicsConfig),
 	BVH: typeof(BVHConfig),
 	Player: typeof(PlayerConfig),
+	ControllerTheory: typeof(ControllerTheoryConfig),
 	[string]: any,
 }
 
@@ -46,6 +48,9 @@ end
 for Key: string, Value: any in pairs(PlayerConfig) do
 	SystemsConfigs[Key] = Value
 end
+for Key: string, Value: any in pairs(ControllerTheoryConfig) do
+	SystemsConfigs[Key] = Value
+end
 
 SystemsConfigs.Render = RenderConfig
 SystemsConfigs.Camera = CameraConfig
@@ -53,5 +58,6 @@ SystemsConfigs.ECS = ECSConfig
 SystemsConfigs.Physics = PhysicsConfig
 SystemsConfigs.BVH = BVHConfig
 SystemsConfigs.Player = PlayerConfig
+SystemsConfigs.ControllerTheory = ControllerTheoryConfig
 
 return SystemsConfigs

@@ -2,6 +2,12 @@
 --!native
 --!optimize 2
 
+--[=[
+	@class RenderMath.spec
+	TestEZ specifications verifying 2D edge functions, frustum guardband projection,
+	mesh registry shape data, polygon clipping, buffer serialization, and Cube-to-Plane impostor math.
+]=]
+
 return function()
 	const SpecEnv = getfenv() :: {
 		describe: (string, () -> ()) -> (),
@@ -173,6 +179,82 @@ return function()
 			for i = 0, 12, 4 do
 				expect(buffer.readf32(ZBuf, i)).to.equal(0)
 			end
+		end)
+	end)
+
+	describe("5. Cube-to-Plane Perspective Impostor Math", function()
+		it("should select exact single-face Plane impostor modes (1..6) for head-on views and 0 inside cube", function()
+			expect(RenderMath.SelectCubeRenderMode(0, 0, 20, 10, 10, 10, 171, 1.25)).to.equal(1)
+			expect(RenderMath.SelectCubeRenderMode(0, 0, -20, 10, 10, 10, 171, 1.25)).to.equal(2)
+			expect(RenderMath.SelectCubeRenderMode(0, -20, 0, 10, 10, 10, 171, 1.25)).to.equal(3)
+			expect(RenderMath.SelectCubeRenderMode(0, 20, 0, 10, 10, 10, 171, 1.25)).to.equal(4)
+			expect(RenderMath.SelectCubeRenderMode(-20, 0, 0, 10, 10, 10, 171, 1.25)).to.equal(5)
+			expect(RenderMath.SelectCubeRenderMode(20, 0, 0, 10, 10, 10, 171, 1.25)).to.equal(6)
+			expect(RenderMath.SelectCubeRenderMode(0, 0, 0, 10, 10, 10, 171, 1.25)).to.equal(0)
+		end)
+
+		it("should collapse thin slabs and distant sub-pixel cubes to Plane impostors while keeping close corners as Cubes", function()
+			const ThinSlabMode = RenderMath.SelectCubeRenderMode(0, 10, 25, 40, 0.05, 40, 171, 1.25)
+			expect(ThinSlabMode).to.equal(4)
+
+			const DistantTinyCubeMode = RenderMath.SelectCubeRenderMode(90, 90, 120, 1, 1, 1, 171, 1.25)
+			expect(DistantTinyCubeMode >= 1 and DistantTinyCubeMode <= 6).to.equal(true)
+
+			const CloseCornerMode = RenderMath.SelectCubeRenderMode(20, 20, 30, 10, 10, 10, 171, 1.25)
+			expect(CloseCornerMode).to.equal(7)
+		end)
+
+		it("should transform only 4 quad vertices for Plane impostor modes and 8 vertices for full Cubes", function()
+			const PosBuf = buffer.create(12)
+			const SizeBuf = buffer.create(12)
+			const DirBuf = buffer.create(36)
+			const CamVertsBuf = buffer.create(8 * 12)
+
+			BufferHelper.WriteVec3(PosBuf, 0, vector.create(0, 0, -30))
+			BufferHelper.WriteVec3(SizeBuf, 0, vector.create(10, 10, 10))
+			BufferHelper.WriteVec3(DirBuf, 0, vector.create(0, 0, 1))
+			BufferHelper.WriteVec3(DirBuf, 12, vector.create(0, 1, 0))
+			BufferHelper.WriteVec3(DirBuf, 24, vector.create(-1, 0, 0))
+
+			const ImpostorMode: number = RenderMath.TransformCubeOrPlaneImpostor(
+				PosBuf,
+				DirBuf,
+				SizeBuf,
+				0,
+				0,
+				CamVertsBuf,
+				vector.create(0, 0, 0),
+				vector.create(1, 0, 0),
+				vector.create(0, 1, 0),
+				vector.create(0, 0, -1),
+				vector.create(0, 1, 0),
+				171,
+				1.25,
+				1.25,
+				1.25
+			)
+			expect(ImpostorMode).to.equal(1)
+			expect(BufferHelper.ReadVec3(CamVertsBuf, 0).z).to.be.near(25, 1e-4)
+			expect(BufferHelper.ReadVec3(CamVertsBuf, 24).z).to.be.near(25, 1e-4)
+
+			const FullCubeMode: number = RenderMath.TransformCubeOrPlaneImpostor(
+				PosBuf,
+				DirBuf,
+				SizeBuf,
+				0,
+				0,
+				CamVertsBuf,
+				vector.create(20, 20, 0),
+				vector.create(1, 0, 0),
+				vector.create(0, 1, 0),
+				vector.create(0, 0, -1),
+				vector.create(0, 1, 0),
+				171,
+				1.25,
+				2.5,
+				2.5
+			)
+			expect(FullCubeMode).to.equal(7)
 		end)
 	end)
 end

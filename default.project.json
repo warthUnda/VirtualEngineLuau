@@ -24,21 +24,21 @@
           "$path": "src/client"
         },
         "PlayerScriptsLoader": {
-          "$path": "src/character/PlayerScriptsLoader.client.luau"
+          "$path": "src/character/scripts/PlayerScriptsLoader.client.luau"
         },
         "RbxCharacterSounds": {
-          "$path": "src/character/RbxCharacterSounds.client.luau"
+          "$path": "src/character/scripts/RbxCharacterSounds.client.luau"
         },
         "PlayerModule": {
-          "$path": "src/character/PlayerModule.luau"
+          "$path": "src/character/scripts/PlayerModule.luau"
         }
       },
       "StarterCharacterScripts": {
         "Animate": {
-          "$path": "src/character/Animate.client.luau"
+          "$path": "src/character/scripts/Animate.client.luau"
         },
         "Health": {
-          "$path": "src/character/Health.server.luau"
+          "$path": "src/character/scripts/Health.server.luau"
         }
       }
     },

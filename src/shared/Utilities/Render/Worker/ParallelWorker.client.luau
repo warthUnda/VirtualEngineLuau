@@ -24,6 +24,10 @@ const ROW_STRIDE = WIDTH * 4 :: number
 const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
 
 -- Variables --
+local ActiveWidth = WIDTH :: number
+local ActiveHeight = HEIGHT :: number
+local ActiveRowStride = ROW_STRIDE :: number
+local ActiveTotalPixels = TOTAL_PIXELS :: number
 local BandStartY = 0 :: number
 local BandEndY = HEIGHT - 1 :: number
 local PrevLocalDirtyMinY = HEIGHT :: number
@@ -52,8 +56,8 @@ SelfActor:BindToMessageParallel(
 	"Set Band Range",
 	function(NewBandStartY: number, NewBandEndY: number)
 		if PrevLocalDirtyMinY <= PrevLocalDirtyMaxY then
-			BufferHelper.ClearDirtyRows(WIDTH, PrevLocalDirtyMinY, PrevLocalDirtyMaxY, TOTAL_PIXELS, PixelBuffer, ZBuffer)
-			PrevLocalDirtyMinY = HEIGHT
+			BufferHelper.ClearDirtyRows(ActiveWidth, PrevLocalDirtyMinY, PrevLocalDirtyMaxY, ActiveTotalPixels, PixelBuffer, ZBuffer)
+			PrevLocalDirtyMinY = ActiveHeight
 			PrevLocalDirtyMaxY = -1
 		end
 		BandStartY = NewBandStartY
@@ -77,11 +81,24 @@ SelfActor:BindToMessageParallel(
 		ByteCount: number,
 		FrameId: number,
 		DynamicBandStartY: number?,
-		DynamicBandEndY: number?
+		DynamicBandEndY: number?,
+		DynamicWidth: number?,
+		DynamicHeight: number?
 	)
-		if PrevLocalDirtyMinY <= PrevLocalDirtyMaxY then
-			BufferHelper.ClearDirtyRows(WIDTH, PrevLocalDirtyMinY, PrevLocalDirtyMaxY, TOTAL_PIXELS, PixelBuffer, ZBuffer)
-			PrevLocalDirtyMinY = HEIGHT
+		const WorkerStartClock = os.clock() :: number
+		const NextWidth = math.clamp(DynamicWidth or WIDTH, 1, WIDTH) :: number
+		const NextHeight = math.clamp(DynamicHeight or HEIGHT, 1, HEIGHT) :: number
+		if NextWidth ~= ActiveWidth or NextHeight ~= ActiveHeight then
+			BufferHelper.ClearBuffers(TOTAL_PIXELS, PixelBuffer, ZBuffer)
+			ActiveWidth = NextWidth
+			ActiveHeight = NextHeight
+			ActiveRowStride = NextWidth * 4
+			ActiveTotalPixels = NextWidth * NextHeight
+			PrevLocalDirtyMinY = NextHeight
+			PrevLocalDirtyMaxY = -1
+		elseif PrevLocalDirtyMinY <= PrevLocalDirtyMaxY then
+			BufferHelper.ClearDirtyRows(ActiveWidth, PrevLocalDirtyMinY, PrevLocalDirtyMaxY, ActiveTotalPixels, PixelBuffer, ZBuffer)
+			PrevLocalDirtyMinY = ActiveHeight
 			PrevLocalDirtyMaxY = -1
 		end
 
@@ -90,7 +107,7 @@ SelfActor:BindToMessageParallel(
 			BandEndY = DynamicBandEndY
 		end
 
-		local DirtyMinY = HEIGHT :: number
+		local DirtyMinY = ActiveHeight :: number
 		local DirtyMaxY = -1 :: number
 
 		if ByteCount > 0 and BandStartY <= BandEndY then
@@ -100,8 +117,8 @@ SelfActor:BindToMessageParallel(
 				TextureBuffers,
 				TextureWidth,
 				TextureHeight,
-				WIDTH,
-				HEIGHT,
+				ActiveWidth,
+				ActiveHeight,
 				PixelBuffer,
 				ZBuffer,
 				BandStartY,
@@ -115,10 +132,11 @@ SelfActor:BindToMessageParallel(
 			PrevLocalDirtyMinY = ClampedMinY - BandStartY
 			PrevLocalDirtyMaxY = ClampedMaxY - BandStartY
 
-			const DirtyBytes = (ClampedMaxY - ClampedMinY + 1) * ROW_STRIDE :: number
+			const DirtyBytes = (ClampedMaxY - ClampedMinY + 1) * ActiveRowStride :: number
 			const CompactSlice = buffer.create(DirtyBytes) :: buffer
-			buffer.copy(CompactSlice, 0, PixelBuffer, PrevLocalDirtyMinY * ROW_STRIDE, DirtyBytes)
+			buffer.copy(CompactSlice, 0, PixelBuffer, PrevLocalDirtyMinY * ActiveRowStride, DirtyBytes)
 
+			const WorkerElapsed = (os.clock() - WorkerStartClock) :: number
 			ControllerActor:SendMessage(
 				"Return Render Calculations",
 				CompactSlice,
@@ -126,9 +144,11 @@ SelfActor:BindToMessageParallel(
 				BandStartY,
 				BandEndY,
 				ClampedMinY,
-				ClampedMaxY
+				ClampedMaxY,
+				WorkerElapsed
 			)
 		else
+			const WorkerElapsed = (os.clock() - WorkerStartClock) :: number
 			ControllerActor:SendMessage(
 				"Return Render Calculations",
 				EmptyPayload,
@@ -136,7 +156,8 @@ SelfActor:BindToMessageParallel(
 				BandStartY,
 				BandEndY,
 				DirtyMinY,
-				DirtyMaxY
+				DirtyMaxY,
+				WorkerElapsed
 			)
 		end
 	end

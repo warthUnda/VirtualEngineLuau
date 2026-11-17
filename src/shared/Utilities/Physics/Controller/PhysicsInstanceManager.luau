@@ -6,7 +6,11 @@
 const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 
 -- Libraries --
-const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
+const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
+const ControllerInterpreter = require(
+	SharedFolder:WaitForChild("Utilities"):WaitForChild("ControllerTheory"):WaitForChild("Core"):WaitForChild("ControllerInterpreter")
+)
 const PhysicsControllerHelper = require(script.Parent.PhysicsControllerHelper)
 const PhysicsAwakeState = require(script.Parent.PhysicsAwakeState)
 
@@ -149,6 +153,9 @@ end
 	@param DirectionsBuffer buffer -- ECS Directions buffer.
 	@param ActiveFlags buffer? -- Optional ECS active flags buffer.
 	@param ECSDataModule any -- ECS data component interface.
+	@param FrameTick number? -- Optional monotonic physics frame tick for deterministic part striding.
+	@param ActiveDutyPercent number? -- Optional 1..100 active duty percentage from ControllerInterpreter.
+	@param DtCompensationScale number? -- Optional substep delta-time stride scale factor.
 ]=]
 function PhysicsInstanceManager.StepAwakeEntitiesSubstep(
 	EntityCount: number,
@@ -157,10 +164,16 @@ function PhysicsInstanceManager.StepAwakeEntitiesSubstep(
 	SizeBuffer: buffer,
 	DirectionsBuffer: buffer,
 	ActiveFlags: buffer?,
-	ECSDataModule: any
+	ECSDataModule: any,
+	FrameTick: number?,
+	ActiveDutyPercent: number?,
+	DtCompensationScale: number?
 )
 	const DynamicFlags = PhysicsAwakeState.DynamicFlags
 	const AwakeBuf = PhysicsAwakeState.AwakeEntitiesBuffer
+	const EffectiveTick = (FrameTick or 1) :: number
+	const EffectiveDuty = (ActiveDutyPercent or 100) :: number
+	const EffectiveEntityDt = StepDeltaTime * ((DtCompensationScale or 1.0) :: number) :: number
 	local AwakeIndex = 0 :: number
 	while AwakeIndex < PhysicsAwakeState.GetAwakeCount() do
 		const EntityId = buffer.readu32(AwakeBuf, AwakeIndex * 4) :: number
@@ -177,8 +190,13 @@ function PhysicsInstanceManager.StepAwakeEntitiesSubstep(
 			continue
 		end
 
+		if EffectiveDuty < 100 and not ControllerInterpreter.ShouldStepPhysicsEntity(EntityId, EffectiveTick, EffectiveDuty) then
+			AwakeIndex += 1
+			continue
+		end
+
 		PhysicsControllerHelper.StepSingleDynamicObject(
-			EntityId, EntityCount, StepDeltaTime, PositionBuffer, SizeBuffer, DirectionsBuffer, nil,
+			EntityId, EntityCount, EffectiveEntityDt, PositionBuffer, SizeBuffer, DirectionsBuffer, nil,
 			DynamicFlags, PhysicsAwakeState.ObjectGroundedFlags, PhysicsAwakeState.ObjectVelocityBuffer,
 			PhysicsAwakeState.ObjectAngularVelocityBuffer, PhysicsAwakeState.ObjectForceBuffer, PhysicsAwakeState.ObjectInvMassBuffer
 		)

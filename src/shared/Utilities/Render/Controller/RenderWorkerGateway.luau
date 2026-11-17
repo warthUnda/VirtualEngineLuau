@@ -75,6 +75,8 @@ function RenderWorkerGateway.CreateDisplayGui(
 	CreatedLabel.Size = UDim2.fromScale(1, 1)
 	CreatedLabel.BackgroundTransparency = 1
 	CreatedLabel.BorderSizePixel = 0
+	CreatedLabel.ImageRectOffset = Vector2.zero
+	CreatedLabel.ImageRectSize = Vector2.new(Width, Height)
 	CreatedLabel.Parent = CreatedGui
 
 	const EditableImg = AssetService:CreateEditableImage({ Size = Vector2.new(Width, Height) }) :: EditableImage
@@ -96,23 +98,23 @@ end
 	@param BandEnds { number } -- Per-worker dynamic band end Y array.
 	@param EditableImg EditableImage -- Bound EditableImage receiving composited frames.
 	@param BindWorkers boolean -- True to bind Controller Actor worker messaging; false for isolated GUI specs.
-	@param OnWorkerReturned (FrameId: number, EditableImage: EditableImage) -> () -- Frame-band completion callback.
-	@param GetCurrentFrame () -> number -- Accessor returning the active frame ID.
+	@param OnWorkerReturned (FrameId: number, WorkerCpuTime: number, CompositeCpuTime: number) -> () -- Frame-band completion callback.
+	@param GetCurrentFrameState () -> (number, number, buffer) -- Accessor returning live (FrameId, Width, FinalPixel).
 	@return { Actor } -- Resolved parallel worker Actors (empty when BindWorkers is false).
 ]=]
 function RenderWorkerGateway.InitializeWorkers(
 	Width: number,
 	Height: number,
 	WorkerCapacity: number,
-	FinalPixel: buffer,
+	_FinalPixel: buffer,
 	BufferTable: { buffer },
 	WorkerOffsets: { number },
 	BandStarts: { number },
 	BandEnds: { number },
-	EditableImg: EditableImage,
+	_EditableImg: EditableImage,
 	BindWorkers: boolean,
-	OnWorkerReturned: (FrameId: number, EditableImage: EditableImage) -> (),
-	GetCurrentFrame: () -> number
+	OnWorkerReturned: (FrameId: number, WorkerCpuTime: number, CompositeCpuTime: number) -> (),
+	GetCurrentFrameState: () -> (number, number, buffer)
 ): { Actor }
 	if not BindWorkers then
 		for i = 1, ACTOR_COUNT do
@@ -162,23 +164,27 @@ function RenderWorkerGateway.InitializeWorkers(
 			BandStartY: number,
 			BandEndY: number,
 			DirtyMinY: number,
-			DirtyMaxY: number
+			DirtyMaxY: number,
+			WorkerComputeSeconds: number?
 		)
-			if FrameId ~= GetCurrentFrame() then
+			const ActiveFrameId: number, ActiveWidth: number, ActiveFinalPixel: buffer = GetCurrentFrameState()
+			if FrameId ~= ActiveFrameId then
 				return
 			end
 
+			const CompositeStart = os.clock() :: number
 			BufferHelper.CompositeWorkerBand(
-				FinalPixel,
+				ActiveFinalPixel,
 				WorkerPixelBuffer,
-				Width,
+				ActiveWidth,
 				BandStartY,
 				BandEndY,
 				DirtyMinY,
 				DirtyMaxY,
 				true
 			)
-			OnWorkerReturned(FrameId, EditableImg)
+			const CompositeElapsed = (os.clock() - CompositeStart) :: number
+			OnWorkerReturned(FrameId, (WorkerComputeSeconds or 0) :: number, CompositeElapsed)
 		end
 	)
 
@@ -208,6 +214,8 @@ end
 	@param BandStarts { number } -- Per-worker band start Y array.
 	@param BandEnds { number } -- Per-worker band end Y array.
 	@param FrameId number -- Monotonic render frame ID.
+	@param ActiveWidth number? -- Optional active viewport width override.
+	@param ActiveHeight number? -- Optional active viewport height override.
 ]=]
 function RenderWorkerGateway.DispatchWorkerBatches(
 	WorkerActors: { Actor },
@@ -216,7 +224,9 @@ function RenderWorkerGateway.DispatchWorkerBatches(
 	WorkerCapacity: number,
 	BandStarts: { number },
 	BandEnds: { number },
-	FrameId: number
+	FrameId: number,
+	ActiveWidth: number?,
+	ActiveHeight: number?
 )
 	for i, TargetActor: Actor in ipairs(WorkerActors) do
 		const ByteCount = WorkerOffsets[i] :: number
@@ -237,7 +247,9 @@ function RenderWorkerGateway.DispatchWorkerBatches(
 			ByteCount,
 			FrameId,
 			BandStarts[i],
-			BandEnds[i]
+			BandEnds[i],
+			ActiveWidth,
+			ActiveHeight
 		)
 	end
 end

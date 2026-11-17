@@ -1,0 +1,205 @@
+Date : 2026-11-17 02:18:17
+Directory : c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src
+Total : 124 files,  13014 codes, 1613 comments, 2425 blanks, all 17052 lines
+
+Languages
++----------+------------+------------+------------+------------+------------+
+| language | files      | code       | comment    | blank      | total      |
++----------+------------+------------+------------+------------+------------+
+| Luau     |        118 |     12,803 |      1,613 |      2,364 |     16,780 |
+| Markdown |          6 |        211 |          0 |         61 |        272 |
++----------+------------+------------+------------+------------+------------+
+
+Directories
++------------------------------------------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| path                                                                                                                                     | files      | code       | comment    | blank      | total      |
++------------------------------------------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| .                                                                                                                                        |        124 |     13,014 |      1,613 |      2,425 |     17,052 |
+| character                                                                                                                                |          5 |          6 |         20 |         11 |         37 |
+| character\scripts                                                                                                                        |          5 |          6 |         20 |         11 |         37 |
+| client                                                                                                                                   |         20 |      1,463 |        224 |        332 |      2,019 |
+| client (Files)                                                                                                                           |          3 |        112 |         44 |         38 |        194 |
+| client\Objects                                                                                                                           |          6 |        428 |         80 |         95 |        603 |
+| client\Objects\ObjectStorage                                                                                                             |          1 |          3 |          5 |          4 |         12 |
+| client\Objects\Replication                                                                                                               |          5 |        425 |         75 |         91 |        591 |
+| client\Tests                                                                                                                             |         10 |        912 |         90 |        193 |      1,195 |
+| client\Tests (Files)                                                                                                                     |          3 |        256 |         33 |         55 |        344 |
+| client\Tests\Specs                                                                                                                       |          7 |        656 |         57 |        138 |        851 |
+| client\scripts                                                                                                                           |          1 |         11 |         10 |          6 |         27 |
+| server                                                                                                                                   |         23 |      2,504 |        232 |        509 |      3,245 |
+| server\Objects                                                                                                                           |         11 |        880 |        128 |        188 |      1,196 |
+| server\Objects\ObjectsECS                                                                                                                |          4 |        255 |         42 |         67 |        364 |
+| server\Objects\ObjectsECS (Files)                                                                                                        |          3 |        252 |         37 |         63 |        352 |
+| server\Objects\ObjectsECS\Storage                                                                                                        |          1 |          3 |          5 |          4 |         12 |
+| server\Objects\Player                                                                                                                    |          1 |          4 |         10 |          6 |         20 |
+| server\Objects\Replication                                                                                                               |          6 |        621 |         76 |        115 |        812 |
+| server\Objects\Replication (Files)                                                                                                       |          1 |         22 |          0 |          7 |         29 |
+| server\Objects\Replication\Controller                                                                                                    |          2 |        141 |         29 |         35 |        205 |
+| server\Objects\Replication\Core                                                                                                          |          3 |        458 |         47 |         73 |        578 |
+| server\Tests                                                                                                                             |         12 |      1,624 |        104 |        321 |      2,049 |
+| server\Tests (Files)                                                                                                                     |          3 |        280 |         33 |         60 |        373 |
+| server\Tests\Specs                                                                                                                       |          9 |      1,344 |         71 |        261 |      1,676 |
+| shared                                                                                                                                   |         76 |      9,041 |      1,137 |      1,573 |     11,751 |
+| shared (Files)                                                                                                                           |          3 |        266 |         30 |         39 |        335 |
+| shared\Configs                                                                                                                           |          6 |        117 |        134 |        130 |        381 |
+| shared\ECS                                                                                                                               |          4 |        599 |         52 |         87 |        738 |
+| shared\Utilities                                                                                                                         |         63 |      8,059 |        921 |      1,317 |     10,297 |
+| shared\Utilities (Files)                                                                                                                 |          1 |        118 |         19 |         26 |        163 |
+| shared\Utilities\BVH                                                                                                                     |          9 |      1,047 |        101 |        189 |      1,337 |
+| shared\Utilities\Physics                                                                                                                 |         12 |      1,583 |        182 |        270 |      2,035 |
+| shared\Utilities\Physics (Files)                                                                                                         |          1 |         42 |          0 |         13 |         55 |
+| shared\Utilities\Physics\Controller                                                                                                      |          5 |        826 |         92 |        123 |      1,041 |
+| shared\Utilities\Physics\Core                                                                                                            |          5 |        592 |         65 |        112 |        769 |
+| shared\Utilities\Physics\PhysicsLibrary                                                                                                  |          1 |        123 |         25 |         22 |        170 |
+| shared\Utilities\Player                                                                                                                  |          8 |      1,158 |        126 |        176 |      1,460 |
+| shared\Utilities\Player (Files)                                                                                                          |          1 |         30 |          0 |         10 |         40 |
+| shared\Utilities\Player\Controller                                                                                                       |          3 |        637 |         62 |         86 |        785 |
+| shared\Utilities\Player\Core                                                                                                             |          3 |        399 |         46 |         64 |        509 |
+| shared\Utilities\Player\Core\PlayerService                                                                                               |          3 |        399 |         46 |         64 |        509 |
+| shared\Utilities\Player\PlayerLibrary                                                                                                    |          1 |         92 |         18 |         16 |        126 |
+| shared\Utilities\Render                                                                                                                  |         33 |      4,153 |        493 |        656 |      5,302 |
+| shared\Utilities\Render (Files)                                                                                                          |          1 |         40 |          0 |         10 |         50 |
+| shared\Utilities\Render\Camera                                                                                                           |          9 |        834 |        138 |        147 |      1,119 |
+| shared\Utilities\Render\Camera (Files)                                                                                                   |          8 |        765 |        118 |        131 |      1,014 |
+| shared\Utilities\Render\Camera\CameraLibrary                                                                                             |          1 |         69 |         20 |         16 |        105 |
+| shared\Utilities\Render\Controller                                                                                                       |          4 |        687 |         71 |        102 |        860 |
+| shared\Utilities\Render\Core                                                                                                             |         12 |      1,987 |        187 |        282 |      2,456 |
+| shared\Utilities\Render\Core (Files)                                                                                                     |         10 |      1,544 |        150 |        227 |      1,921 |
+| shared\Utilities\Render\Core\RenderService                                                                                               |          2 |        443 |         37 |         55 |        535 |
+| shared\Utilities\Render\ECSStorage                                                                                                       |          1 |          3 |          5 |          4 |         12 |
+| shared\Utilities\Render\RenderLibrary                                                                                                    |          1 |         72 |         22 |         18 |        112 |
+| shared\Utilities\Render\Scene                                                                                                            |          2 |        164 |         20 |         27 |        211 |
+| shared\Utilities\Render\Texture                                                                                                          |          2 |        256 |         36 |         46 |        338 |
+| shared\Utilities\Render\Worker                                                                                                           |          1 |        110 |         14 |         20 |        144 |
++------------------------------------------------------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+
+Files
++------------------------------------------------------------------------------------------------------------------------------------------+----------+------------+------------+------------+------------+
+| filename                                                                                                                                 | language | code       | comment    | blank      | total      |
++------------------------------------------------------------------------------------------------------------------------------------------+----------+------------+------------+------------+------------+
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\character\scripts\Animate.client.luau                                 | Luau     |          1 |          4 |          2 |          7 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\character\scripts\Health.server.luau                                  | Luau     |          1 |          4 |          2 |          7 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\character\scripts\PlayerModule.luau                                   | Luau     |          2 |          4 |          3 |          9 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\character\scripts\PlayerScriptsLoader.client.luau                     | Luau     |          1 |          4 |          2 |          7 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\character\scripts\RbxCharacterSounds.client.luau                      | Luau     |          1 |          4 |          2 |          7 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\Objects\ObjectStorage\init.luau                                | Luau     |          3 |          5 |          4 |         12 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\Objects\Replication\ClientRemotes.luau                         | Luau     |         40 |         14 |         12 |         66 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\Objects\Replication\ReplicationReceiver.client.luau            | Luau     |         38 |         15 |         15 |         68 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\Objects\Replication\ReplicationReceiverHelper.luau             | Luau     |        198 |         17 |         34 |        249 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\Objects\Replication\ReplicationSender.client.luau              | Luau     |         23 |         12 |          9 |         44 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\Objects\Replication\ReplicationSenderHelper.luau               | Luau     |        126 |         17 |         21 |        164 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\RenderBootstrap.luau                                           | Luau     |         46 |         18 |         19 |         83 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\Starter.client.luau                                            | Luau     |         33 |         11 |          9 |         53 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\Tests\ClientTestRunner.client.luau                             | Luau     |         39 |          9 |         13 |         61 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\Tests\Specs\Camera.spec.luau                                   | Luau     |        121 |          7 |         27 |        155 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\Tests\Specs\Cleaner.spec.luau                                  | Luau     |         67 |          8 |         21 |         96 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\Tests\Specs\ClientInput.spec.luau                              | Luau     |         52 |          4 |         12 |         68 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\Tests\Specs\PlayerClient.spec.luau                             | Luau     |         76 |         12 |         18 |        106 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\Tests\Specs\RenderService.spec.luau                            | Luau     |        103 |          7 |         23 |        133 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\Tests\Specs\ReplicationReceiver.spec.luau                      | Luau     |        143 |         11 |         19 |        173 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\Tests\Specs\ReplicationSender.spec.luau                        | Luau     |         94 |          8 |         18 |        120 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\Tests\TestHarness.luau                                         | Luau     |        158 |         13 |         31 |        202 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\Tests\TestHelper.luau                                          | Luau     |         59 |         11 |         11 |         81 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\main.client.luau                                               | Luau     |         33 |         15 |         10 |         58 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\client\scripts\EnableRendererGui.client.luau                          | Luau     |         11 |         10 |          6 |         27 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Objects\ObjectsECS\ECS.md                                      | Markdown |         39 |          0 |         10 |         49 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Objects\ObjectsECS\ECSBuilder.server.luau                      | Luau     |         27 |         14 |         12 |         53 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Objects\ObjectsECS\ECSBuilderHelper.luau                       | Luau     |        186 |         23 |         41 |        250 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Objects\ObjectsECS\Storage\init.luau                           | Luau     |          3 |          5 |          4 |         12 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Objects\Player\PlayerExecuter.server.luau                      | Luau     |          4 |         10 |          6 |         20 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Objects\Replication\Controller\ReplicatorExecuter.server.luau  | Luau     |         32 |         13 |         12 |         57 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Objects\Replication\Controller\ServerReplicationGateway.luau   | Luau     |        109 |         16 |         23 |        148 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Objects\Replication\Core\EntityVersionTracker.luau             | Luau     |        133 |         15 |         24 |        172 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Objects\Replication\Core\PlayerCuller.luau                     | Luau     |        159 |         15 |         26 |        200 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Objects\Replication\Core\PlayerFunctions.luau                  | Luau     |        166 |         17 |         23 |        206 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Objects\Replication\Replication.md                             | Markdown |         22 |          0 |          7 |         29 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Tests\Specs\BVH.spec.luau                                      | Luau     |        114 |          6 |         31 |        151 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Tests\Specs\ECS.spec.luau                                      | Luau     |        180 |         11 |         39 |        230 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Tests\Specs\Physics.spec.luau                                  | Luau     |        137 |          6 |         29 |        172 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Tests\Specs\Player.spec.luau                                   | Luau     |        148 |         15 |         35 |        198 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Tests\Specs\RenderMath.spec.luau                               | Luau     |        146 |          6 |         27 |        179 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Tests\Specs\RenderTexture.spec.luau                            | Luau     |        167 |          6 |         29 |        202 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Tests\Specs\Replication.spec.luau                              | Luau     |        124 |          8 |         21 |        153 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Tests\Specs\ViewCulling.spec.luau                              | Luau     |        116 |          7 |         21 |        144 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Tests\Specs\WorkerPartition.spec.luau                          | Luau     |        212 |          6 |         29 |        247 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Tests\TestHarness.luau                                         | Luau     |        158 |         13 |         31 |        202 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Tests\TestHelper.luau                                          | Luau     |         85 |         11 |         16 |        112 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\server\Tests\TestRunner.server.luau                                   | Luau     |         37 |          9 |         13 |         59 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Configs\BVHConfig.luau                                         | Luau     |          5 |          6 |          6 |         17 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Configs\CameraConfig.luau                                      | Luau     |         10 |         15 |         14 |         39 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Configs\ECSConfig.luau                                         | Luau     |         27 |         28 |         27 |         82 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Configs\PhysicsConfig.luau                                     | Luau     |         31 |         32 |         32 |         95 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Configs\PlayerConfig.luau                                      | Luau     |         10 |         15 |         14 |         39 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Configs\RenderConfig.luau                                      | Luau     |         34 |         38 |         37 |        109 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\DynamicObjectsMain.luau                                        | Luau     |        182 |         15 |         24 |        221 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\ECSMain.luau                                                   | Luau     |         42 |          7 |          7 |         56 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\ECS\ECSBitfield.luau                                           | Luau     |        175 |         16 |         24 |        215 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\ECS\ECSComponents.luau                                         | Luau     |        195 |         18 |         22 |        235 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\ECS\ECSStorageFactory.luau                                     | Luau     |        140 |         13 |         28 |        181 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\ECS\ECSTypes.luau                                              | Luau     |         89 |          5 |         13 |        107 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\SystemsConfigs.luau                                            | Luau     |         42 |          8 |          8 |         58 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\BVH\BVH.md                                           | Markdown |         38 |          0 |         11 |         49 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\BVH\BVHDynamicSweep.luau                             | Luau     |        137 |         10 |         15 |        162 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\BVH\BVHHelper.luau                                   | Luau     |         80 |         14 |         16 |        110 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\BVH\BVHMath.luau                                     | Luau     |        160 |         14 |         29 |        203 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\BVH\BVHQuery.luau                                    | Luau     |        135 |         14 |         24 |        173 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\BVH\BVHRaycast.luau                                  | Luau     |        149 |         12 |         27 |        188 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\BVH\BVHState.luau                                    | Luau     |        213 |         14 |         39 |        266 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\BVH\BVHSubtreeBuilder.luau                           | Luau     |        112 |         12 |         19 |        143 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\BVH\init.luau                                        | Luau     |         23 |         11 |          9 |         43 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\EventBus.luau                                        | Luau     |        118 |         19 |         26 |        163 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Physics\Controller\PhysicsAwakeState.luau            | Luau     |        112 |         19 |         18 |        149 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Physics\Controller\PhysicsController.luau            | Luau     |        253 |         26 |         35 |        314 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Physics\Controller\PhysicsControllerHelper.luau      | Luau     |        153 |         15 |         23 |        191 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Physics\Controller\PhysicsInputGateway.luau          | Luau     |        148 |         17 |         26 |        191 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Physics\Controller\PhysicsInstanceManager.luau       | Luau     |        160 |         15 |         21 |        196 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Physics\Core\PhysicsMath.luau                        | Luau     |        125 |         16 |         24 |        165 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Physics\Core\PhysicsMathHelper.luau                  | Luau     |         61 |         12 |         18 |         91 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Physics\Core\PhysicsRotationMath.luau                | Luau     |        134 |         13 |         29 |        176 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Physics\Core\PhysicsSATMath.luau                     | Luau     |        110 |          9 |         17 |        136 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Physics\Core\PlayerPhysics.luau                      | Luau     |        162 |         15 |         24 |        201 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Physics\Physics.md                                   | Markdown |         42 |          0 |         13 |         55 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Physics\PhysicsLibrary\init.luau                     | Luau     |        123 |         25 |         22 |        170 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Player\Controller\PlayerClientSync.luau              | Luau     |        221 |         18 |         33 |        272 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Player\Controller\PlayerController.luau              | Luau     |        276 |         26 |         34 |        336 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Player\Controller\PlayerControllerHelper.luau        | Luau     |        140 |         18 |         19 |        177 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Player\Core\PlayerService\PlayerRecordMethods.luau   | Luau     |        180 |         18 |         31 |        229 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Player\Core\PlayerService\PlayerServiceHelper.luau   | Luau     |         87 |         15 |         19 |        121 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Player\Core\PlayerService\init.luau                  | Luau     |        132 |         13 |         14 |        159 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Player\Player.md                                     | Markdown |         30 |          0 |         10 |         40 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Player\PlayerLibrary\init.luau                       | Luau     |         92 |         18 |         16 |        126 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Camera\CameraHelper.luau                      | Luau     |         54 |         15 |         12 |         81 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Camera\CameraInputMath.luau                   | Luau     |         97 |         11 |         17 |        125 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Camera\CameraLibrary\init.luau                | Luau     |         69 |         20 |         16 |        105 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Camera\CameraMethods.luau                     | Luau     |        115 |         23 |         21 |        159 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Camera\CameraPresets.luau                     | Luau     |        119 |          6 |          7 |        132 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Camera\CameraRigHelper.luau                   | Luau     |        149 |         13 |         23 |        185 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Camera\CameraService.luau                     | Luau     |         93 |         17 |         18 |        128 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Camera\CameraStepRunner.luau                  | Luau     |        101 |         18 |         22 |        141 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Camera\CameraStore.luau                       | Luau     |         37 |         15 |         11 |         63 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Controller\RenderController.luau              | Luau     |         73 |         23 |         20 |        116 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Controller\RenderControllerHelper.luau        | Luau     |        241 |         16 |         27 |        284 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Controller\RenderWorkerGateway.luau           | Luau     |        201 |         18 |         27 |        246 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Controller\WorkerPartitionHelper.luau         | Luau     |        172 |         14 |         28 |        214 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Core\BufferHelper.luau                        | Luau     |        131 |         18 |         25 |        174 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Core\MathModule.luau                          | Luau     |        127 |         15 |         19 |        161 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Core\PolygonClipMath.luau                     | Luau     |        170 |         13 |         24 |        207 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Core\RasterizerMath.luau                      | Luau     |        212 |         10 |         26 |        248 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Core\RenderMath.luau                          | Luau     |        200 |         14 |         25 |        239 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Core\RenderService\RenderInstanceMethods.luau | Luau     |        282 |         22 |         40 |        344 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Core\RenderService\init.luau                  | Luau     |        161 |         15 |         15 |        191 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Core\VerticeCurvedHelper.luau                 | Luau     |        128 |         11 |         21 |        160 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Core\VerticeFile.luau                         | Luau     |         55 |         18 |         15 |         88 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Core\VerticeHelper.luau                       | Luau     |        171 |         16 |         22 |        209 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Core\ViewCulling.luau                         | Luau     |        208 |         17 |         26 |        251 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Core\ViewObserverCodec.luau                   | Luau     |        142 |         18 |         24 |        184 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\ECSStorage\init.luau                          | Luau     |          3 |          5 |          4 |         12 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Render.md                                     | Markdown |         40 |          0 |         10 |         50 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\RenderLibrary\init.luau                       | Luau     |         72 |         22 |         18 |        112 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Scene\CleanerHelper.luau                      | Luau     |         22 |          9 |          5 |         36 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Scene\RendererCleaner.client.luau             | Luau     |        142 |         11 |         22 |        175 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Texture\TextureHelper.luau                    | Luau     |         59 |         11 |         16 |         86 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Texture\TextureTable.luau                     | Luau     |        197 |         25 |         30 |        252 |
+| c:\Users\Startklar\Documents\Development\Roblox\CustomRenderer\src\shared\Utilities\Render\Worker\ParallelWorker.client.luau             | Luau     |        110 |         14 |         20 |        144 |
+| Total                                                                                                                                    |          |     13,014 |      1,613 |      2,425 |     17,052 |
++------------------------------------------------------------------------------------------------------------------------------------------+----------+------------+------------+------------+------------+

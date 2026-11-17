@@ -180,9 +180,11 @@ function WorkerPartitionHelper.DispatchStagedTriangles(
 	RowToWorker: buffer,
 	WorkerOffsets: { number },
 	BufferTable: { buffer },
-	WorkerBufferCapacity: number
+	WorkerBufferCapacity: number,
+	ActiveHeight: number?
 )
-	const MaxRow = buffer.len(RowToWorker) - 1 :: number
+	const BufferMaxRow = buffer.len(RowToWorker) - 1 :: number
+	const MaxRow = if ActiveHeight ~= nil then math.min(ActiveHeight - 1, BufferMaxRow) else BufferMaxRow :: number
 	if MaxRow < 0 or TriangleCount <= 0 then
 		return
 	end

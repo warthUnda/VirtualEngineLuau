@@ -60,6 +60,7 @@ For in-depth architectural mechanisms, mathematical formulations, and API specif
 | **Contiguous Memory ECS** | [`ECS.md`](file:///C:/Users/Startklar/Documents/Development/Roblox/CustomRenderer/src/server/Objects/ObjectsECS/ECS.md) | Flat linear byte buffer layout, 32-bit property bitfield packing, and $O(1)$ free-list entity slot recycling. |
 | **Replication & Streaming** | [`Replication.md`](file:///C:/Users/Startklar/Documents/Development/Roblox/CustomRenderer/src/server/Objects/Replication/Replication.md) | Observer view-cone culling, binary delta buffer compression, and persistent client-to-server slot ingestion. |
 | **Player Lifecycle Service** | [`Player.md`](file:///C:/Users/Startklar/Documents/Development/Roblox/CustomRenderer/src/shared/Utilities/Player/Player.md) | Renderable ECS player entity registration, `DynamicObjectsList` OOP linking, 20-byte binary transform sync, and local self-collision suppression. |
+| **Control-Theory Resource Orchestrator** | [`ControllerTheory.md`](file:///C:/Users/Startklar/Documents/Development/Roblox/CustomRenderer/src/shared/Utilities/ControllerTheory/ControllerTheory.md) | Closed-loop 60 FPS frame-budget PI/PD controller (60% Renderer / 40% Physics), residual `OtherSystemsFrameTime - TargetFrameTime` math, dynamic resolution scaling, and deterministic physics part striding. |
 
 ---
 
@@ -78,9 +79,9 @@ The codebase strictly follows standard architectural roles across directories:
 The project includes dual-boundary automated test coverage executable directly within Roblox Studio or via TestEZ:
 
 - **Server Test Suite:** [`src/server/Tests/TestRunner.server.luau`](file:///C:/Users/Startklar/Documents/Development/Roblox/CustomRenderer/src/server/Tests/TestRunner.server.luau)
-  - Specs: `BVH.spec.luau`, `ECS.spec.luau`, `Physics.spec.luau`, `Player.spec.luau`, `RenderMath.spec.luau`, `RenderTexture.spec.luau`, `Replication.spec.luau`, `ViewCulling.spec.luau`, `WorkerPartition.spec.luau`.
+  - Specs: `BVH.spec.luau`, `ControllerTheory.spec.luau`, `ECS.spec.luau`, `Physics.spec.luau`, `Player.spec.luau`, `RenderMath.spec.luau`, `RenderTexture.spec.luau`, `Replication.spec.luau`, `ViewCulling.spec.luau`, `WorkerPartition.spec.luau`.
 - **Client Test Suite:** [`src/client/Tests/ClientTestRunner.client.luau`](file:///C:/Users/Startklar/Documents/Development/Roblox/CustomRenderer/src/client/Tests/ClientTestRunner.client.luau)
-  - Specs: `Camera.spec.luau`, `Cleaner.spec.luau`, `ClientInput.spec.luau`, `PlayerClient.spec.luau`, `ReplicationReceiver.spec.luau`.
+  - Specs: `Camera.spec.luau`, `Cleaner.spec.luau`, `ClientInput.spec.luau`, `ControllerTheoryClient.spec.luau`, `PlayerClient.spec.luau`, `RenderService.spec.luau`, `ReplicationReceiver.spec.luau`, `ReplicationSender.spec.luau`.
 
 ---
 

@@ -129,4 +129,57 @@ return function()
 			MountContainer:Destroy()
 		end)
 	end)
+
+	describe("2. Renderer Cube-to-Plane Perspective Impostor Fast Path", function()
+		it("should render head-on Cubes and thin slabs as 2-triangle Plane impostors and upgrade close corners to 6-triangle Cubes", function()
+			const IsolatedStorage = ECSMain.CreateStorage(false)
+			const PosBuf = IsolatedStorage.PositionData.GetData()
+			const SizeBuf = IsolatedStorage.SizeData.GetData()
+			const DirBuf = IsolatedStorage.DirectionsData.GetData()
+			const VisBuf = IsolatedStorage.VisualData.GetData()
+			const PropBuf = IsolatedStorage.PropertiesData.GetData()
+
+			const CubeId = IsolatedStorage.ECSData.RegisterEntity()
+			const Offset = (CubeId - 1) * 12 :: number
+			const DirOffset = (CubeId - 1) * 36 :: number
+			const PropOffset = (CubeId - 1) * 4 :: number
+
+			ECSMain.CreateVector3Layout(PosBuf, Offset, 0, 0, -30)
+			ECSMain.CreateVector3Layout(SizeBuf, Offset, 10, 10, 10)
+			ECSMain.CreateDirectionsLayout(DirBuf, DirOffset, 0, 0, -1, 0, 1, 0, 1, 0, 0)
+			ECSMain.CreateVisualLayout(VisBuf, PropOffset, 200, 150, 100, 255)
+			ECSMain.CreatePropertiesLayout(PropBuf, PropOffset, true, true, true, 0, 0, 0)
+
+			const CustomCam = CameraLibrary.New(CFrame.new(0, 0, 0), 70)
+			const MountContainer = Instance.new("Folder")
+			const RendererObj = RenderService.New({
+				Width = 340,
+				Height = 240,
+				Storage = IsolatedStorage,
+				Camera = CustomCam,
+				GuiName = "SpecImpostorGui",
+			})
+			RendererObj:Init(MountContainer, false)
+
+			-- 1. Head-on view: only +Z face is visible -> 2 triangles staged via Plane impostor
+			RendererObj:DrawFrame()
+			expect(RendererObj.LastStagedTriangleCount).to.equal(2)
+
+			-- 2. Corner view: +X, +Y, and +Z faces are all thick on screen -> upgrades to 6 triangles
+			CustomCam:SetCFrame(CFrame.lookAt(Vector3.new(20, 20, 0), Vector3.new(0, 0, -30)))
+			RendererObj:DrawFrame()
+			expect(RendererObj.LastStagedTriangleCount).to.equal(6)
+
+			-- 3. Thin slab viewed obliquely: -Z 0.05-stud edge is sub-pixel -> collapses to 2-triangle Plane impostor
+			ECSMain.CreateVector3Layout(PosBuf, Offset, 0, 0, 0)
+			ECSMain.CreateVector3Layout(SizeBuf, Offset, 12, 0.05, 12)
+			CustomCam:SetCFrame(CFrame.lookAt(Vector3.new(0, 10, 25), Vector3.new(0, 0, 0)))
+			RendererObj:DrawFrame()
+			expect(RendererObj.LastStagedTriangleCount).to.equal(2)
+
+			RendererObj:Destroy()
+			CustomCam:Destroy()
+			MountContainer:Destroy()
+		end)
+	end)
 end

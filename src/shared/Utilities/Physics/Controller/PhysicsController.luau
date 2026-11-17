@@ -12,11 +12,14 @@ const IS_CLIENT = RunService:IsClient() :: boolean
 const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
 const UtilitiesFolder = SharedFolder:WaitForChild("Utilities")
 const PhysicsFolder = UtilitiesFolder:WaitForChild("Physics")
+const ControllerTheoryFolder = UtilitiesFolder:WaitForChild("ControllerTheory")
 const RequireAny = require :: any
 
 -- Libraries --
 const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 const BVH = require(UtilitiesFolder:WaitForChild("BVH"))
+const ResourceController = require(ControllerTheoryFolder:WaitForChild("Controller"):WaitForChild("ResourceController"))
+const ControllerInterpreter = require(ControllerTheoryFolder:WaitForChild("Core"):WaitForChild("ControllerInterpreter"))
 const PhysicsMath = require(PhysicsFolder:WaitForChild("Core"):WaitForChild("PhysicsMath"))
 const PlayerPhysics = require(PhysicsFolder:WaitForChild("Core"):WaitForChild("PlayerPhysics"))
 const PhysicsControllerHelper = require(script.Parent.PhysicsControllerHelper)
@@ -35,6 +38,7 @@ const MAX_ENTITIES = SystemsConfigs.ECSMaxEntities :: number
 
 -- Variables --
 local Initialized = false :: boolean
+local PhysicsFrameTick = 0 :: number
 local SpawnPosX: number, SpawnPosY: number, SpawnPosZ: number = DEFAULT_SPAWN.X, DEFAULT_SPAWN.Y, DEFAULT_SPAWN.Z
 local PlayerPosX: number, PlayerPosY: number, PlayerPosZ: number = DEFAULT_SPAWN.X, DEFAULT_SPAWN.Y, DEFAULT_SPAWN.Z
 local PlayerVelX: number, PlayerVelY: number, PlayerVelZ: number = 0, 0, 0
@@ -167,13 +171,19 @@ end
 function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 	if not Initialized then PhysicsController.InitializePhysics() end
 
+	const PhysicsStartClock = os.clock() :: number
 	const PositionBuffer, SizeBuffer, DirectionsBuffer = ECSPositionBuffer, ECSSizeBuffer, ECSDirectionsBuffer
 	const EntityCount = if ECSDataModule then math.min(ECSDataModule.GetCounts().EntityECSCount :: number, MAX_ENTITIES) else 0 :: number
 	if not PositionBuffer or not SizeBuffer or not DirectionsBuffer or EntityCount <= 0 then
 		PendingWishX, PendingWishZ, PendingMaxScale, PendingJumpRequested = 0, 0, 0, false
 		PhysicsAwakeState.FlushForces()
+		ResourceController.ReportPhysicsFeedback(os.clock() - PhysicsStartClock)
 		return
 	end
+
+	PhysicsFrameTick += 1
+	const ActiveDutyPercent: number, _EffectiveStride: number, DtCompensationScale: number =
+		ControllerInterpreter.InterpretPhysics(ResourceController.GetPhysicsScore())
 
 	PendingWishX, PendingWishZ, PendingMaxScale, PendingJumpRequested =
 		PhysicsControllerHelper.SampleKeyboardInput(PendingWishX, PendingWishZ, PendingMaxScale, PendingJumpRequested)
@@ -209,12 +219,16 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 		end
 
 		PhysicsInstanceManager.StepAwakeEntitiesSubstep(
-			EntityCount, StepDeltaTime, PositionBuffer, SizeBuffer, DirectionsBuffer, ECSActiveFlags, ECSDataModule
+			EntityCount, StepDeltaTime, PositionBuffer, SizeBuffer, DirectionsBuffer, ECSActiveFlags, ECSDataModule,
+			PhysicsFrameTick, ActiveDutyPercent, DtCompensationScale
 		)
 	end
 
 	PhysicsAwakeState.FlushForces()
-	if not IS_CLIENT then return end
+	if not IS_CLIENT then
+		ResourceController.ReportPhysicsFeedback(os.clock() - PhysicsStartClock)
+		return
+	end
 
 	if PlayerPosY < VOID_RESET_Y then
 		PlayerPosX, PlayerPosY, PlayerPosZ = SpawnPosX, SpawnPosY, SpawnPosZ
@@ -226,6 +240,7 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 	elseif HostRootPart then
 		HostRootPart = nil
 	end
+	ResourceController.ReportPhysicsFeedback(os.clock() - PhysicsStartClock)
 end
 
 --[=[

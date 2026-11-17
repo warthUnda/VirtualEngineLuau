@@ -115,11 +115,18 @@ function RenderControllerHelper.SubmitFace(
 	TextureId: number,
 	FocalLength: number,
 	GuardBandX: number,
-	GuardBandY: number
+	GuardBandY: number,
+	ViewportWidth: number?,
+	ViewportHeight: number?
 ): number
 	if StagedTriangleCount >= MaxStagedTriangles then
 		return StagedTriangleCount
 	end
+
+	const ActiveWidth = (ViewportWidth or WIDTH) :: number
+	const ActiveHeight = (ViewportHeight or HEIGHT) :: number
+	const ActiveHalfWidth = if ViewportWidth then ViewportWidth * 0.5 else HALF_WIDTH :: number
+	const ActiveHalfHeight = if ViewportHeight then ViewportHeight * 0.5 else HALF_HEIGHT :: number
 
 	const ClippedVertexCount = if V3ByteOffset >= 0
 		then RenderMath.ClipAndProjectQuad(
@@ -136,8 +143,8 @@ function RenderControllerHelper.SubmitFace(
 			FocalLength,
 			GuardBandX,
 			GuardBandY,
-			HALF_WIDTH,
-			HALF_HEIGHT
+			ActiveHalfWidth,
+			ActiveHalfHeight
 		)
 		else RenderMath.ClipAndProjectTriangleUV(
 			ScreenVertices,
@@ -152,8 +159,8 @@ function RenderControllerHelper.SubmitFace(
 			FocalLength,
 			GuardBandX,
 			GuardBandY,
-			HALF_WIDTH,
-			HALF_HEIGHT
+			ActiveHalfWidth,
+			ActiveHalfHeight
 		) :: number
 
 	if ClippedVertexCount < 3 then
@@ -192,9 +199,9 @@ function RenderControllerHelper.SubmitFace(
 		end
 
 		const MinX = math.max(0, math.min(Vertex0X, Vertex1X, Vertex2X)) :: number
-		const MaxX = math.min(WIDTH - 1, math.max(Vertex0X, Vertex1X, Vertex2X)) :: number
+		const MaxX = math.min(ActiveWidth - 1, math.max(Vertex0X, Vertex1X, Vertex2X)) :: number
 		const MinY = math.max(0, math.min(Vertex0Y, Vertex1Y, Vertex2Y)) :: number
-		const MaxY = math.min(HEIGHT - 1, math.max(Vertex0Y, Vertex1Y, Vertex2Y)) :: number
+		const MaxY = math.min(ActiveHeight - 1, math.max(Vertex0Y, Vertex1Y, Vertex2Y)) :: number
 		if MinX > MaxX or MinY > MaxY then
 			continue
 		end

@@ -1,0 +1,132 @@
+# Diff Details
+
+Date : 2026-11-17 02:18:17
+
+Directory c:\\Users\\Startklar\\Documents\\Development\\Roblox\\CustomRenderer\\src
+
+Total : 117 files,  5303 codes, 769 comments, 945 blanks, all 7017 lines
+
+[Summary](results.md) / [Details](details.md) / [Diff Summary](diff.md) / Diff Details
+
+## Files
+| filename | language | code | comment | blank | total |
+| :--- | :--- | ---: | ---: | ---: | ---: |
+| [src/character/scripts/Animate.client.luau](/src/character/scripts/Animate.client.luau) | Luau | 1 | 4 | 2 | 7 |
+| [src/character/scripts/Health.server.luau](/src/character/scripts/Health.server.luau) | Luau | 1 | 4 | 2 | 7 |
+| [src/character/scripts/PlayerModule.luau](/src/character/scripts/PlayerModule.luau) | Luau | 2 | 4 | 3 | 9 |
+| [src/character/scripts/PlayerScriptsLoader.client.luau](/src/character/scripts/PlayerScriptsLoader.client.luau) | Luau | 1 | 4 | 2 | 7 |
+| [src/character/scripts/RbxCharacterSounds.client.luau](/src/character/scripts/RbxCharacterSounds.client.luau) | Luau | 1 | 4 | 2 | 7 |
+| [src/client/Objects/Replication/ClientRemotes.luau](/src/client/Objects/Replication/ClientRemotes.luau) | Luau | 40 | 14 | 12 | 66 |
+| [src/client/Objects/Replication/ReplicationReceiver.client.luau](/src/client/Objects/Replication/ReplicationReceiver.client.luau) | Luau | -51 | -2 | -6 | -59 |
+| [src/client/Objects/Replication/ReplicationReceiverHelper.luau](/src/client/Objects/Replication/ReplicationReceiverHelper.luau) | Luau | 198 | 17 | 34 | 249 |
+| [src/client/Objects/Replication/ReplicationSender.client.luau](/src/client/Objects/Replication/ReplicationSender.client.luau) | Luau | 23 | 12 | 9 | 44 |
+| [src/client/Objects/Replication/ReplicationSenderHelper.luau](/src/client/Objects/Replication/ReplicationSenderHelper.luau) | Luau | 126 | 17 | 21 | 164 |
+| [src/client/RenderBootstrap.luau](/src/client/RenderBootstrap.luau) | Luau | 6 | 3 | 1 | 10 |
+| [src/client/Starter.client.luau](/src/client/Starter.client.luau) | Luau | 31 | 7 | 6 | 44 |
+| [src/client/Tests/Specs/Camera.spec.luau](/src/client/Tests/Specs/Camera.spec.luau) | Luau | 61 | 4 | 15 | 80 |
+| [src/client/Tests/Specs/Cleaner.spec.luau](/src/client/Tests/Specs/Cleaner.spec.luau) | Luau | 16 | -2 | 6 | 20 |
+| [src/client/Tests/Specs/ClientInput.spec.luau](/src/client/Tests/Specs/ClientInput.spec.luau) | Luau | 16 | 0 | 3 | 19 |
+| [src/client/Tests/Specs/PlayerClient.spec.luau](/src/client/Tests/Specs/PlayerClient.spec.luau) | Luau | 76 | 12 | 18 | 106 |
+| [src/client/Tests/Specs/RenderService.spec.luau](/src/client/Tests/Specs/RenderService.spec.luau) | Luau | 103 | 7 | 23 | 133 |
+| [src/client/Tests/Specs/ReplicationReceiver.spec.luau](/src/client/Tests/Specs/ReplicationReceiver.spec.luau) | Luau | 75 | 2 | 0 | 77 |
+| [src/client/Tests/Specs/ReplicationSender.spec.luau](/src/client/Tests/Specs/ReplicationSender.spec.luau) | Luau | 94 | 8 | 18 | 120 |
+| [src/client/Tests/TestHelper.luau](/src/client/Tests/TestHelper.luau) | Luau | 1 | 0 | 0 | 1 |
+| [src/client/main.client.luau](/src/client/main.client.luau) | Luau | 16 | 3 | 0 | 19 |
+| [src/client/scripts/EnableRendererGui.client.luau](/src/client/scripts/EnableRendererGui.client.luau) | Luau | 11 | 10 | 6 | 27 |
+| [src/server/Objects/ObjectsECS/ECS.md](/src/server/Objects/ObjectsECS/ECS.md) | Markdown | 12 | 0 | 2 | 14 |
+| [src/server/Objects/ObjectsECS/ECSBuilder.server.luau](/src/server/Objects/ObjectsECS/ECSBuilder.server.luau) | Luau | 7 | 2 | 3 | 12 |
+| [src/server/Objects/ObjectsECS/ECSBuilderHelper.luau](/src/server/Objects/ObjectsECS/ECSBuilderHelper.luau) | Luau | 122 | 10 | 23 | 155 |
+| [src/server/Objects/Player/PlayerExecuter.server.luau](/src/server/Objects/Player/PlayerExecuter.server.luau) | Luau | 4 | 10 | 6 | 20 |
+| [src/server/Objects/Replication/Controller/ReplicatorExecuter.server.luau](/src/server/Objects/Replication/Controller/ReplicatorExecuter.server.luau) | Luau | -8 | 2 | 3 | -3 |
+| [src/server/Objects/Replication/Controller/ServerReplicationGateway.luau](/src/server/Objects/Replication/Controller/ServerReplicationGateway.luau) | Luau | 109 | 16 | 23 | 148 |
+| [src/server/Objects/Replication/Core/EntityVersionTracker.luau](/src/server/Objects/Replication/Core/EntityVersionTracker.luau) | Luau | 133 | 15 | 24 | 172 |
+| [src/server/Objects/Replication/Core/PlayerCuller.luau](/src/server/Objects/Replication/Core/PlayerCuller.luau) | Luau | 31 | 4 | -5 | 30 |
+| [src/server/Objects/Replication/Core/PlayerFunctions.luau](/src/server/Objects/Replication/Core/PlayerFunctions.luau) | Luau | 34 | 3 | 1 | 38 |
+| [src/server/Objects/Replication/Replication.md](/src/server/Objects/Replication/Replication.md) | Markdown | 4 | 0 | 0 | 4 |
+| [src/server/Tests/Specs/BVH.spec.luau](/src/server/Tests/Specs/BVH.spec.luau) | Luau | 3 | 2 | 2 | 7 |
+| [src/server/Tests/Specs/ECS.spec.luau](/src/server/Tests/Specs/ECS.spec.luau) | Luau | 112 | 3 | 20 | 135 |
+| [src/server/Tests/Specs/Physics.spec.luau](/src/server/Tests/Specs/Physics.spec.luau) | Luau | 19 | 2 | 6 | 27 |
+| [src/server/Tests/Specs/Player.spec.luau](/src/server/Tests/Specs/Player.spec.luau) | Luau | 148 | 15 | 35 | 198 |
+| [src/server/Tests/Specs/RenderMath.spec.luau](/src/server/Tests/Specs/RenderMath.spec.luau) | Luau | 66 | -4 | 5 | 67 |
+| [src/server/Tests/Specs/RenderTexture.spec.luau](/src/server/Tests/Specs/RenderTexture.spec.luau) | Luau | 167 | 6 | 29 | 202 |
+| [src/server/Tests/Specs/Replication.spec.luau](/src/server/Tests/Specs/Replication.spec.luau) | Luau | 83 | 3 | 10 | 96 |
+| [src/server/Tests/Specs/ViewCulling.spec.luau](/src/server/Tests/Specs/ViewCulling.spec.luau) | Luau | 116 | 7 | 21 | 144 |
+| [src/server/Tests/Specs/WorkerPartition.spec.luau](/src/server/Tests/Specs/WorkerPartition.spec.luau) | Luau | 212 | 6 | 29 | 247 |
+| [src/server/Tests/TestHelper.luau](/src/server/Tests/TestHelper.luau) | Luau | -2 | 0 | 0 | -2 |
+| [src/shared/Configs/BVHConfig.luau](/src/shared/Configs/BVHConfig.luau) | Luau | 5 | 6 | 6 | 17 |
+| [src/shared/Configs/CameraConfig.luau](/src/shared/Configs/CameraConfig.luau) | Luau | 10 | 15 | 14 | 39 |
+| [src/shared/Configs/ECSConfig.luau](/src/shared/Configs/ECSConfig.luau) | Luau | 27 | 28 | 27 | 82 |
+| [src/shared/Configs/PhysicsConfig.luau](/src/shared/Configs/PhysicsConfig.luau) | Luau | 31 | 32 | 32 | 95 |
+| [src/shared/Configs/PlayerConfig.luau](/src/shared/Configs/PlayerConfig.luau) | Luau | 10 | 15 | 14 | 39 |
+| [src/shared/Configs/RenderConfig.luau](/src/shared/Configs/RenderConfig.luau) | Luau | 34 | 38 | 37 | 109 |
+| [src/shared/DynamicObjectsMain.luau](/src/shared/DynamicObjectsMain.luau) | Luau | 23 | -1 | -4 | 18 |
+| [src/shared/ECSMain.luau](/src/shared/ECSMain.luau) | Luau | -590 | -28 | -100 | -718 |
+| [src/shared/ECS/ECSBitfield.luau](/src/shared/ECS/ECSBitfield.luau) | Luau | 175 | 16 | 24 | 215 |
+| [src/shared/ECS/ECSComponents.luau](/src/shared/ECS/ECSComponents.luau) | Luau | 195 | 18 | 22 | 235 |
+| [src/shared/ECS/ECSStorageFactory.luau](/src/shared/ECS/ECSStorageFactory.luau) | Luau | 140 | 13 | 28 | 181 |
+| [src/shared/ECS/ECSTypes.luau](/src/shared/ECS/ECSTypes.luau) | Luau | 89 | 5 | 13 | 107 |
+| [src/shared/SystemsConfigs.luau](/src/shared/SystemsConfigs.luau) | Luau | -30 | -77 | -74 | -181 |
+| [src/shared/Utilities/BVH/BVH.md](/src/shared/Utilities/BVH/BVH.md) | Markdown | 12 | 0 | 3 | 15 |
+| [src/shared/Utilities/BVH/BVHDynamicSweep.luau](/src/shared/Utilities/BVH/BVHDynamicSweep.luau) | Luau | 137 | 10 | 15 | 162 |
+| [src/shared/Utilities/BVH/BVHHelper.luau](/src/shared/Utilities/BVH/BVHHelper.luau) | Luau | -249 | -2 | -31 | -282 |
+| [src/shared/Utilities/BVH/BVHMath.luau](/src/shared/Utilities/BVH/BVHMath.luau) | Luau | -95 | 2 | -5 | -98 |
+| [src/shared/Utilities/BVH/BVHQuery.luau](/src/shared/Utilities/BVH/BVHQuery.luau) | Luau | 135 | 14 | 24 | 173 |
+| [src/shared/Utilities/BVH/BVHRaycast.luau](/src/shared/Utilities/BVH/BVHRaycast.luau) | Luau | 149 | 12 | 27 | 188 |
+| [src/shared/Utilities/BVH/BVHState.luau](/src/shared/Utilities/BVH/BVHState.luau) | Luau | 213 | 14 | 39 | 266 |
+| [src/shared/Utilities/BVH/BVHSubtreeBuilder.luau](/src/shared/Utilities/BVH/BVHSubtreeBuilder.luau) | Luau | 112 | 12 | 19 | 143 |
+| [src/shared/Utilities/BVH/init.luau](/src/shared/Utilities/BVH/init.luau) | Luau | -662 | -12 | -88 | -762 |
+| [src/shared/Utilities/EventBus.luau](/src/shared/Utilities/EventBus.luau) | Luau | 118 | 19 | 26 | 163 |
+| [src/shared/Utilities/Physics/Controller/PhysicsAwakeState.luau](/src/shared/Utilities/Physics/Controller/PhysicsAwakeState.luau) | Luau | 112 | 19 | 18 | 149 |
+| [src/shared/Utilities/Physics/Controller/PhysicsController.luau](/src/shared/Utilities/Physics/Controller/PhysicsController.luau) | Luau | -85 | 14 | -27 | -98 |
+| [src/shared/Utilities/Physics/Controller/PhysicsControllerHelper.luau](/src/shared/Utilities/Physics/Controller/PhysicsControllerHelper.luau) | Luau | -158 | -2 | -25 | -185 |
+| [src/shared/Utilities/Physics/Controller/PhysicsInputGateway.luau](/src/shared/Utilities/Physics/Controller/PhysicsInputGateway.luau) | Luau | 148 | 17 | 26 | 191 |
+| [src/shared/Utilities/Physics/Controller/PhysicsInstanceManager.luau](/src/shared/Utilities/Physics/Controller/PhysicsInstanceManager.luau) | Luau | 160 | 15 | 21 | 196 |
+| [src/shared/Utilities/Physics/Core/PhysicsMath.luau](/src/shared/Utilities/Physics/Core/PhysicsMath.luau) | Luau | -237 | -2 | -28 | -267 |
+| [src/shared/Utilities/Physics/Core/PhysicsMathHelper.luau](/src/shared/Utilities/Physics/Core/PhysicsMathHelper.luau) | Luau | -138 | -1 | -11 | -150 |
+| [src/shared/Utilities/Physics/Core/PhysicsRotationMath.luau](/src/shared/Utilities/Physics/Core/PhysicsRotationMath.luau) | Luau | 134 | 13 | 29 | 176 |
+| [src/shared/Utilities/Physics/Core/PhysicsSATMath.luau](/src/shared/Utilities/Physics/Core/PhysicsSATMath.luau) | Luau | 110 | 9 | 17 | 136 |
+| [src/shared/Utilities/Physics/Core/PlayerPhysics.luau](/src/shared/Utilities/Physics/Core/PlayerPhysics.luau) | Luau | 162 | 15 | 24 | 201 |
+| [src/shared/Utilities/Physics/Physics.md](/src/shared/Utilities/Physics/Physics.md) | Markdown | 19 | 0 | 5 | 24 |
+| [src/shared/Utilities/Physics/PhysicsLibrary/init.luau](/src/shared/Utilities/Physics/PhysicsLibrary/init.luau) | Luau | -58 | -2 | -5 | -65 |
+| [src/shared/Utilities/Player/Controller/PlayerClientSync.luau](/src/shared/Utilities/Player/Controller/PlayerClientSync.luau) | Luau | 221 | 18 | 33 | 272 |
+| [src/shared/Utilities/Player/Controller/PlayerController.luau](/src/shared/Utilities/Player/Controller/PlayerController.luau) | Luau | 276 | 26 | 34 | 336 |
+| [src/shared/Utilities/Player/Controller/PlayerControllerHelper.luau](/src/shared/Utilities/Player/Controller/PlayerControllerHelper.luau) | Luau | 140 | 18 | 19 | 177 |
+| [src/shared/Utilities/Player/Core/PlayerService/PlayerRecordMethods.luau](/src/shared/Utilities/Player/Core/PlayerService/PlayerRecordMethods.luau) | Luau | 180 | 18 | 31 | 229 |
+| [src/shared/Utilities/Player/Core/PlayerService/PlayerServiceHelper.luau](/src/shared/Utilities/Player/Core/PlayerService/PlayerServiceHelper.luau) | Luau | 87 | 15 | 19 | 121 |
+| [src/shared/Utilities/Player/Core/PlayerService/init.luau](/src/shared/Utilities/Player/Core/PlayerService/init.luau) | Luau | 121 | 5 | 7 | 133 |
+| [src/shared/Utilities/Player/Player.md](/src/shared/Utilities/Player/Player.md) | Markdown | 15 | 0 | 3 | 18 |
+| [src/shared/Utilities/Player/PlayerLibrary/init.luau](/src/shared/Utilities/Player/PlayerLibrary/init.luau) | Luau | 92 | 18 | 16 | 126 |
+| [src/shared/Utilities/Render/Camera/CameraHelper.luau](/src/shared/Utilities/Render/Camera/CameraHelper.luau) | Luau | 40 | 8 | 7 | 55 |
+| [src/shared/Utilities/Render/Camera/CameraInputMath.luau](/src/shared/Utilities/Render/Camera/CameraInputMath.luau) | Luau | 97 | 11 | 17 | 125 |
+| [src/shared/Utilities/Render/Camera/CameraLibrary/init.luau](/src/shared/Utilities/Render/Camera/CameraLibrary/init.luau) | Luau | 69 | 20 | 16 | 105 |
+| [src/shared/Utilities/Render/Camera/CameraMethods.luau](/src/shared/Utilities/Render/Camera/CameraMethods.luau) | Luau | 115 | 23 | 21 | 159 |
+| [src/shared/Utilities/Render/Camera/CameraPresets.luau](/src/shared/Utilities/Render/Camera/CameraPresets.luau) | Luau | 119 | 6 | 7 | 132 |
+| [src/shared/Utilities/Render/Camera/CameraRigHelper.luau](/src/shared/Utilities/Render/Camera/CameraRigHelper.luau) | Luau | 149 | 13 | 23 | 185 |
+| [src/shared/Utilities/Render/Camera/CameraService.luau](/src/shared/Utilities/Render/Camera/CameraService.luau) | Luau | -643 | -130 | -89 | -862 |
+| [src/shared/Utilities/Render/Camera/CameraStepRunner.luau](/src/shared/Utilities/Render/Camera/CameraStepRunner.luau) | Luau | 101 | 18 | 22 | 141 |
+| [src/shared/Utilities/Render/Camera/CameraStore.luau](/src/shared/Utilities/Render/Camera/CameraStore.luau) | Luau | -22 | -1 | -7 | -30 |
+| [src/shared/Utilities/Render/Controller/RenderController.luau](/src/shared/Utilities/Render/Controller/RenderController.luau) | Luau | -270 | -9 | -27 | -306 |
+| [src/shared/Utilities/Render/Controller/RenderControllerHelper.luau](/src/shared/Utilities/Render/Controller/RenderControllerHelper.luau) | Luau | 86 | 4 | -1 | 89 |
+| [src/shared/Utilities/Render/Controller/RenderWorkerGateway.luau](/src/shared/Utilities/Render/Controller/RenderWorkerGateway.luau) | Luau | 201 | 18 | 27 | 246 |
+| [src/shared/Utilities/Render/Controller/WorkerPartitionHelper.luau](/src/shared/Utilities/Render/Controller/WorkerPartitionHelper.luau) | Luau | 172 | 14 | 28 | 214 |
+| [src/shared/Utilities/Render/Core/BufferHelper.luau](/src/shared/Utilities/Render/Core/BufferHelper.luau) | Luau | 4 | 1 | 2 | 7 |
+| [src/shared/Utilities/Render/Core/MathModule.luau](/src/shared/Utilities/Render/Core/MathModule.luau) | Luau | -97 | -3 | -17 | -117 |
+| [src/shared/Utilities/Render/Core/PolygonClipMath.luau](/src/shared/Utilities/Render/Core/PolygonClipMath.luau) | Luau | 170 | 13 | 24 | 207 |
+| [src/shared/Utilities/Render/Core/RasterizerMath.luau](/src/shared/Utilities/Render/Core/RasterizerMath.luau) | Luau | 212 | 10 | 26 | 248 |
+| [src/shared/Utilities/Render/Core/RenderMath.luau](/src/shared/Utilities/Render/Core/RenderMath.luau) | Luau | -160 | -6 | -18 | -184 |
+| [src/shared/Utilities/Render/Core/RenderService/RenderInstanceMethods.luau](/src/shared/Utilities/Render/Core/RenderService/RenderInstanceMethods.luau) | Luau | 282 | 22 | 40 | 344 |
+| [src/shared/Utilities/Render/Core/RenderService/init.luau](/src/shared/Utilities/Render/Core/RenderService/init.luau) | Luau | 161 | 15 | 15 | 191 |
+| [src/shared/Utilities/Render/Core/VerticeCurvedHelper.luau](/src/shared/Utilities/Render/Core/VerticeCurvedHelper.luau) | Luau | 128 | 11 | 21 | 160 |
+| [src/shared/Utilities/Render/Core/VerticeFile.luau](/src/shared/Utilities/Render/Core/VerticeFile.luau) | Luau | 55 | 18 | 15 | 88 |
+| [src/shared/Utilities/Render/Core/VerticeHelper.luau](/src/shared/Utilities/Render/Core/VerticeHelper.luau) | Luau | 171 | 16 | 22 | 209 |
+| [src/shared/Utilities/Render/Core/ViewCulling.luau](/src/shared/Utilities/Render/Core/ViewCulling.luau) | Luau | 57 | 0 | -12 | 45 |
+| [src/shared/Utilities/Render/Core/ViewObserverCodec.luau](/src/shared/Utilities/Render/Core/ViewObserverCodec.luau) | Luau | 142 | 18 | 24 | 184 |
+| [src/shared/Utilities/Render/Render.md](/src/shared/Utilities/Render/Render.md) | Markdown | 15 | 0 | 1 | 16 |
+| [src/shared/Utilities/Render/RenderLibrary/init.luau](/src/shared/Utilities/Render/RenderLibrary/init.luau) | Luau | 72 | 22 | 18 | 112 |
+| [src/shared/Utilities/Render/Scene/CleanerHelper.luau](/src/shared/Utilities/Render/Scene/CleanerHelper.luau) | Luau | -6 | 2 | -3 | -7 |
+| [src/shared/Utilities/Render/Scene/RendererCleaner.client.luau](/src/shared/Utilities/Render/Scene/RendererCleaner.client.luau) | Luau | 41 | 0 | 2 | 43 |
+| [src/shared/Utilities/Render/Texture/TextureHelper.luau](/src/shared/Utilities/Render/Texture/TextureHelper.luau) | Luau | 59 | 11 | 16 | 86 |
+| [src/shared/Utilities/Render/Texture/TextureTable.luau](/src/shared/Utilities/Render/Texture/TextureTable.luau) | Luau | 197 | 25 | 30 | 252 |
+| [src/shared/Utilities/Render/Worker/ParallelWorker.client.luau](/src/shared/Utilities/Render/Worker/ParallelWorker.client.luau) | Luau | 76 | 3 | 7 | 86 |
+
+[Summary](results.md) / [Details](details.md) / [Diff Summary](diff.md) / Diff Details

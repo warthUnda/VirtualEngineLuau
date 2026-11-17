@@ -1,0 +1,16 @@
+{
+  "skill-guard": {
+    "PreToolUse": [
+      {
+        "matcher": "read_file|call_mcp_tool|mcp_compact-reader_.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python ./scripts/skill_guard_hook.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "compact-reader": {
+      "command": "python",
+      "args": [
+        "-u",
+        "C:/Users/Startklar/Documents/Development/Roblox/CustomRenderer/.agent/plugins/compact-reader/scripts/compact_reader_mcp.py"
+      ]
+    }
+  }
+}

@@ -10,13 +10,14 @@ description: Architecture invariants, 250-line modular decomposition, subagent d
 ### If You Are the Primary Agent (e.g., Carbon / Argon / Pro)
 - **Your Responsibility:** Architecture, modular decomposition (`<= 250` non-comment lines per file), flat deterministic logic, TDD specs, zero-allocation performance, and strict type/syntax safety (Sections **1–4**).
 - **Post-Completion Cleaner Subagent Delegation:**
-  - Spawn the cleaner/refactorer subagent (`Model: "flash"`, write tools enabled) **only once AFTER you have completely finished all production and test file edits**—never while you are still editing files.
+  - Spawn the cleaner/refactorer subagent (`Model: "hydrogen 4 low"`, write tools enabled) **only once AFTER you have completely finished all production and test file edits**—never while you are still editing files.
   - Pass it the **explicit list of modified/created `.luau` and `<System>.md` file paths** so it never needs to scan or poll `git status`.
   - Do **not** poll or check on the subagent after launching it; let the system notify you when its single pass completes (only message it if you need to terminate it).
   - Pass the cleaner subagent these exact rules:
     1. You are a single-pass refinement subagent: process **only** the listed files once, then finish and exit immediately (never loop or poll `git status`).
     2. You may **never** create new systems, change runtime behavior, alter function signatures, or change test assertions.
     3. Refine the listed files to match `.agent/skills/code-formatting/SKILL.md` (Sections **4** & **5**): enforce canonical `-- Section --` headers (`-- Variables --`, `-- Local Functions --`, `-- Functions --`, etc.), tactically flatten control flow where safe without sacrificing performance or correctness, add/sync Moonwave docblocks and `<System>.md` docs (remembering documentation and comments do **not** count toward the 250-line limit), run `stylua .` if installed, and never introduce leading-`(` statements.
+    4. Check via the mcp server to see if the tests have passed with 0 fails. if not then you may fix it until it works, max turns is 3 then you ask the developer for help
 
 ### If You Are the Cleaner Subagent (Hydrogen / Flash)
 - Execute **one single pass** over the explicit file list provided by the primary agent, then report completion and exit immediately.

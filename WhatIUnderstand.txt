@@ -1,0 +1,19 @@
+-- mark dirty:
+mark dirty is for resyncing the object for the renderer
+it resyncs the renderer
+
+if you change the values of it like position you must call markdirty to change it 
+
+-- how replicaton works
+the client tells the server that they want to sync with them via a remote event, starting the process
+
+the server sends a buffer of the ECS, then tells the client to use buffer.copy on it and use some functions to update them
+the server in a whle true do checks if the client declared that they were ready, if not it skips them 
+
+then the server from the server side of the character the head more specifically it applies the serverside culling of what it thinks the client should server
+frustum culling however is not applied as when the player turns objects pop, only occlusion the reason for that is that it doesnt cause the pop ins as frustum culling would do
+
+frustum culling is only done by the renderercleaner and culler
+
+inside BVH, Remove ignore lists that are put into it, it adds bloat and disorganizes everything, also needsRebuild should not even ask the question, it should inside a if
+  statement check if it should then it rebuilds, not it asking if it should rebuild

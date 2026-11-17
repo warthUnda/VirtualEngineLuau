@@ -2,24 +2,31 @@
 --!native
 --!optimize 2
 
+--[=[
+	@class RenderBootstrap
+	Bootstraps the multi-threaded rendering environment by instantiating worker actors,
+	cloning isolated ECS storage copies, replication receivers, and the main controller script.
+]=]
+
 -- Services --
-const Players = game:GetService("Players")
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const Players = game:GetService("Players") :: Players
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 
 -- Static References --
 const RenderRoot = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities"):WaitForChild("Render")
-
 const WorkerFolder = RenderRoot:WaitForChild("Worker")
 const SceneFolder = RenderRoot:WaitForChild("Scene")
 
--- Modules --
+-- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 
 -- Configs --
 const ACTOR_COUNT = SystemsConfigs.ActorCount :: number
 
+-- Tables --
 local RenderBootstrap = {}
 
+-- Functions --
 -- ============================================================================
 -- 1. CREATE WORKER - CONTROLLER SETUP
 -- ============================================================================
@@ -28,7 +35,7 @@ local RenderBootstrap = {}
 	Bootstraps the multi-threaded rendering environment by instantiating worker actors,
 	cloning isolated ECS storage copies, replication receivers, and the main controller script.
 ]=]
-function RenderBootstrap.CreateSetup()
+function RenderBootstrap.CreateSetup(): ()
 	const PlayerScripts = Players.LocalPlayer:WaitForChild("PlayerScripts") :: PlayerScripts
 	const ClientFolder = PlayerScripts:WaitForChild("Client") :: Folder
 	const ClientObjects = ClientFolder:WaitForChild("Objects") :: Folder
@@ -39,7 +46,7 @@ function RenderBootstrap.CreateSetup()
 	WorkerActorFolder.Parent = PlayerScripts
 
 	-- Creation of workers
-	for i = 1, ACTOR_COUNT do
+	for i: number = 1, ACTOR_COUNT do
 		const NewWorkerActor = Instance.new("Actor") :: Actor
 		NewWorkerActor.Parent = WorkerActorFolder
 		NewWorkerActor.Name = "ParallelSetup" .. i
@@ -57,8 +64,11 @@ function RenderBootstrap.CreateSetup()
 	const ControllerStorage = ClientObjects:WaitForChild("ObjectStorage"):Clone()
 	ControllerStorage.Parent = ControllerActor
 
-	const ControllerReceiver =
-		ClientObjects:WaitForChild("Replication"):WaitForChild("ReplicationReceiver"):Clone() :: LocalScript
+	const ReplicationFolder = ClientObjects:WaitForChild("Replication") :: Folder
+	const ControllerSender = ReplicationFolder:WaitForChild("ReplicationSender"):Clone() :: LocalScript
+	ControllerSender.Parent = ControllerActor
+
+	const ControllerReceiver = ReplicationFolder:WaitForChild("ReplicationReceiver"):Clone() :: LocalScript
 	ControllerReceiver.Parent = ControllerActor
 
 	const CleanerScript = SceneFolder:WaitForChild("RendererCleaner"):Clone() :: LocalScript

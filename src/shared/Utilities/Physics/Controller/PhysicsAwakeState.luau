@@ -114,37 +114,6 @@ function PhysicsAwakeState.ClearEntityPhysicsSlots(EntityId: number)
 end
 
 --[=[
-	Compacts physics state when an entity is deleted via ECS swap-and-pop.
-	@param DeletedEntityId number -- 1-based ID of the deleted entity being replaced.
-	@param MovedFromEntityId number -- 1-based ID of the tail entity moved into the deleted slot.
-]=]
-function PhysicsAwakeState.OnEntitySwapPop(DeletedEntityId: number, MovedFromEntityId: number)
-	PhysicsAwakeState.RemoveAwakeEntity(DeletedEntityId)
-
-	if DeletedEntityId ~= MovedFromEntityId then
-		const DestFlagIndex = DeletedEntityId - 1 :: number
-		const SrcFlagIndex = MovedFromEntityId - 1 :: number
-		const DestCompOffset = DestFlagIndex * COMPONENT_STRIDE :: number
-		const SrcCompOffset = SrcFlagIndex * COMPONENT_STRIDE :: number
-
-		const MovedDynamicState = buffer.readu8(DynamicFlags, SrcFlagIndex) :: number
-		buffer.writeu8(DynamicFlags, DestFlagIndex, MovedDynamicState)
-		buffer.writeu8(ObjectGroundedFlags, DestFlagIndex, buffer.readu8(ObjectGroundedFlags, SrcFlagIndex))
-		buffer.writef32(ObjectInvMassBuffer, DestFlagIndex * 4, buffer.readf32(ObjectInvMassBuffer, SrcFlagIndex * 4))
-		buffer.copy(ObjectVelocityBuffer, DestCompOffset, ObjectVelocityBuffer, SrcCompOffset, COMPONENT_STRIDE)
-		buffer.copy(ObjectAngularVelocityBuffer, DestCompOffset, ObjectAngularVelocityBuffer, SrcCompOffset, COMPONENT_STRIDE)
-		buffer.copy(ObjectForceBuffer, DestCompOffset, ObjectForceBuffer, SrcCompOffset, COMPONENT_STRIDE)
-
-		PhysicsAwakeState.RemoveAwakeEntity(MovedFromEntityId)
-		if MovedDynamicState == 1 then
-			PhysicsAwakeState.AddAwakeEntity(DeletedEntityId)
-		end
-	end
-
-	PhysicsAwakeState.ClearEntityPhysicsSlots(MovedFromEntityId)
-end
-
---[=[
 	Accumulates continuous external force on an entity slot and stages it for batch flushing.
 	@param CompOffset number -- Byte offset in component buffers ((EntityId - 1) * COMPONENT_STRIDE).
 	@param DirX number -- Unit direction X component.

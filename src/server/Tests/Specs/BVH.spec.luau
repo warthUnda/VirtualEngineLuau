@@ -12,10 +12,14 @@ return function()
 	const it = SpecEnv.it
 	const expect = SpecEnv.expect
 
-	const ReplicatedStorage = game:GetService("ReplicatedStorage")
-	const ServerScriptService = game:GetService("ServerScriptService")
+	-- Services --
+	const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+	const ServerScriptService = game:GetService("ServerScriptService") :: ServerScriptService
+
+	-- Static References --
 	const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
 
+	-- Libraries --
 	const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
 	const BVH = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("BVH"))
 	const TestHelper = require(ServerScriptService.Server.Tests.TestHelper)
@@ -25,12 +29,12 @@ return function()
 			const Storage = ECSMain.CreateStorage(true)
 			TestHelper.SpawnBoxEntity(Storage, CFrame.new(0, 0, -10), Vector3.new(4, 4, 4), true)
 
-			const Hit1, Obj1, Dist1 = BVH.Raycast(Storage, nil :: any, Vector3.new(0, 0, -1), 100, nil)
+			const Hit1, Obj1, Dist1 = BVH.Raycast(Storage, nil :: any, Vector3.new(0, 0, -1), 100)
 			expect(Hit1).to.equal(nil)
 			expect(Obj1).to.equal(nil)
 			expect(Dist1).to.equal(0)
 
-			const Hit2, _Obj2, Dist2 = BVH.Raycast(Storage, Vector3.zero, nil :: any, 100, nil)
+			const Hit2, _Obj2, Dist2 = BVH.Raycast(Storage, Vector3.zero, nil :: any, 100)
 			expect(Hit2).to.equal(nil)
 			expect(Dist2).to.equal(0)
 		end)
@@ -39,7 +43,7 @@ return function()
 			const Storage = ECSMain.CreateStorage(true)
 			TestHelper.SpawnBoxEntity(Storage, CFrame.new(0, 0, -10), Vector3.new(4, 4, 4), true)
 
-			const HitZero, _, DistZero = BVH.Raycast(Storage, Vector3.zero, Vector3.zero, 100, nil)
+			const HitZero, _, DistZero = BVH.Raycast(Storage, Vector3.zero, Vector3.zero, 100)
 			expect(HitZero).to.equal(nil)
 			expect(DistZero).to.equal(0)
 		end)
@@ -62,12 +66,12 @@ return function()
 			const Storage = ECSMain.CreateStorage(true)
 			const BoxId = TestHelper.SpawnBoxEntity(Storage, CFrame.new(0, 0, 0), Vector3.new(4, 6, 8), true)
 
-			const HitPZ, _, DistPZ, _PosPZ, NormPZ = BVH.Raycast(Storage, Vector3.new(0, 0, 10), Vector3.new(0, 0, -1), 50, nil)
+			const HitPZ, _, DistPZ, _PosPZ, NormPZ = BVH.Raycast(Storage, Vector3.new(0, 0, 10), Vector3.new(0, 0, -1), 50)
 			expect(HitPZ).to.equal(BoxId)
 			expect(DistPZ).to.be.near(6, 1e-3)
 			expect(NormPZ).to.equal(Vector3.new(0, 0, 1))
 
-			const HitPX, _, DistPX, _, NormPX = BVH.Raycast(Storage, Vector3.new(10, 0, 0), Vector3.new(-1, 0, 0), 50, nil)
+			const HitPX, _, DistPX, _, NormPX = BVH.Raycast(Storage, Vector3.new(10, 0, 0), Vector3.new(-1, 0, 0), 50)
 			expect(HitPX).to.equal(BoxId)
 			expect(DistPX).to.be.near(8, 1e-3)
 			expect(NormPX).to.equal(Vector3.new(1, 0, 0))
@@ -78,51 +82,49 @@ return function()
 			const RotatedCF = CFrame.new(0, 0, -20) * CFrame.Angles(0, 0, math.rad(45))
 			const BeamId = TestHelper.SpawnBoxEntity(Storage, RotatedCF, Vector3.new(20, 1, 4), true)
 
-			const HitCenter, _, DistCenter = BVH.Raycast(Storage, Vector3.zero, Vector3.new(0, 0, -1), 50, nil)
+			const HitCenter, _, DistCenter = BVH.Raycast(Storage, Vector3.zero, Vector3.new(0, 0, -1), 50)
 			expect(HitCenter).to.equal(BeamId)
 			expect(DistCenter).to.be.near(18, 1e-3)
 
-			-- Ray at (-5, 5, 0) misses the diagonal rotated beam despite being within its world AABB
-			const HitCorner = BVH.Raycast(Storage, Vector3.new(-5, 5, 0), Vector3.new(0, 0, -1), 50, nil)
+			const HitCorner = BVH.Raycast(Storage, Vector3.new(-5, 5, 0), Vector3.new(0, 0, -1), 50)
 			expect(HitCorner).to.equal(nil)
 		end)
 	end)
 
-	describe("3. BVH Dynamic Objects & Ignore Filters", function()
+	describe("3. BVH Dynamic Objects & Direct Auto-Rebuild", function()
 		it("should return bound OOP objects and track live movement in real time", function()
 			const Storage = ECSMain.CreateStorage(true)
 			const TargetOOP = { Id = "Tank1", Speed = 50 }
 			const EntityId = TestHelper.SpawnBoxEntity(Storage, CFrame.new(0, 0, -15), Vector3.new(4, 4, 4), false, true, false, TargetOOP)
 
-			const Hit1, Obj1 = BVH.Raycast(Storage, Vector3.zero, Vector3.new(0, 0, -1), 50, nil)
+			const Hit1, Obj1 = BVH.Raycast(Storage, Vector3.zero, Vector3.new(0, 0, -1), 50)
 			expect(Hit1).to.equal(EntityId)
 			expect(Obj1).to.equal(TargetOOP)
 
 			TestHelper.MoveEntity(Storage, EntityId, CFrame.new(30, 0, -15))
 
-			const GhostHit = BVH.Raycast(Storage, Vector3.zero, Vector3.new(0, 0, -1), 50, nil)
+			const GhostHit = BVH.Raycast(Storage, Vector3.zero, Vector3.new(0, 0, -1), 50)
 			expect(GhostHit).to.equal(nil)
 
-			const NewHit, NewObj = BVH.Raycast(Storage, Vector3.new(30, 0, 0), Vector3.new(0, 0, -1), 50, nil)
+			const NewHit, NewObj = BVH.Raycast(Storage, Vector3.new(30, 0, 0), Vector3.new(0, 0, -1), 50)
 			expect(NewHit).to.equal(EntityId)
 			expect(NewObj).to.equal(TargetOOP)
 		end)
 
-		it("should support ignore filtering by EntityId, OOP instance, or table", function()
+		it("should skip non-collidable entities and auto-rebuild directly when static geometry mutates", function()
 			const Storage = ECSMain.CreateStorage(true)
-			const FrontOOP = { Name = "Front" }
-			const BackOOP = { Name = "Back" }
+			const _NonCollidableFront = TestHelper.SpawnBoxEntity(Storage, CFrame.new(0, 0, -10), Vector3.new(4, 4, 4), true, false, true)
+			const StaticBack = TestHelper.SpawnBoxEntity(Storage, CFrame.new(0, 0, -20), Vector3.new(4, 4, 4), true, true, true)
 
-			const FrontId = TestHelper.SpawnBoxEntity(Storage, CFrame.new(0, 0, -10), Vector3.new(4, 4, 4), false, true, false, FrontOOP)
-			const BackId = TestHelper.SpawnBoxEntity(Storage, CFrame.new(0, 0, -20), Vector3.new(4, 4, 4), true, true, true, BackOOP)
+			const InitialHit = BVH.Raycast(Storage, Vector3.zero, Vector3.new(0, 0, -1), 50)
+			expect(InitialHit).to.equal(StaticBack)
 
-			const HitByNum, ObjByNum = BVH.Raycast(Storage, Vector3.zero, Vector3.new(0, 0, -1), 50, FrontId)
-			expect(HitByNum).to.equal(BackId)
-			expect(ObjByNum).to.equal(BackOOP)
+			TestHelper.MoveEntity(Storage, StaticBack, CFrame.new(40, 0, -20))
+			const AfterMoveOldRay = BVH.Raycast(Storage, Vector3.zero, Vector3.new(0, 0, -1), 50)
+			expect(AfterMoveOldRay).to.equal(nil)
 
-			const HitByObj, ObjByObj = BVH.Raycast(Storage, Vector3.zero, Vector3.new(0, 0, -1), 50, FrontOOP)
-			expect(HitByObj).to.equal(BackId)
-			expect(ObjByObj).to.equal(BackOOP)
+			const AfterMoveNewRay = BVH.Raycast(Storage, Vector3.new(40, 0, 0), Vector3.new(0, 0, -1), 50)
+			expect(AfterMoveNewRay).to.equal(StaticBack)
 		end)
 	end)
 
@@ -131,7 +133,7 @@ return function()
 			const Storage = ECSMain.CreateStorage(true)
 			const Ent1 = TestHelper.SpawnBoxEntity(Storage, CFrame.new(2, 0, 0), Vector3.new(2, 2, 2), true)
 			const Ent2 = TestHelper.SpawnBoxEntity(Storage, CFrame.new(-2, 0, 0), Vector3.new(2, 2, 2), false, true, false)
-			TestHelper.SpawnBoxEntity(Storage, CFrame.new(100, 0, 0), Vector3.new(2, 2, 2), true) -- Far outside
+			TestHelper.SpawnBoxEntity(Storage, CFrame.new(100, 0, 0), Vector3.new(2, 2, 2), true)
 
 			local Results = {}
 			const Count = BVH.QueryAABB(Vector3.new(-5, -5, -5), Vector3.new(5, 5, 5), Results, Storage)

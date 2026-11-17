@@ -77,10 +77,10 @@ Inside each subsystem (`src/shared/Utilities/<System>/`, `src/server/Objects/<Sy
   - `VisualData`: `4` bytes (`u32` packed RGBA).
   - `PropertiesData`: `4` bytes (`u32` bitfield: `CanCollide`, `IsVisible`, `Anchored`, `HasDynamicId`, `TextureId` [bits 5..12], `ShapeId` [bits 13..15], `DynamicId` [bits 22..31]).
 
-### 2. $O(1)$ Swap-and-Pop Deletion Contract
-- `ECSData.DeleteEntity(EntityId)` compacts buffers in $O(1)$ time by copying `LastEntityId -> EntityId`.
-- Unlink the deleted entity's `DynamicId` **before** copying `LastEntityId` into `EntityId`, and verify stored `DynamicId` matches before clearing `PropertiesBuffer`.
-- Every subsystem indexing per-entity external state (`DynamicObjectsList`, `PhysicsController`, `PlayerController`, `ReplicationReceiver`, `RendererCleaner`) must register a listener via `ECSData.SetSwapPopCallback` (or maintain bidirectional slot maps) so moved tail entities never leave stale `EntityId`s.
+### 2. $O(1)$ Free-List Stable-Slot Lifecycle Contract
+- `ECSData.RegisterEntity` pops recycled `u32` slot IDs from `FreeSlotsBuffer` (or advances the `EntityECSCount` high-water mark) and sets `ActiveFlags[SlotId - 1] = 1`, keeping every live entity's `EntityId` permanently stable.
+- `ECSData.DeleteEntity(EntityId)` unlinks any bound `DynamicId`, zeroes `ActiveFlags[EntityId - 1]` and `PropertiesBuffer`, trims trailing empty high-water slots, or pushes `EntityId` onto `FreeSlotsBuffer`—never moving other entities.
+- Subsystems scanning `1 .. EntityECSCount` skip freed holes with a single flat guard (`if buffer.readu8(ActiveFlags, i - 1) == 0 then continue end`, or `not ECSMain.IsEntityVisible(PropReg)` where zeroed property registers are already checked).
 
 ### 3. Roblox `Actor` VM Boundaries & Compact Messaging
 - Every `Actor` (`Controller`, `ParallelSetup1..N`) runs an isolated Luau VM with its own copy of required `ModuleScript`s.

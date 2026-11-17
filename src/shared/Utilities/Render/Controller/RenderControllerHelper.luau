@@ -2,14 +2,20 @@
 --!native
 --!optimize 2
 
+--[=[
+	@class RenderControllerHelper
+	Helper module for RenderController.
+	Provides direction reading, packed shaded color calculation, polygon clipping,
+	and triangle face staging with scanline row work accumulation.
+]=]
+
 -- Services --
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 
 -- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper)
 const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath)
-const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Texture.TextureTable)
 const WorkerPartitionHelper = require(script.Parent.WorkerPartitionHelper)
 
 -- Configs --
@@ -25,7 +31,7 @@ local RenderControllerHelper = {}
 
 -- Functions --
 -- ============================================================================
--- 1. DIRECTION READING, COLOR SHADING, FACE STAGING & TEXTURE SYNC
+-- 1. DIRECTION READING, COLOR SHADING & FACE STAGING
 -- ============================================================================
 
 --[=[
@@ -117,14 +123,37 @@ function RenderControllerHelper.SubmitFace(
 
 	const ClippedVertexCount = if V3ByteOffset >= 0
 		then RenderMath.ClipAndProjectQuad(
-			ScreenVertices, V0ByteOffset, V1ByteOffset, V2ByteOffset, V3ByteOffset,
-			ScaleU, ScaleV, ProjectedVertices, ClipBufferA, ClipBufferB,
-			FocalLength, GuardBandX, GuardBandY, HALF_WIDTH, HALF_HEIGHT
+			ScreenVertices,
+			V0ByteOffset,
+			V1ByteOffset,
+			V2ByteOffset,
+			V3ByteOffset,
+			ScaleU,
+			ScaleV,
+			ProjectedVertices,
+			ClipBufferA,
+			ClipBufferB,
+			FocalLength,
+			GuardBandX,
+			GuardBandY,
+			HALF_WIDTH,
+			HALF_HEIGHT
 		)
 		else RenderMath.ClipAndProjectTriangleUV(
-			ScreenVertices, V0ByteOffset, V1ByteOffset, V2ByteOffset,
-			ScaleU, ScaleV, ProjectedVertices, ClipBufferA, ClipBufferB,
-			FocalLength, GuardBandX, GuardBandY, HALF_WIDTH, HALF_HEIGHT
+			ScreenVertices,
+			V0ByteOffset,
+			V1ByteOffset,
+			V2ByteOffset,
+			ScaleU,
+			ScaleV,
+			ProjectedVertices,
+			ClipBufferA,
+			ClipBufferB,
+			FocalLength,
+			GuardBandX,
+			GuardBandY,
+			HALF_WIDTH,
+			HALF_HEIGHT
 		) :: number
 
 	if ClippedVertexCount < 3 then
@@ -208,35 +237,46 @@ function RenderControllerHelper.SubmitFace(
 end
 
 --[=[
-	Decodes synced TextureTable entries received from the server into 64x64 buffers and invokes OnTextureUpdated.
-	@param Entries any -- Array of TextureTable.TextureEntry records from TextureSyncEvent.
-	@param OnTextureUpdated ({ [number]: buffer }) -> () -- Callback invoked with updated cached texture buffers.
+	Updates the renderer's cached camera basis SIMD vectors and projection parameters
+	when the bound camera's CFrame, FOV, or viewport resolution has changed.
+	@param RendererObj any -- Target OOP RenderObject instance.
+	@param CamCF CFrame -- Current world-space CFrame of the bound camera.
+	@param CamFOV number -- Current vertical FOV in degrees of the bound camera.
+	@param Width number -- Renderer viewport width in pixels.
+	@param Height number -- Renderer viewport height in pixels.
 ]=]
-function RenderControllerHelper.ApplySyncedTextures(Entries: any, OnTextureUpdated: ({ [number]: buffer }) -> ())
-	if typeof(Entries) ~= "table" then
-		return
+function RenderControllerHelper.SyncCameraCache(
+	RendererObj: any,
+	CamCF: CFrame,
+	CamFOV: number,
+	Width: number,
+	Height: number
+)
+	if CamCF ~= RendererObj.CachedCameraCFrame then
+		const Pos = CamCF.Position :: Vector3
+		const Right = CamCF.RightVector :: Vector3
+		const Up = CamCF.UpVector :: Vector3
+		const Look = CamCF.LookVector :: Vector3
+		RendererObj.CachedCameraCFrame = CamCF
+		RendererObj.CachedCameraPosVec = vector.create(Pos.X, Pos.Y, Pos.Z)
+		RendererObj.CachedCameraRightVec = vector.create(Right.X, Right.Y, Right.Z)
+		RendererObj.CachedCameraUpVec = vector.create(Up.X, Up.Y, Up.Z)
+		RendererObj.CachedCameraLookVec = vector.create(Look.X, Look.Y, Look.Z)
 	end
 
-	for _, Entry: any in ipairs(Entries :: { TextureTable.TextureEntry }) do
-		if typeof(Entry) ~= "table" then
-			continue
-		end
-		const TextureId = Entry.Id :: number?
-		const RawUrl = Entry.Url :: string?
-		const TextureName = Entry.Name :: string?
-		if typeof(TextureId) ~= "number" or typeof(RawUrl) ~= "string" then
-			continue
-		end
-		task.spawn(function()
-			const _Buf: buffer?, Updated: boolean = TextureTable.RegisterEntryWithId(
-				TextureId,
-				RawUrl,
-				if typeof(TextureName) == "string" then TextureName else nil
-			)
-			if Updated then
-				OnTextureUpdated(TextureTable.GetAllCachedBuffers())
-			end
-		end)
+	if
+		CamFOV ~= RendererObj.CachedCameraFOV
+		or Width ~= RendererObj.CachedProjWidth
+		or Height ~= RendererObj.CachedProjHeight
+	then
+		const Focal: number, GuardX: number, GuardY: number =
+			RenderMath.GetProjectionParameters(CamFOV, Width, Height)
+		RendererObj.CachedFocalLength = Focal
+		RendererObj.CachedGuardBandX = GuardX
+		RendererObj.CachedGuardBandY = GuardY
+		RendererObj.CachedCameraFOV = CamFOV
+		RendererObj.CachedProjWidth = Width
+		RendererObj.CachedProjHeight = Height
 	end
 end
 

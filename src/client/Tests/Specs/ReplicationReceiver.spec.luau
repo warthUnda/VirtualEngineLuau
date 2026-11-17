@@ -13,17 +13,17 @@ return function()
 	const expect = SpecEnv.expect
 
 	-- Services --
-	const ReplicatedStorage = game:GetService("ReplicatedStorage")
+	const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 
 	-- Static References --
-	const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
-	const ReplicationFolder = script.Parent.Parent.Parent
-		:WaitForChild("Objects")
-		:WaitForChild("Replication")
+	const SharedFolder = ReplicatedStorage:WaitForChild("Shared") :: Folder
+	const ReplicationFolder =
+		script.Parent.Parent.Parent:WaitForChild("Objects"):WaitForChild("Replication") :: Folder
 
 	-- Libraries --
 	const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 	const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
+	const EventBus = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("EventBus"))
 	const ReplicationReceiverHelper = require(ReplicationFolder:WaitForChild("ReplicationReceiverHelper"))
 
 	-- Configs --
@@ -31,9 +31,10 @@ return function()
 	const VISUAL_STRIDE = SystemsConfigs.ECSVisualStride :: number
 	const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 	const HEADER_BYTES = 8 :: number
+	const MASK_DESPAWN = 0x80 :: number
 
-	describe("1. Client Replication Delta Ingestion", function()
-		it("should unpack single binary delta payloads, reconstruct Right vector, and compact despawns", function()
+	describe("1. Client Replication Delta Ingestion & Free-List Despawns", function()
+		it("should unpack binary delta payloads, reconstruct Right vector, and recycle despawned slots", function()
 			const ClientStorage = ECSMain.CreateStorage(false)
 			const ECSData = ClientStorage.ECSData
 			const LocalPositionBuffer = ClientStorage.PositionData.GetData()
@@ -43,7 +44,6 @@ return function()
 
 			const ReceiverState = ReplicationReceiverHelper.CreateReceiverState(ClientStorage, 501)
 
-			-- Pre-register a local player OOP record at DynamicId = 1 to verify OOP EntityId linking & self-collision suppression
 			const LinkedPlayerRecord = {
 				ClassName = "PlayerService",
 				UserId = 501,
@@ -51,13 +51,6 @@ return function()
 			}
 			ClientStorage.DynamicObjectsList.SetObjectAtId(1, LinkedPlayerRecord, nil)
 
-			--[=[
-				Builds a binary replication packet matching server PlayerCuller format for testing delta ingestion.
-				@param UpdatedCount number -- Count of updated entity entries in packet.
-				@param WorldEntityCount number -- Total active server ECS entities.
-				@param Entries any -- Array of entity delta descriptors.
-				@return buffer -- Serialized binary payload buffer.
-			]=]
 			local function BuildBinaryPacket(
 				UpdatedCount: number,
 				WorldEntityCount: number,
@@ -79,10 +72,13 @@ return function()
 				buffer.writeu32(Payload, 4, 1)
 
 				local WriteOffset = HEADER_BYTES
-				for _, Entry in Entries do
+				for _, Entry in ipairs(Entries) do
 					buffer.writeu16(Payload, WriteOffset, Entry.ServerId)
 					buffer.writeu8(Payload, WriteOffset + 2, Entry.Mask)
 					WriteOffset += 3
+					if Entry.Mask == MASK_DESPAWN then
+						continue
+					end
 
 					if bit32.band(Entry.Mask, 1) ~= 0 and Entry.Pos then
 						buffer.writef32(Payload, WriteOffset, Entry.Pos.X)
@@ -90,7 +86,6 @@ return function()
 						buffer.writef32(Payload, WriteOffset + 8, Entry.Pos.Z)
 						WriteOffset += COMPONENT_STRIDE
 					end
-
 					if bit32.band(Entry.Mask, 4) ~= 0 and Entry.Look and Entry.Up then
 						buffer.writef32(Payload, WriteOffset, Entry.Look.X)
 						buffer.writef32(Payload, WriteOffset + 4, Entry.Look.Y)
@@ -100,22 +95,22 @@ return function()
 						buffer.writef32(Payload, WriteOffset + 20, Entry.Up.Z)
 						WriteOffset += 24
 					end
-
 					if bit32.band(Entry.Mask, 8) ~= 0 and Entry.VisualRGBA then
 						buffer.writeu32(Payload, WriteOffset, Entry.VisualRGBA)
 						WriteOffset += VISUAL_STRIDE
 					end
-
 					if bit32.band(Entry.Mask, 16) ~= 0 and Entry.PropReg then
 						buffer.writeu32(Payload, WriteOffset, Entry.PropReg)
 						WriteOffset += PROPERTIES_STRIDE
 					end
 				end
 
-				return Payload
+				const Trimmed = buffer.create(WriteOffset)
+				buffer.copy(Trimmed, 0, Payload, 0, WriteOffset)
+				return Trimmed
 			end
 
-			-- Packet 1: Spawn ServerId = 1 (with orientation Look/Up + visual + DynamicId=1) and ServerId = 2
+			-- Packet 1: Spawn ServerId = 1 and ServerId = 2
 			const Packet1 = BuildBinaryPacket(2, 2, {
 				{
 					ServerId = 1,
@@ -134,30 +129,44 @@ return function()
 			})
 			ReplicationReceiverHelper.IngestPayload(ReceiverState, Packet1)
 
-			expect(ECSData.GetCounts().EntityECSCount).to.equal(2)
+			expect(ECSData.GetCounts().ActiveEntityCount).to.equal(2)
 			expect(buffer.readu32(ReceiverState.ClientSlotByServerId, 1 * 4)).to.equal(1)
 			expect(buffer.readu32(ReceiverState.ClientSlotByServerId, 2 * 4)).to.equal(2)
 			expect(LinkedPlayerRecord.EntityId).to.equal(1)
 			expect(ECSMain.CanEntityCollide(buffer.readu32(LocalPropertiesBuffer, 0))).to.equal(false)
-			expect(buffer.readf32(LocalPositionBuffer, 0)).to.equal(15)
-			expect(buffer.readf32(LocalPositionBuffer, COMPONENT_STRIDE)).to.equal(50)
-			-- Verify RightVector = Look(0,0,-1) x Up(0,1,0) = (1, 0, 0)
 			expect(buffer.readf32(LocalDirectionsBuffer, 24)).to.be.near(1, 1e-4)
 			expect(buffer.readu32(LocalVisualBuffer, 0)).to.equal(0xFF00AAFF)
 
-			-- Packet 2: Delta update only ServerId = 1 position + despawn tail ServerId = 2 (WorldEntityCount: 2 -> 1)
-			const Packet2 = BuildBinaryPacket(1, 1, {
-				{
-					ServerId = 1,
-					Mask = 1,
-					Pos = Vector3.new(99, 99, 99),
-				},
+			-- Packet 2: Despawn first slot ServerId = 1 via MASK_DESPAWN and move ServerId = 2 (slot 2 stays at 2!)
+			const Packet2 = BuildBinaryPacket(2, 2, {
+				{ ServerId = 1, Mask = MASK_DESPAWN },
+				{ ServerId = 2, Mask = 1, Pos = Vector3.new(99, 99, 99) },
 			})
 			ReplicationReceiverHelper.IngestPayload(ReceiverState, Packet2)
 
-			expect(ECSData.GetCounts().EntityECSCount).to.equal(1)
-			expect(buffer.readu32(ReceiverState.ClientSlotByServerId, 2 * 4)).to.equal(0)
-			expect(buffer.readf32(LocalPositionBuffer, 0)).to.equal(99)
+			expect(ECSData.GetCounts().ActiveEntityCount).to.equal(1)
+			expect(ECSData.IsEntityActive(1)).to.equal(false)
+			expect(ECSData.IsEntityActive(2)).to.equal(true)
+			expect(buffer.readu32(ReceiverState.ClientSlotByServerId, 1 * 4)).to.equal(0)
+			expect(buffer.readu32(ReceiverState.ClientSlotByServerId, 2 * 4)).to.equal(2)
+			expect(buffer.readf32(LocalPositionBuffer, COMPONENT_STRIDE)).to.equal(99)
+
+			-- Packet 3: Spawn ServerId = 3 -> must recycle freed local slot 1
+			const Packet3 = BuildBinaryPacket(1, 3, {
+				{ ServerId = 3, Mask = 1, Pos = Vector3.new(7, 8, 9) },
+			})
+			ReplicationReceiverHelper.IngestPayload(ReceiverState, Packet3)
+			expect(buffer.readu32(ReceiverState.ClientSlotByServerId, 3 * 4)).to.equal(1)
+			expect(buffer.readf32(LocalPositionBuffer, 0)).to.equal(7)
+
+			-- Verify inbound PlayerRegistryEvent routes onto EventBus without domain systems touching RemoteEvents
+			const TestBus = EventBus.CreateBus()
+			local ReceivedRegistryCount = 0 :: number
+			TestBus.Subscribe(EventBus.Events.PlayerRegistryReceived, function(Entries: { any })
+				ReceivedRegistryCount = #Entries
+			end)
+			ReplicationReceiverHelper.ForwardPlayerRegistry(TestBus, { { UserId = 501, DynamicId = 1 } })
+			expect(ReceivedRegistryCount).to.equal(1)
 		end)
 	end)
 end

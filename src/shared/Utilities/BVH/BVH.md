@@ -38,11 +38,11 @@ The `BVH` facade delegates state buffers and rebuild tracking to `BVHState`, sta
   5. `HitNormal`: Outward unit surface normal vector.
 - **Callable Module (`__call`)**: Allows invoking the module directly as a function `BVH(Storage, Origin, Direction)` where `Direction`'s magnitude dictates the search distance.
 
-### 3. Broadphase Volume Queries & Zero-Allocation Build
+### 3. Broadphase Volume Queries & Direct Auto-Rebuild
 - **`BVH.Rebuild` / `BVHHelper.BuildSubtree`**: Constructs the flat-buffer binary BVH tree using scalar-only traversal and stack allocation (`0` per-node Lua table allocations).
-- **`BVH.EnsureFresh`**: Refreshes the static BVH once per simulation substep before batched broadphase queries.
-- **`BVH.QueryAABBScalar` & `BVH.QueryAABB`**: Queries an axis-aligned bounding box (`MinX..MaxZ`) directly into a reusable `u32` candidate buffer (`QueryAABBScalar(..., SkipNeedsRebuild)`) with zero table allocation on the physics hot path, alongside array convenience wrapper `BVH.QueryAABB`.
+- **`BVH.EnsureFresh` / `BVHState.EnsureFreshAndResolve`**: Directly checks storage counts and static-slot state inside `if` guards and rebuilds in place when needed—without separate boolean-question helper indirection.
+- **`BVH.QueryAABBScalar` & `BVH.QueryAABB`**: Queries an axis-aligned bounding box (`MinX..MaxZ`) directly into a reusable `u32` candidate buffer (`QueryAABBScalar(..., SkipCheck)`) with zero table allocation on the physics hot path, alongside array convenience wrapper `BVH.QueryAABB`.
 
-### 4. Dynamic Live Tracking & Ignore Filtering
+### 4. Dynamic Live Tracking & Collision Flags
 - Intersected entities with an attached dynamic OOP instance automatically resolve and return that OOP table.
-- Filter criteria support scalar Entity IDs, OOP object tables, or compound filter tables to ignore self or companion colliders.
+- Collision exclusion is driven directly by the entity's ECS `FLAG_CAN_COLLIDE` bitfield (zero ignore-list table overhead inside BVH).

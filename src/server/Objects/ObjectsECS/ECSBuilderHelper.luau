@@ -2,18 +2,28 @@
 --!native
 --!optimize 2
 
+--[=[
+	@class ECSBuilderHelper
+	Provides workspace BasePart ingestion, Decal texture registration, and
+	procedural shape resolution (including CollectionService Plane tagging) for the server ECS.
+]=]
+
 -- Services --
-const Players = game:GetService("Players")
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
-const ServerScriptService = game:GetService("ServerScriptService")
+const CollectionService = game:GetService("CollectionService") :: CollectionService
+const Players = game:GetService("Players") :: Players
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+const ServerScriptService = game:GetService("ServerScriptService") :: ServerScriptService
 
 -- Static References --
 const Workspace = workspace :: Workspace
 
--- Modules --
+-- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const EventBus = require(ReplicatedStorage.Shared.Utilities.EventBus)
 const VerticeFile = require(ReplicatedStorage.Shared.Utilities.Render.Core.VerticeFile)
 const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Texture.TextureTable)
+
+-- Storage --
 const Storage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
 const ECSData = Storage.ECSData
 const PositionData = Storage.PositionData
@@ -29,8 +39,10 @@ const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
 const VISUAL_STRIDE = SystemsConfigs.ECSVisualStride :: number
 const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 const STATIC_FOLDER_NAME = SystemsConfigs.StaticObjectsFolderName :: string
-const CORE_EVENTS_FOLDER_NAME = SystemsConfigs.CoreEventsFolderName :: string
-const TEXTURE_SYNC_REMOTE_EVENT_NAME = SystemsConfigs.TextureSyncRemoteEventName :: string
+const PLANE_COLLECTION_TAG = SystemsConfigs.PlaneCollectionTag :: string
+
+-- Variables --
+local StaticFolder = Workspace:FindFirstChild(STATIC_FOLDER_NAME) :: Folder?
 
 -- Tables --
 const PART_TYPE_TO_SHAPE_ID = {
@@ -41,10 +53,9 @@ const PART_TYPE_TO_SHAPE_ID = {
 	[Enum.PartType.CornerWedge] = VerticeFile.ShapeToId.Triangle,
 } :: { [Enum.PartType]: number }
 
-local StaticFolder = Workspace:FindFirstChild(STATIC_FOLDER_NAME) :: Folder?
-
 local ECSBuilderHelper = {}
 
+-- Functions --
 -- ============================================================================
 -- 1. WORKSPACE DECAL DISCOVERY & TEXTURE TABLE POPULATION
 -- ============================================================================
@@ -81,22 +92,16 @@ end
 ]=]
 function ECSBuilderHelper.RegisterDecal(DecalInstance: Decal): number
 	if ECSBuilderHelper.IsPlayerCharacterInstance(DecalInstance) then
-		return 0 -- RETURNS NIL AKA NO TEXTURE
+		return 0
 	end
 
 	const TextureId: number, IsNew: boolean = TextureTable.RegisterUrl(DecalInstance.Texture, DecalInstance.Name, false)
-	if TextureId == 0 then -- this means that the texture is NIL
+	if TextureId == 0 then
 		return 0
 	end
 
 	if IsNew then
-		const CoreEvents = ReplicatedStorage:FindFirstChild(CORE_EVENTS_FOLDER_NAME)
-		const TextureSyncEvent = if CoreEvents
-			then CoreEvents:FindFirstChild(TEXTURE_SYNC_REMOTE_EVENT_NAME)
-			else nil
-		if TextureSyncEvent and TextureSyncEvent:IsA("RemoteEvent") then
-			TextureSyncEvent:FireAllClients(TextureTable.ExportEntries())
-		end
+		EventBus.Emit(EventBus.Events.ServerTexturesChanged, TextureTable.ExportEntries())
 	end
 
 	return TextureId
@@ -119,6 +124,38 @@ end
 -- ============================================================================
 -- 2. WORKSPACE BASEPART ECS REGISTRATION HELPER
 -- ============================================================================
+
+--[=[
+	Resolves the 3-bit ECS ShapeId for a Workspace BasePart, prioritizing explicit ShapeId/Shape attributes
+	and the CollectionService Plane tag before falling back to Roblox PartType mapping.
+	@param Part BasePart -- Source Roblox BasePart instance.
+	@return number -- Resolved 3-bit ECS ShapeId.
+]=]
+function ECSBuilderHelper.ResolvePartShapeId(Part: BasePart): number
+	const ShapeIdAttr = Part:GetAttribute("ShapeId")
+	if typeof(ShapeIdAttr) == "number" and VerticeFile.IdToShape[ShapeIdAttr] ~= nil then
+		return ShapeIdAttr
+	end
+
+	const ShapeNameAttr = Part:GetAttribute("Shape")
+	if typeof(ShapeNameAttr) == "string" and VerticeFile.ShapeToId[ShapeNameAttr] ~= nil then
+		return VerticeFile.ShapeToId[ShapeNameAttr]
+	end
+
+	if CollectionService:HasTag(Part, PLANE_COLLECTION_TAG) then
+		return VerticeFile.ShapeToId.Plane
+	end
+
+	if Part:IsA("WedgePart") or Part:IsA("CornerWedgePart") then
+		return VerticeFile.ShapeToId.Triangle
+	end
+
+	if Part:IsA("Part") then
+		return PART_TYPE_TO_SHAPE_ID[Part.Shape] or VerticeFile.ShapeToId.Cube
+	end
+
+	return VerticeFile.ShapeToId.Cube
+end
 
 --[=[
 	Ingests a workspace BasePart into the server ECS storage buffers (position, orientation, basis, size, color, properties).
@@ -177,39 +214,25 @@ function ECSBuilderHelper.PopulatePart(Part: BasePart)
 
 	local TextureId = 0 :: number
 	const TextureIdAttr = Part:GetAttribute("TextureId")
+	const TextureNameAttr = Part:GetAttribute("TextureName")
 	if typeof(TextureIdAttr) == "number" and TextureIdAttr > 0 then
 		TextureId = TextureIdAttr
+	elseif typeof(TextureNameAttr) == "string" then
+		const TranslatedId = TextureTable.TranslateNameToId(TextureNameAttr) :: number
+		if TranslatedId > 0 then
+			TextureId = TranslatedId
+		end
 	else
-		const TextureNameAttr = Part:GetAttribute("TextureName")
-		if typeof(TextureNameAttr) == "string" then
-			const TranslatedId = TextureTable.TranslateNameToId(TextureNameAttr) :: number
-			if TranslatedId > 0 then
-				TextureId = TranslatedId
-			end
-		else
-			const PartDecal = Part:FindFirstChildWhichIsA("Decal", true) :: Decal?
-			if PartDecal and PartDecal.Texture ~= "" then
-				const DecalTextureId = ECSBuilderHelper.RegisterDecal(PartDecal) :: number
-				if DecalTextureId > 0 then
-					TextureId = DecalTextureId
-				end
+		const PartDecal = Part:FindFirstChildWhichIsA("Decal", true) :: Decal?
+		if PartDecal and PartDecal.Texture ~= "" then
+			const DecalTextureId = ECSBuilderHelper.RegisterDecal(PartDecal) :: number
+			if DecalTextureId > 0 then
+				TextureId = DecalTextureId
 			end
 		end
 	end
 
-	local ShapeId = VerticeFile.ShapeToId.Cube :: number
-	const ShapeIdAttr = Part:GetAttribute("ShapeId")
-	const ShapeNameAttr = Part:GetAttribute("Shape")
-
-	if typeof(ShapeIdAttr) == "number" and VerticeFile.IdToShape[ShapeIdAttr] ~= nil then
-		ShapeId = ShapeIdAttr
-	elseif typeof(ShapeNameAttr) == "string" and VerticeFile.ShapeToId[ShapeNameAttr] ~= nil then
-		ShapeId = VerticeFile.ShapeToId[ShapeNameAttr]
-	elseif Part:IsA("WedgePart") or Part:IsA("CornerWedgePart") then
-		ShapeId = VerticeFile.ShapeToId.Triangle
-	elseif Part:IsA("Part") then
-		ShapeId = PART_TYPE_TO_SHAPE_ID[Part.Shape] or VerticeFile.ShapeToId.Cube
-	end
+	const ShapeId = ECSBuilderHelper.ResolvePartShapeId(Part) :: number
 
 	const PropertiesOffset = (EntityId - 1) * PROPERTIES_STRIDE :: number
 	PropertiesData.CreateLayout(

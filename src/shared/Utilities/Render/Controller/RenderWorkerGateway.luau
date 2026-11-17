@@ -2,91 +2,149 @@
 --!native
 --!optimize 2
 
+--[=[
+	@class RenderWorkerGateway
+	Roblox boundary gateway managing self-created ScreenGui/ImageLabel/EditableImage allocation,
+	parallel worker Actor messaging, texture broadcasting, and triangle batch dispatching.
+]=]
+
 -- Services --
 const Players = game:GetService("Players")
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const AssetService = game:GetService("AssetService")
 
 -- Static References --
-const Player = Players.LocalPlayer :: Player
-const PlayerGui = Player:WaitForChild("PlayerGui") :: PlayerGui
-const PlayerScripts = Player:WaitForChild("PlayerScripts")
+const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
 
 -- Libraries --
-const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
-const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper)
-const RenderControllerHelper = require(script.Parent.RenderControllerHelper)
+const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
+const BufferHelper = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("BufferHelper"))
 
 -- Configs --
-const WIDTH = SystemsConfigs.RenderWidth :: number
-const HEIGHT = SystemsConfigs.RenderHeight :: number
-const IMAGE_SIZE = Vector2.new(WIDTH, HEIGHT) :: Vector2
 const ACTOR_COUNT = SystemsConfigs.ActorCount :: number
-const BAND_HEIGHT = math.ceil(HEIGHT / ACTOR_COUNT) :: number
-const WORKER_BUFFER_MULTIPLIER = SystemsConfigs.WorkerBufferMultiplier :: number
-const WORKER_BUFFER_CAPACITY = WIDTH * HEIGHT * WORKER_BUFFER_MULTIPLIER :: number
 const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
 const SCRIPTABLE_CAMERA_PARK_POSITION = SystemsConfigs.ScriptableCameraParkPosition :: Vector3
-const CORE_EVENTS_FOLDER_NAME = SystemsConfigs.CoreEventsFolderName :: string
-const TEXTURE_SYNC_REMOTE_EVENT_NAME = SystemsConfigs.TextureSyncRemoteEventName :: string
-
--- Tables --
-local RenderWorkerGateway = {}
+const IMAGE_LABEL_NAME = SystemsConfigs.RendererImageLabelName :: string
 
 -- Buffers
 const EmptyPayload = buffer.create(0) :: buffer
 
+-- Tables --
+local RenderWorkerGateway = {}
+
 -- Functions --
 -- ============================================================================
--- 1. WORKER ACTOR GATEWAY - DISPLAY BINDING, SYNC & PARALLEL DISPATCH
+-- 1. SELF-CONTAINED SCREENGUI CREATION & PARALLEL WORKER ACTOR GATEWAY
 -- ============================================================================
 
 --[=[
-	Initializes the ScreenGui EditableImage, worker Actor band ranges, return-pixel listener, and texture sync listener.
+	Creates a self-contained ScreenGui, full-screen ImageLabel, and bound EditableImage for a RenderService instance.
+	@param TargetParent Instance? -- Optional parent container (defaults to LocalPlayer.PlayerGui).
+	@param Width number -- Horizontal pixel resolution.
+	@param Height number -- Vertical pixel resolution.
+	@param GuiName string -- Name assigned to the created ScreenGui.
+	@return (ScreenGui, ImageLabel, EditableImage) -- Created ScreenGui, ImageLabel, and EditableImage.
+]=]
+function RenderWorkerGateway.CreateDisplayGui(
+	TargetParent: Instance?,
+	Width: number,
+	Height: number,
+	GuiName: string
+): (ScreenGui, ImageLabel, EditableImage)
+	const LocalPlayer = Players.LocalPlayer :: Player
+	const ResolvedParent: Instance = TargetParent or LocalPlayer:WaitForChild("PlayerGui")
+
+	if TargetParent == nil then
+		const LegacyGui = ResolvedParent:FindFirstChild("ScreenGui")
+		if LegacyGui and LegacyGui:IsA("ScreenGui") then
+			LegacyGui.Enabled = false
+		end
+	end
+
+	const CreatedGui = Instance.new("ScreenGui")
+	CreatedGui.Name = GuiName
+	CreatedGui.IgnoreGuiInset = true
+	CreatedGui.ResetOnSpawn = false
+	CreatedGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	CreatedGui.Enabled = true
+
+	const CreatedLabel = Instance.new("ImageLabel")
+	CreatedLabel.Name = IMAGE_LABEL_NAME
+	CreatedLabel.AnchorPoint = Vector2.zero
+	CreatedLabel.Position = UDim2.fromScale(0, 0)
+	CreatedLabel.Size = UDim2.fromScale(1, 1)
+	CreatedLabel.BackgroundTransparency = 1
+	CreatedLabel.BorderSizePixel = 0
+	CreatedLabel.Parent = CreatedGui
+
+	const EditableImg = AssetService:CreateEditableImage({ Size = Vector2.new(Width, Height) }) :: EditableImage
+	CreatedLabel.ImageContent = Content.fromObject(EditableImg) :: Content
+	CreatedGui.Parent = ResolvedParent
+
+	return CreatedGui, CreatedLabel, EditableImg
+end
+
+--[=[
+	Initializes worker Actor command buffers, initial horizontal band ranges, and the pixel-return listener.
+	@param Width number -- Viewport width in pixels.
+	@param Height number -- Viewport height in pixels.
+	@param WorkerCapacity number -- Per-worker command buffer byte capacity.
 	@param FinalPixel buffer -- Full-screen RGBA destination buffer.
 	@param BufferTable { buffer } -- Per-worker triangle command buffers.
 	@param WorkerOffsets { number } -- Per-worker byte write offsets.
 	@param BandStarts { number } -- Per-worker dynamic band start Y array.
 	@param BandEnds { number } -- Per-worker dynamic band end Y array.
-	@param OnWorkerReturned (FrameId: number, EditableImage: EditableImage) -> () -- Callback invoked after compositing a valid frame band.
+	@param EditableImg EditableImage -- Bound EditableImage receiving composited frames.
+	@param BindWorkers boolean -- True to bind Controller Actor worker messaging; false for isolated GUI specs.
+	@param OnWorkerReturned (FrameId: number, EditableImage: EditableImage) -> () -- Frame-band completion callback.
 	@param GetCurrentFrame () -> number -- Accessor returning the active frame ID.
-	@param OnTexturesDecoded (UpdatedBuffers: { [number]: buffer }) -> () -- Callback invoked when synced textures finish decoding.
-	@return ({ Actor }, EditableImage) -- Resolved WorkerActors array and bound EditableImage.
+	@return { Actor } -- Resolved parallel worker Actors (empty when BindWorkers is false).
 ]=]
-function RenderWorkerGateway.InitializeGateway(
+function RenderWorkerGateway.InitializeWorkers(
+	Width: number,
+	Height: number,
+	WorkerCapacity: number,
 	FinalPixel: buffer,
 	BufferTable: { buffer },
 	WorkerOffsets: { number },
 	BandStarts: { number },
 	BandEnds: { number },
+	EditableImg: EditableImage,
+	BindWorkers: boolean,
 	OnWorkerReturned: (FrameId: number, EditableImage: EditableImage) -> (),
-	GetCurrentFrame: () -> number,
-	OnTexturesDecoded: (UpdatedBuffers: { [number]: buffer }) -> ()
-): ({ Actor }, EditableImage)
-	const ScreenGui = PlayerGui:WaitForChild("ScreenGui") :: ScreenGui
-	ScreenGui.ResetOnSpawn = false
-	const ImageLabel = ScreenGui:WaitForChild("ImageLabel") :: ImageLabel
+	GetCurrentFrame: () -> number
+): { Actor }
+	if not BindWorkers then
+		for i = 1, ACTOR_COUNT do
+			BufferTable[i] = buffer.create(WorkerCapacity)
+			WorkerOffsets[i] = 0
+			BandStarts[i] = 0
+			BandEnds[i] = Height - 1
+		end
+		return {}
+	end
+
+	const LocalPlayer = Players.LocalPlayer :: Player
+	const PlayerScripts = LocalPlayer:WaitForChild("PlayerScripts")
 	const SelfActor = PlayerScripts:WaitForChild("Controller") :: Actor
 	const WorkerActors = (PlayerScripts:WaitForChild("WorkerFolder"):GetChildren() :: any) :: { Actor }
+	const BandHeight = math.ceil(Height / math.max(1, ACTOR_COUNT)) :: number
 
 	const WorkerPoolSize = math.max(ACTOR_COUNT, #WorkerActors) :: number
 	for i = 1, WorkerPoolSize do
-		BufferTable[i] = buffer.create(WORKER_BUFFER_CAPACITY)
+		BufferTable[i] = buffer.create(WorkerCapacity)
 		WorkerOffsets[i] = 0
 		BandStarts[i] = 0
-		BandEnds[i] = HEIGHT - 1
+		BandEnds[i] = Height - 1
 	end
 
 	for i, TargetActor: Actor in ipairs(WorkerActors) do
-		const BandStartY = (i - 1) * BAND_HEIGHT :: number
-		const BandEndY = math.min(i * BAND_HEIGHT - 1, HEIGHT - 1) :: number
+		const BandStartY = (i - 1) * BandHeight :: number
+		const BandEndY = math.min(i * BandHeight - 1, Height - 1) :: number
 		BandStarts[i] = BandStartY
 		BandEnds[i] = BandEndY
 		TargetActor:SendMessage("Set Band Range", BandStartY, BandEndY)
 	end
-
-	const EditableImage = AssetService:CreateEditableImage({ Size = IMAGE_SIZE }) :: EditableImage
-	ImageLabel.ImageContent = Content.fromObject(EditableImage) :: Content
 
 	task.spawn(function()
 		const ActiveCamera = workspace.CurrentCamera
@@ -113,25 +171,18 @@ function RenderWorkerGateway.InitializeGateway(
 			BufferHelper.CompositeWorkerBand(
 				FinalPixel,
 				WorkerPixelBuffer,
-				WIDTH,
+				Width,
 				BandStartY,
 				BandEndY,
 				DirtyMinY,
 				DirtyMaxY,
 				true
 			)
-			OnWorkerReturned(FrameId, EditableImage)
+			OnWorkerReturned(FrameId, EditableImg)
 		end
 	)
 
-	const CoreEvents = ReplicatedStorage:WaitForChild(CORE_EVENTS_FOLDER_NAME) :: Folder
-	const TextureSyncEvent = CoreEvents:WaitForChild(TEXTURE_SYNC_REMOTE_EVENT_NAME) :: RemoteEvent
-	TextureSyncEvent.OnClientEvent:Connect(function(Entries: any)
-		RenderControllerHelper.ApplySyncedTextures(Entries, OnTexturesDecoded)
-	end)
-	TextureSyncEvent:FireServer()
-
-	return WorkerActors, EditableImage
+	return WorkerActors
 end
 
 --[=[
@@ -153,6 +204,7 @@ end
 	@param WorkerActors { Actor } -- Active worker Actor list.
 	@param BufferTable { buffer } -- Per-worker triangle command buffers.
 	@param WorkerOffsets { number } -- Per-worker active byte counts.
+	@param WorkerCapacity number -- Per-worker command buffer byte capacity.
 	@param BandStarts { number } -- Per-worker band start Y array.
 	@param BandEnds { number } -- Per-worker band end Y array.
 	@param FrameId number -- Monotonic render frame ID.
@@ -161,6 +213,7 @@ function RenderWorkerGateway.DispatchWorkerBatches(
 	WorkerActors: { Actor },
 	BufferTable: { buffer },
 	WorkerOffsets: { number },
+	WorkerCapacity: number,
 	BandStarts: { number },
 	BandEnds: { number },
 	FrameId: number
@@ -169,7 +222,7 @@ function RenderWorkerGateway.DispatchWorkerBatches(
 		const ByteCount = WorkerOffsets[i] :: number
 		local PayloadBuffer = EmptyPayload :: buffer
 		if ByteCount > 0 then
-			if ByteCount < WORKER_BUFFER_CAPACITY then
+			if ByteCount < WorkerCapacity then
 				const CompactSlice = buffer.create(ByteCount) :: buffer
 				buffer.copy(CompactSlice, 0, BufferTable[i], 0, ByteCount)
 				PayloadBuffer = CompactSlice

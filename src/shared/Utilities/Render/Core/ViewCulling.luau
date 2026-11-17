@@ -55,6 +55,7 @@ local ViewCulling = {
 	GetObserverHead = ViewObserverCodec.GetObserverHead,
 	ComputeBackPadding = ViewObserverCodec.ComputeBackPadding,
 	PackClientObserverState = ViewObserverCodec.PackClientObserverState,
+	StepObserverSync = ViewObserverCodec.StepObserverSync,
 }
 
 -- Functions --

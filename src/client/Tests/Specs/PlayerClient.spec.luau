@@ -88,8 +88,7 @@ return function()
 				TestStorage,
 				Vector3.new(0, 10, 0),
 				Vector3.new(0, 0, -1),
-				50,
-				nil
+				50
 			)
 			expect(HitId).to.equal(RemoteSlot)
 			expect(HitObj).to.equal(RemoteRecord)

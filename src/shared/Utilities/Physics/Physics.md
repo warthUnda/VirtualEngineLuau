@@ -15,7 +15,7 @@
 - **`PhysicsControllerHelper.luau`**: Helper for dynamic mass calculation, launch direction resolution, per-entity dynamic substep integration, and force clearing.
 - **`PhysicsInputGateway.luau`**: Isolates Roblox actor storage resolution, character spawn binding, and keyboard input sampling.
 - **`PhysicsInstanceManager.luau`**: Dynamic entity launching (`StartSimulatingEntity`), continuous/impulse movement (`ApplyObjectMovement`), and simulation stopping (`StopSimulatingEntity`).
-- **`PhysicsAwakeState.luau`**: Dense awake entity tracking (`AwakeEntitiesBuffer`, `AwakeEntitySlotBuffer`), velocity/force buffers, and `SetSwapPopCallback` synchronization.
+- **`PhysicsAwakeState.luau`**: Dense awake entity tracking (`AwakeEntitiesBuffer`, `AwakeEntitySlotBuffer`) and per-entity velocity/force buffers.
 
 ### Core Modules (`src/shared/Utilities/Physics/Core/`)
 - **`PhysicsMath.luau`**: Core physics facade for linear velocity integration, broadphase candidate filtering, and world collision resolution.
@@ -51,4 +51,4 @@
 ### 4. Modular Controller Decomposition & Awake-List Entity Management (`PhysicsController`, `PhysicsInstanceManager`, `PhysicsAwakeState`, `PhysicsInputGateway`, `PhysicsControllerHelper`, `PhysicsLibrary`)
 - **`PhysicsController` & `PhysicsInstanceManager`**: `PhysicsController` acts as the thin simulation facade while `PhysicsInstanceManager` handles `ApplyObjectMovement`, `StartSimulatingEntity`, and `StopSimulatingEntity` (checking `FLAG_ANCHORED` and falling back to prepackaged `PhysicsConfig` defaults `ObjectDefaultLaunchAngle`, `ObjectDefaultImpulse`, and `ObjectDefaultSpeed`). `PhysicsInputGateway` isolates Actor storage resolution, character binding, and keyboard sampling.
 - Exposes high-level player state APIs: `SetPlayerPosition`, `GetPlayerPosition`, `SetPlayerVelocity`, and `GetPlayerVelocity`.
-- Manages wake/sleep states and tumbling angular velocity via a dense `AwakeEntitiesBuffer` / `AwakeEntitySlotBuffer` (`O(AwakeCount)` iteration instead of scanning all entities), calls `BVH.EnsureFresh()` once per substep, wakes sleeping entities collided in `PhysicsMath`, marks mutated bodies via `ECSData.MarkDirty`, and stays synchronized across `DeleteEntity` swap-pops via `SetSwapPopCallback`.
+- Manages wake/sleep states and tumbling angular velocity via a dense `AwakeEntitiesBuffer` / `AwakeEntitySlotBuffer` (`O(AwakeCount)` iteration instead of scanning all entities), calls `BVH.EnsureFresh()` once per substep, wakes sleeping entities collided in `PhysicsMath`, marks mutated bodies via `ECSData.MarkDirty`, and evicts deleted slots via `ActiveFlags`.

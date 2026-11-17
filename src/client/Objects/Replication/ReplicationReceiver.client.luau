@@ -2,30 +2,33 @@
 --!native
 --!optimize 2
 
+--[=[
+	@class ReplicationReceiver
+	Sole inbound client network receiver running inside the Controller Actor VM.
+	Listens to OnClientEvent across CoreEvents remotes and publishes domain updates
+	into local ECS storage, TextureTable, and EventBus—performing zero outbound sends.
+]=]
+
 -- Services --
-const Players = game:GetService("Players")
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const Players = game:GetService("Players") :: Players
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 
 -- Static References --
-const LocalPlayer = Players.LocalPlayer :: Player
-const LOCAL_USER_ID = LocalPlayer.UserId :: number
--- The render controller runs inside an Actor, and every Actor owns an isolated Luau VM with its
--- own copy of each required ModuleScript. The receiver therefore has to live in that same Actor,
--- otherwise it fills the PlayerScripts copy of the ECS that nothing ever reads and the controller
--- keeps seeing an entity count of 0. It is cloned into the controller Actor by RenderBootstrap.
 const SelfActor = script:GetActor() :: Actor?
 if not SelfActor then
 	return
 end
 
+const LocalPlayer = Players.LocalPlayer :: Player
+const SharedFolder = ReplicatedStorage:WaitForChild("Shared") :: Folder
 const PlayerScripts = LocalPlayer:WaitForChild("PlayerScripts") :: PlayerScripts
-const ReplicationFolder = PlayerScripts:WaitForChild("Client")
-	:WaitForChild("Objects")
-	:WaitForChild("Replication")
+const ReplicationFolder =
+	PlayerScripts:WaitForChild("Client"):WaitForChild("Objects"):WaitForChild("Replication") :: Folder
 
 -- Libraries --
-const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
-const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
+const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
+const EventBus = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("EventBus"))
+const ClientRemotes = require(ReplicationFolder:WaitForChild("ClientRemotes"))
 const ReplicationReceiverHelper = require(ReplicationFolder:WaitForChild("ReplicationReceiverHelper"))
 
 -- Storage --
@@ -33,24 +36,32 @@ const RequireAny: any = require
 const ObjectStorage = RequireAny(SelfActor:WaitForChild("ObjectStorage")) :: ECSMain.ECSStorage
 
 -- Configs --
-const CORE_EVENTS_FOLDER_NAME = SystemsConfigs.CoreEventsFolderName :: string
-const REPLICATE_REMOTE_EVENT_NAME = SystemsConfigs.ReplicateRemoteEventName :: string
-
--- Remote Events --
-const CoreEvents = ReplicatedStorage:WaitForChild(CORE_EVENTS_FOLDER_NAME) :: Folder
-const ReplicateEvent = CoreEvents:WaitForChild(REPLICATE_REMOTE_EVENT_NAME) :: RemoteEvent
+const LOCAL_USER_ID = LocalPlayer.UserId :: number
+const Events = EventBus.Events
 
 -- Tables --
 const ReceiverState = ReplicationReceiverHelper.CreateReceiverState(ObjectStorage, LOCAL_USER_ID)
 
 -- Functions --
 -- ============================================================================
--- 1. LISTENER - MERGES REPLICATED DELTAS INTO THE LOCAL ECS
+-- 1. INBOUND ONCLIENTEVENT LISTENERS -> DOMAIN / EVENTBUS DISPATCH
 -- ============================================================================
 
-ReplicateEvent.OnClientEvent:Connect(function(Payload: buffer)
+const Remotes = ClientRemotes.WaitForRemotes()
+
+Remotes.ReplicateEvent.OnClientEvent:Connect(function(Payload: buffer)
+	EventBus.Emit(Events.EntityDeltaReceived, Payload)
 	ReplicationReceiverHelper.IngestPayload(ReceiverState, Payload)
 end)
 
--- Notify server that the Controller Actor's ReplicationReceiver listener is connected and ready for initial snapshot
-ReplicateEvent:FireServer()
+Remotes.TextureSyncEvent.OnClientEvent:Connect(function(Entries: any)
+	EventBus.Emit(Events.TextureRegistryReceived, Entries)
+	ReplicationReceiverHelper.ApplySyncedTextures(Entries)
+end)
+
+Remotes.PlayerRegistryEvent.OnClientEvent:Connect(function(Entries: any)
+	ReplicationReceiverHelper.ForwardPlayerRegistry(EventBus.DefaultBus, Entries)
+end)
+
+-- Request initial world, texture, and player registry snapshots via EventBus -> ReplicationSender
+EventBus.Emit(Events.RequestInitialSync)

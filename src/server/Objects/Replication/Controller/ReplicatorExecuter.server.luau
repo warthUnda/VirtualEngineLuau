@@ -2,77 +2,33 @@
 --!native
 --!optimize 2
 
+--[=[
+	@class ReplicatorExecuter
+	Server replication driver broadcasting delta visibility snapshots to connected
+	clients on a fixed tick interval.
+]=]
+
 -- Services --
-const Players = game:GetService("Players")
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
-const ServerScriptService = game:GetService("ServerScriptService")
+const Players = game:GetService("Players") :: Players
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+const ServerScriptService = game:GetService("ServerScriptService") :: ServerScriptService
 
 -- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
-const TextureTable = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Texture"):WaitForChild("TextureTable"))
 const PlayerCuller = require(ServerScriptService.Server.Objects.Replication.Core.PlayerCuller)
 const PlayerFunctions = require(ServerScriptService.Server.Objects.Replication.Core.PlayerFunctions)
+const ServerReplicationGateway = require(script.Parent.ServerReplicationGateway)
 
 -- Storage --
 const Storage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
 const ECSData = Storage.ECSData
 
 -- Configs --
-const CORE_EVENTS_FOLDER_NAME = SystemsConfigs.CoreEventsFolderName :: string
-const REPLICATE_REMOTE_EVENT_NAME = SystemsConfigs.ReplicateRemoteEventName :: string
-const OBSERVER_REMOTE_EVENT_NAME = SystemsConfigs.ObserverRemoteEventName :: string
-const TEXTURE_SYNC_REMOTE_EVENT_NAME = SystemsConfigs.TextureSyncRemoteEventName :: string
 const REPLICATION_TICK_INTERVAL = SystemsConfigs.ReplicationTickInterval :: number
 
 -- Remote Events --
--- Ensure CoreEvents and its 3 child RemoteEvents exist whether pre-placed in Studio or starting from a fresh Rojo tree.
-local CoreEvents = ReplicatedStorage:FindFirstChild(CORE_EVENTS_FOLDER_NAME) :: Folder?
-if not CoreEvents then
-	const NewCoreEvents = Instance.new("Folder")
-	NewCoreEvents.Name = CORE_EVENTS_FOLDER_NAME
-	NewCoreEvents.Parent = ReplicatedStorage
-	CoreEvents = NewCoreEvents
-end
-
-local ReplicateEvent = (CoreEvents :: Folder):FindFirstChild(REPLICATE_REMOTE_EVENT_NAME) :: RemoteEvent?
-if not ReplicateEvent then
-	const NewReplicateEvent = Instance.new("RemoteEvent")
-	NewReplicateEvent.Name = REPLICATE_REMOTE_EVENT_NAME
-	NewReplicateEvent.Parent = CoreEvents
-	ReplicateEvent = NewReplicateEvent
-end
-
-local ObserverStateEvent = (CoreEvents :: Folder):FindFirstChild(OBSERVER_REMOTE_EVENT_NAME)
-if not ObserverStateEvent then
-	const NewObserverEvent = Instance.new("UnreliableRemoteEvent")
-	NewObserverEvent.Name = OBSERVER_REMOTE_EVENT_NAME
-	NewObserverEvent.Parent = CoreEvents
-	ObserverStateEvent = NewObserverEvent
-end
-
-local TextureSyncEvent = (CoreEvents :: Folder):FindFirstChild(TEXTURE_SYNC_REMOTE_EVENT_NAME) :: RemoteEvent?
-if not TextureSyncEvent then
-	const NewTextureSyncEvent = Instance.new("RemoteEvent")
-	NewTextureSyncEvent.Name = TEXTURE_SYNC_REMOTE_EVENT_NAME
-	NewTextureSyncEvent.Parent = CoreEvents
-	TextureSyncEvent = NewTextureSyncEvent
-end
-
-const ReplicateRemote = ReplicateEvent :: RemoteEvent
-const ObserverEventAny = ObserverStateEvent :: any
-const TextureSyncRemote = TextureSyncEvent :: RemoteEvent
-
-ReplicateRemote.OnServerEvent:Connect(function(PlayerObject: Player)
-	PlayerFunctions.MarkClientReady(PlayerObject, ECSData.GetCounts().EntityECSCount)
-end)
-
-ObserverEventAny.OnServerEvent:Connect(function(PlayerObject: Player, Payload: buffer)
-	PlayerFunctions.UpdateObserverFromBuffer(PlayerObject, Payload, ECSData.GetCounts().EntityECSCount)
-end)
-
-TextureSyncRemote.OnServerEvent:Connect(function(PlayerObject: Player)
-	TextureSyncRemote:FireClient(PlayerObject, TextureTable.ExportEntries())
-end)
+const Remotes = ServerReplicationGateway.InitializeGateway()
+const ReplicateRemote = Remotes.ReplicateRemote
 
 -- Functions --
 -- ============================================================================
@@ -85,14 +41,14 @@ while true do
 		PlayerFunctions.SyncEntityVersions(EntityCount)
 	end
 
-	for _, Player: Player in ipairs(Players:GetPlayers()) do
-		if not PlayerFunctions.IsClientReady(Player) then
+	for _, TargetPlayer: Player in ipairs(Players:GetPlayers()) do
+		if not PlayerFunctions.IsClientReady(TargetPlayer) then
 			continue
 		end
 
-		const DeltaPacket = PlayerCuller.CullObjects(Player, true)
+		const DeltaPacket = PlayerCuller.CullObjects(TargetPlayer, true)
 		if DeltaPacket then
-			ReplicateRemote:FireClient(Player, DeltaPacket)
+			ReplicateRemote:FireClient(TargetPlayer, DeltaPacket)
 		end
 	end
 

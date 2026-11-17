@@ -72,8 +72,7 @@ return function()
 				TestStorage,
 				Vector3.new(0, 10, 0),
 				Vector3.new(0, 0, -1),
-				50,
-				nil
+				50
 			)
 			expect(HitId).to.equal(EntityId)
 			expect(HitObj).to.equal(Record)
@@ -143,13 +142,14 @@ return function()
 		end)
 	end)
 
-	describe("3. O(1) Swap-and-Pop Compaction Across Multiple Connected Players", function()
-		it("should preserve moved tail player's DynamicObjectsList OOP binding when an earlier player disconnects", function()
+	describe("3. Free-List Stable Entity IDs Across Disconnecting & Joining Players", function()
+		it("should keep later players at stable EntityIds when an earlier player disconnects and recycle the freed slot", function()
 			const TestStorage = ECSMain.CreateStorage(true)
 			PlayerController.Initialize(TestStorage)
 
 			const PlayerA = ({ UserId = 3001, Name = "PlayerA", Character = nil } :: any) :: Player
 			const PlayerB = ({ UserId = 3002, Name = "PlayerB", Character = nil } :: any) :: Player
+			const PlayerC = ({ UserId = 3003, Name = "PlayerC", Character = nil } :: any) :: Player
 
 			const RecordA = PlayerController.RegisterPlayer(PlayerA, TestStorage)
 			const RecordB = PlayerController.RegisterPlayer(PlayerB, TestStorage)
@@ -164,24 +164,32 @@ return function()
 			expect(RecordA.EntityId).to.equal(1)
 			expect(RecordB.EntityId).to.equal(2)
 
-			-- Disconnect PlayerA (slot 1); PlayerB (slot 2) must swap-pop into slot 1 with intact OOP link
+			-- Disconnect PlayerA (slot 1); PlayerB stays permanently at slot 2 without shifting
 			PlayerController.RemovePlayer(PlayerA, TestStorage)
 
-			expect(TestStorage.ECSData.GetCounts().EntityECSCount).to.equal(1)
-			expect(RecordB.EntityId).to.equal(1)
-			expect(TestStorage.DynamicObjectsList.GetBoundEntityId(RecordB.DynamicId)).to.equal(1)
-			expect(TestStorage.DynamicObjectsList.GetObjectByEntityId(1)).to.equal(RecordB)
+			expect(TestStorage.ECSData.GetCounts().ActiveEntityCount).to.equal(1)
+			expect(TestStorage.ECSData.GetCounts().EntityECSCount).to.equal(2)
+			expect(RecordB.EntityId).to.equal(2)
+			expect(TestStorage.DynamicObjectsList.GetBoundEntityId(RecordB.DynamicId)).to.equal(2)
+			expect(TestStorage.DynamicObjectsList.GetObjectByEntityId(2)).to.equal(RecordB)
 
 			const HitId, HitObj = BVH.Raycast(
 				TestStorage,
 				Vector3.new(30, 10, 0),
 				Vector3.new(0, 0, -1),
-				50,
-				nil
+				50
 			)
-			expect(HitId).to.equal(1)
+			expect(HitId).to.equal(2)
 			expect(HitObj).to.equal(RecordB)
 
+			-- Joining PlayerC recycles freed slot 1
+			const RecordC = PlayerController.RegisterPlayer(PlayerC, TestStorage)
+			expect(RecordC ~= nil).to.equal(true)
+			if RecordC then
+				expect(RecordC.EntityId).to.equal(1)
+			end
+
+			PlayerController.RemovePlayer(PlayerC, TestStorage)
 			PlayerController.RemovePlayer(PlayerB, TestStorage)
 			PlayerController.ResetRegistryForTest(TestStorage)
 		end)

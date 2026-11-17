@@ -2,6 +2,13 @@
 --!native
 --!optimize 2
 
+--[=[
+	@class Camera.spec
+	TestEZ specifications verifying single-player OOP CameraService construction,
+	per-frame basis Vector3 and SIMD vector caching, projection parameter calculations,
+	and CameraStore/CameraLibrary facades.
+]=]
+
 return function()
 	const SpecEnv = getfenv() :: {
 		describe: (string, () -> ()) -> (),
@@ -12,21 +19,19 @@ return function()
 	const it = SpecEnv.it
 	const expect = SpecEnv.expect
 
+	-- Services --
+	const Players = game:GetService("Players")
 	const ReplicatedStorage = game:GetService("ReplicatedStorage")
-	const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
 
-	const CameraHelper = require(
-		SharedFolder:WaitForChild("Utilities")
-			:WaitForChild("Render")
-			:WaitForChild("Camera")
-			:WaitForChild("CameraHelper")
-	)
-	const CameraStore = require(
-		SharedFolder:WaitForChild("Utilities")
-			:WaitForChild("Render")
-			:WaitForChild("Camera")
-			:WaitForChild("CameraStore")
-	)
+	-- Static References --
+	const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
+	const CameraFolder = SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Camera")
+
+	-- Libraries --
+	const CameraHelper = require(CameraFolder:WaitForChild("CameraHelper"))
+	const CameraStore = require(CameraFolder:WaitForChild("CameraStore"))
+	const CameraService = require(CameraFolder:WaitForChild("CameraService"))
+	const CameraLibrary = require(CameraFolder:WaitForChild("CameraLibrary"))
 
 	describe("1. Camera Basis Matrix & Orthonormal CFrame Math", function()
 		it("should produce identity rotation for standard forward (-Z) view", function()
@@ -42,7 +47,7 @@ return function()
 		end)
 
 		it("should produce an orthogonal CFrame under 90-degree yaw rotation", function()
-			const Look = Vector3.new(1, 0, 0) -- Looking along +X
+			const Look = Vector3.new(1, 0, 0)
 			const Up = Vector3.new(0, 1, 0)
 			const Right = Vector3.new(0, 0, -1)
 
@@ -53,8 +58,8 @@ return function()
 		end)
 	end)
 
-	describe("2. Camera Store State & Orientation Accessors", function()
-		it("should expose valid camera state dictionary and non-zero basis directions", function()
+	describe("2. Camera Store Facade & BVH Occlusion", function()
+		it("should expose valid camera state dictionary and cached basis directions", function()
 			const StateTable = CameraStore.GetCameraTable()
 			expect(StateTable ~= nil).to.equal(true)
 			expect(StateTable.CameraFOV > 0).to.equal(true)
@@ -72,7 +77,6 @@ return function()
 		end)
 
 		it("should resolve camera occlusion via BVH.Raycast without Workspace part queries", function()
-			const Players = game:GetService("Players")
 			const LocalPlayer = Players.LocalPlayer :: Player?
 			if not LocalPlayer then
 				return
@@ -93,11 +97,58 @@ return function()
 
 			const Origin = Vector3.new(0, 500, 0)
 			const RayVec = Vector3.new(0, 0, -20)
-			const ClampedPos = CameraHelper.RaycastWorld(Origin, RayVec, nil, nil, TestStorage)
-			-- Box spans Z = [-12, -8]; ray from Z=0 in -Z hits at distance 8, clamped to 8 * 0.9 = 7.2 (-Z)
+			const ClampedPos = CameraHelper.RaycastWorld(Origin, RayVec, TestStorage)
 			expect(ClampedPos.Z).to.be.near(-7.2, 0.25)
 
 			TestStorage.ECSData.DeleteEntity(EntityId)
+		end)
+	end)
+
+	describe("3. OOP CameraService & CameraLibrary Facade", function()
+		it("should compute clamped pitch/yaw rotation from mouse delta", function()
+			const MaxPitchRad = math.rad(60)
+			const Rot = CameraHelper.ComputeLookRotation(Vector2.zero, Vector3.new(25, -100, 0), MaxPitchRad)
+			expect(Rot.X < 0).to.equal(true)
+			expect(Rot.Y > 0).to.equal(true)
+
+			const ClampedUp = CameraHelper.ComputeLookRotation(Vector2.new(0, MaxPitchRad), Vector3.new(0, -10000, 0), MaxPitchRad)
+			expect(ClampedUp.Y).to.be.near(MaxPitchRad, 1e-5)
+
+			const ClampedDown = CameraHelper.ComputeLookRotation(Vector2.new(0, -MaxPitchRad), Vector3.new(0, 10000, 0), MaxPitchRad)
+			expect(ClampedDown.Y).to.be.near(-MaxPitchRad, 1e-5)
+		end)
+
+		it("should construct lean OOP CameraService instances without renderer cache bloat", function()
+			const InitialCF = CFrame.new(12, 34, 56) * CFrame.Angles(0, math.rad(90), 0)
+			const CamObj = CameraLibrary.New(InitialCF, 75)
+
+			expect(CamObj.ClassName).to.equal("CameraService")
+			expect(CamObj:GetFOV()).to.equal(75)
+			expect((CamObj:GetCFrame().Position - Vector3.new(12, 34, 56)).Magnitude).to.be.near(0, 1e-4)
+			expect((CamObj:GetCFrame().LookVector - InitialCF.LookVector).Magnitude).to.be.near(0, 1e-4)
+
+			const RawCam = CamObj :: { [string]: any }
+			expect(RawCam.CachedPosVec).to.equal(nil)
+			expect(RawCam.CachedFocalLength).to.equal(nil)
+			expect(RawCam.GetProjectionParameters).to.equal(nil)
+			expect(RawCam.SyncFrame).to.equal(nil)
+
+			const NextCF = CFrame.new(-5, 10, -20)
+			CamObj:SetCFrame(NextCF)
+			CamObj:ChangeFOV(90)
+			expect((CamObj:GetCFrame().Position - Vector3.new(-5, 10, -20)).Magnitude).to.be.near(0, 1e-4)
+			expect(CamObj:GetFOV()).to.equal(90)
+
+			CamObj:Destroy()
+		end)
+
+		it("should update active singleton camera FOV through CameraService and CameraLibrary facades", function()
+			const PrevFov = CameraLibrary.GetFOV()
+			CameraService:ChangeFOV(85)
+			expect(CameraLibrary.GetFOV()).to.equal(85)
+			expect(CameraStore.GetCameraTable().CameraFOV).to.equal(85)
+			CameraLibrary.ChangeFOV(PrevFov)
+			expect(CameraService:GetFOV()).to.equal(PrevFov)
 		end)
 	end)
 end

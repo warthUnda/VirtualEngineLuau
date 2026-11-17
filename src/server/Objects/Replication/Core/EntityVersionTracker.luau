@@ -25,6 +25,7 @@ const VisualBuffer = Storage.VisualData.GetData() :: buffer
 const SizeBuffer = Storage.SizeData.GetData() :: buffer
 const DirectionsBuffer = Storage.DirectionsData.GetData() :: buffer
 const PropertiesBuffer = Storage.PropertiesData.GetData() :: buffer
+const ActiveFlags = ECSData.GetActiveFlags() :: buffer
 const VersionBuffer = ECSData.GetVersionBuffer() :: buffer
 const DirtyFlags = ECSData.GetDirtyFlags() :: buffer
 
@@ -58,19 +59,40 @@ local EntityVersionTracker = {
 
 --[=[
 	Scans active entities once per tick against the server-wide shadow copy to advance per-component versions.
-	@param EntityCount number -- Current total world entity count.
+	@param EntityCount number -- Current high-water entity index bound.
 ]=]
 function EntityVersionTracker.SyncEntityVersions(EntityCount: number)
 	for i = 1, EntityCount do
 		const FlagOffset = i - 1 :: number
+		if buffer.readu8(ActiveFlags, FlagOffset) == 0 then
+			continue
+		end
+
 		const VersionOffset = FlagOffset * 4 :: number
 		const CompOffset = FlagOffset * COMPONENT_STRIDE :: number
 		const DirOffset = FlagOffset * DIRECTION_STRIDE :: number
 		const VisOffset = FlagOffset * VISUAL_STRIDE :: number
 		const PropOffset = FlagOffset * PROPERTIES_STRIDE :: number
-
 		const CurrentVer = buffer.readu32(VersionBuffer, VersionOffset) :: number
-		local NextVer = CurrentVer :: number
+
+		if buffer.readu8(DirtyFlags, FlagOffset) == 2 or CurrentVer == 0 then
+			const SpawnVer = CurrentVer + 1 :: number
+			buffer.copy(ShadowPositions, CompOffset, PositionBuffer, CompOffset, COMPONENT_STRIDE)
+			buffer.copy(ShadowSizes, CompOffset, SizeBuffer, CompOffset, COMPONENT_STRIDE)
+			buffer.copy(ShadowDirections, DirOffset, DirectionsBuffer, DirOffset, DIRECTION_STRIDE)
+			buffer.writeu32(ShadowVisuals, VisOffset, buffer.readu32(VisualBuffer, VisOffset))
+			buffer.writeu32(ShadowProperties, PropOffset, buffer.readu32(PropertiesBuffer, PropOffset))
+			buffer.writeu32(VersionBuffer, VersionOffset, SpawnVer)
+			buffer.writeu32(PosVersions, VersionOffset, SpawnVer)
+			buffer.writeu32(SizeVersions, VersionOffset, SpawnVer)
+			buffer.writeu32(BasisVersions, VersionOffset, SpawnVer)
+			buffer.writeu32(VisualVersions, VersionOffset, SpawnVer)
+			buffer.writeu32(PropVersions, VersionOffset, SpawnVer)
+			buffer.writeu8(DirtyFlags, FlagOffset, 0)
+			continue
+		end
+
+		const NextVer = CurrentVer + 1 :: number
 		local AnyChanged = false :: boolean
 
 		if
@@ -78,7 +100,6 @@ function EntityVersionTracker.SyncEntityVersions(EntityCount: number)
 			or buffer.readu32(PositionBuffer, CompOffset + 4) ~= buffer.readu32(ShadowPositions, CompOffset + 4)
 			or buffer.readu32(PositionBuffer, CompOffset + 8) ~= buffer.readu32(ShadowPositions, CompOffset + 8)
 		then
-			NextVer = CurrentVer + 1
 			AnyChanged = true
 			buffer.copy(ShadowPositions, CompOffset, PositionBuffer, CompOffset, COMPONENT_STRIDE)
 			buffer.writeu32(PosVersions, VersionOffset, NextVer)
@@ -89,7 +110,6 @@ function EntityVersionTracker.SyncEntityVersions(EntityCount: number)
 			or buffer.readu32(SizeBuffer, CompOffset + 4) ~= buffer.readu32(ShadowSizes, CompOffset + 4)
 			or buffer.readu32(SizeBuffer, CompOffset + 8) ~= buffer.readu32(ShadowSizes, CompOffset + 8)
 		then
-			NextVer = CurrentVer + 1
 			AnyChanged = true
 			buffer.copy(ShadowSizes, CompOffset, SizeBuffer, CompOffset, COMPONENT_STRIDE)
 			buffer.writeu32(SizeVersions, VersionOffset, NextVer)
@@ -97,7 +117,6 @@ function EntityVersionTracker.SyncEntityVersions(EntityCount: number)
 
 		for DirByte = 0, 32, 4 do
 			if buffer.readu32(DirectionsBuffer, DirOffset + DirByte) ~= buffer.readu32(ShadowDirections, DirOffset + DirByte) then
-				NextVer = CurrentVer + 1
 				AnyChanged = true
 				buffer.copy(ShadowDirections, DirOffset, DirectionsBuffer, DirOffset, DIRECTION_STRIDE)
 				buffer.writeu32(BasisVersions, VersionOffset, NextVer)
@@ -106,14 +125,12 @@ function EntityVersionTracker.SyncEntityVersions(EntityCount: number)
 		end
 
 		if buffer.readu32(VisualBuffer, VisOffset) ~= buffer.readu32(ShadowVisuals, VisOffset) then
-			NextVer = CurrentVer + 1
 			AnyChanged = true
 			buffer.writeu32(ShadowVisuals, VisOffset, buffer.readu32(VisualBuffer, VisOffset))
 			buffer.writeu32(VisualVersions, VersionOffset, NextVer)
 		end
 
 		if buffer.readu32(PropertiesBuffer, PropOffset) ~= buffer.readu32(ShadowProperties, PropOffset) then
-			NextVer = CurrentVer + 1
 			AnyChanged = true
 			buffer.writeu32(ShadowProperties, PropOffset, buffer.readu32(PropertiesBuffer, PropOffset))
 			buffer.writeu32(PropVersions, VersionOffset, NextVer)
@@ -122,13 +139,6 @@ function EntityVersionTracker.SyncEntityVersions(EntityCount: number)
 		if AnyChanged then
 			buffer.writeu32(VersionBuffer, VersionOffset, NextVer)
 			buffer.writeu8(DirtyFlags, FlagOffset, 0)
-		elseif CurrentVer == 0 then
-			buffer.writeu32(VersionBuffer, VersionOffset, 1)
-			buffer.writeu32(PosVersions, VersionOffset, 1)
-			buffer.writeu32(SizeVersions, VersionOffset, 1)
-			buffer.writeu32(BasisVersions, VersionOffset, 1)
-			buffer.writeu32(VisualVersions, VersionOffset, 1)
-			buffer.writeu32(PropVersions, VersionOffset, 1)
 		end
 	end
 end
@@ -150,21 +160,11 @@ function EntityVersionTracker.GetEntityDeltaMask(EntityId: number, SentVersion: 
 	end
 
 	local Mask = 0 :: number
-	if buffer.readu32(PosVersions, VersionOffset) > SentVersion then
-		Mask += 1
-	end
-	if buffer.readu32(SizeVersions, VersionOffset) > SentVersion then
-		Mask += 2
-	end
-	if buffer.readu32(BasisVersions, VersionOffset) > SentVersion then
-		Mask += 4
-	end
-	if buffer.readu32(VisualVersions, VersionOffset) > SentVersion then
-		Mask += 8
-	end
-	if buffer.readu32(PropVersions, VersionOffset) > SentVersion then
-		Mask += 16
-	end
+	if buffer.readu32(PosVersions, VersionOffset) > SentVersion then Mask += 1 end
+	if buffer.readu32(SizeVersions, VersionOffset) > SentVersion then Mask += 2 end
+	if buffer.readu32(BasisVersions, VersionOffset) > SentVersion then Mask += 4 end
+	if buffer.readu32(VisualVersions, VersionOffset) > SentVersion then Mask += 8 end
+	if buffer.readu32(PropVersions, VersionOffset) > SentVersion then Mask += 16 end
 	return Mask, CurrentVer
 end
 

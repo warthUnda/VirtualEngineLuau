@@ -3,12 +3,11 @@
 --!optimize 2
 
 -- Services --
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 
 -- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
-const BVHHelper = require(script.Parent.BVHHelper)
 const BVHMath = require(script.Parent.BVHMath)
 const BVHState = require(script.Parent.BVHState)
 const BVHDynamicSweep = require(script.Parent.BVHDynamicSweep)
@@ -33,21 +32,19 @@ local BVHRaycast = {}
 	@param Origin Vector3 -- World-space ray origin.
 	@param DirectionVector Vector3 -- World-space ray direction.
 	@param MaxDistance number? -- Optional max ray distance override.
-	@param IgnoreFilter any? -- Optional EntityId, OOP object, or table filter.
 	@return (number?, any?, number, Vector3?, Vector3?) -- HitEntityId, HitDynamicObject, Distance, HitPosition, HitNormal.
 ]=]
 function BVHRaycast.Raycast(
 	ProvidedStorage: ECSMain.ECSStorage?,
 	Origin: Vector3,
 	DirectionVector: Vector3,
-	MaxDistance: number?,
-	IgnoreFilter: any?
+	MaxDistance: number?
 ): (number?, any?, number, Vector3?, Vector3?)
 	if typeof(Origin) ~= "Vector3" or typeof(DirectionVector) ~= "Vector3" then
 		return nil, nil, 0, nil, nil
 	end
 
-	const OriginX, OriginY, OriginZ = Origin.X, Origin.Y, Origin.Z
+	const OriginX: number, OriginY: number, OriginZ: number = Origin.X, Origin.Y, Origin.Z
 	if OriginX ~= OriginX or OriginY ~= OriginY or OriginZ ~= OriginZ
 		or math.abs(OriginX) == math.huge or math.abs(OriginY) == math.huge or math.abs(OriginZ) == math.huge then
 		return nil, nil, 0, nil, nil
@@ -58,16 +55,16 @@ function BVHRaycast.Raycast(
 	if MaxDistance ~= nil and not (MaxDistance > 0) then return nil, nil, 0, nil, nil end
 
 	const InverseDirectionLength = 1 / DirectionLength :: number
-	const DirectionX, DirectionY, DirectionZ = DirectionVector.X * InverseDirectionLength, DirectionVector.Y * InverseDirectionLength, DirectionVector.Z * InverseDirectionLength
+	const DirectionX: number, DirectionY: number, DirectionZ: number =
+		DirectionVector.X * InverseDirectionLength,
+		DirectionVector.Y * InverseDirectionLength,
+		DirectionVector.Z * InverseDirectionLength
 	const ResolvedMaxDistance = if MaxDistance then math.min(MaxDistance, 1e15) else DirectionLength :: number
 
 	const Storage, EntityCount = BVHState.EnsureFreshAndResolve(ProvidedStorage, false)
 	if not Storage then
 		return nil, nil, ResolvedMaxDistance, nil, nil
 	end
-
-	const IgnoredId = if type(IgnoreFilter) == "number" then IgnoreFilter else 0 :: number
-	const HasComplexIgnore = (IgnoreFilter ~= nil and type(IgnoreFilter) ~= "number") :: boolean
 
 	const InverseDirectionX = if math.abs(DirectionX) > 1e-8 then 1 / DirectionX else (if DirectionX >= 0 then 1e30 else -1e30) :: number
 	const InverseDirectionY = if math.abs(DirectionY) > 1e-8 then 1 / DirectionY else (if DirectionY >= 0 then 1e30 else -1e30) :: number
@@ -107,14 +104,8 @@ function BVHRaycast.Raycast(
 
 				if RightOffset == 0 then
 					const EntityId = buffer.readu32(NodeBuffer, NodeOffset + 12) :: number
-					if EntityId == IgnoredId or EntityId < 1 or EntityId > EntityCount then
+					if EntityId < 1 or EntityId > EntityCount then
 						continue
-					end
-					if HasComplexIgnore then
-						const EntityObj = if DynamicObjectsList then DynamicObjectsList.GetObjectByEntityId(EntityId) else nil
-						if BVHHelper.IsIgnored(EntityId, EntityObj, IgnoredId, IgnoreFilter) then
-							continue
-						end
 					end
 
 					buffer.writeu32(TestedGenBuffer, EntityId * 4, CurrentRayGen)
@@ -157,14 +148,8 @@ function BVHRaycast.Raycast(
 
 	for i = 0, BVHState.DynamicEntityCount - 1 do
 		const EntityId = buffer.readu32(DynamicEntitiesBuffer, i * 4) :: number
-		if EntityId == IgnoredId or EntityId < 1 or EntityId > EntityCount or buffer.readu32(TestedGenBuffer, EntityId * 4) == CurrentRayGen then
+		if EntityId < 1 or EntityId > EntityCount or buffer.readu32(TestedGenBuffer, EntityId * 4) == CurrentRayGen then
 			continue
-		end
-		if HasComplexIgnore then
-			const EntityObj = if DynamicObjectsList then DynamicObjectsList.GetObjectByEntityId(EntityId) else nil
-			if BVHHelper.IsIgnored(EntityId, EntityObj, IgnoredId, IgnoreFilter) then
-				continue
-			end
 		end
 
 		buffer.writeu32(TestedGenBuffer, EntityId * 4, CurrentRayGen)
@@ -181,7 +166,7 @@ function BVHRaycast.Raycast(
 	ClosestDistance, HitEntityId, HitDynamicObject, BestNormalX, BestNormalY, BestNormalZ = BVHDynamicSweep.SweepDynamicRegistry(
 		DynamicObjectsList, EntityCount, CurrentRayGen, OriginX, OriginY, OriginZ, DirectionX, DirectionY, DirectionZ,
 		ClosestDistance, HitEntityId, HitDynamicObject, BestNormalX, BestNormalY, BestNormalZ,
-		IgnoredId, HasComplexIgnore, IgnoreFilter, PositionBuffer, SizeBuffer, DirectionsBuffer, PropertiesBuffer
+		PositionBuffer, SizeBuffer, DirectionsBuffer, PropertiesBuffer
 	)
 
 	if HitEntityId == 0 and HitDynamicObject == nil then

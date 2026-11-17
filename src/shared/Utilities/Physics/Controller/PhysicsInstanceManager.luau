@@ -3,7 +3,7 @@
 --!optimize 2
 
 -- Services --
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 
 -- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
@@ -142,6 +142,13 @@ end
 
 --[=[
 	Steps all currently awake dynamic ECS entities by one physics substep and compacts newly sleeping slots.
+	@param EntityCount number -- Current ECS entity count bound.
+	@param StepDeltaTime number -- Delta time for single physics substep.
+	@param PositionBuffer buffer -- ECS Position buffer.
+	@param SizeBuffer buffer -- ECS Size buffer.
+	@param DirectionsBuffer buffer -- ECS Directions buffer.
+	@param ActiveFlags buffer? -- Optional ECS active flags buffer.
+	@param ECSDataModule any -- ECS data component interface.
 ]=]
 function PhysicsInstanceManager.StepAwakeEntitiesSubstep(
 	EntityCount: number,
@@ -149,6 +156,7 @@ function PhysicsInstanceManager.StepAwakeEntitiesSubstep(
 	PositionBuffer: buffer,
 	SizeBuffer: buffer,
 	DirectionsBuffer: buffer,
+	ActiveFlags: buffer?,
 	ECSDataModule: any
 )
 	const DynamicFlags = PhysicsAwakeState.DynamicFlags
@@ -156,8 +164,16 @@ function PhysicsInstanceManager.StepAwakeEntitiesSubstep(
 	local AwakeIndex = 0 :: number
 	while AwakeIndex < PhysicsAwakeState.GetAwakeCount() do
 		const EntityId = buffer.readu32(AwakeBuf, AwakeIndex * 4) :: number
-		if EntityId < 1 or EntityId > EntityCount or buffer.readu8(DynamicFlags, EntityId - 1) ~= 1 then
+		if
+			EntityId < 1
+			or EntityId > EntityCount
+			or (ActiveFlags ~= nil and buffer.readu8(ActiveFlags, EntityId - 1) == 0)
+			or buffer.readu8(DynamicFlags, EntityId - 1) ~= 1
+		then
 			PhysicsAwakeState.RemoveAwakeEntity(EntityId)
+			if EntityId >= 1 and EntityId <= MAX_ENTITIES and ActiveFlags ~= nil and buffer.readu8(ActiveFlags, EntityId - 1) == 0 then
+				PhysicsAwakeState.ClearEntityPhysicsSlots(EntityId)
+			end
 			continue
 		end
 

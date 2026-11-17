@@ -2,10 +2,14 @@
 --!native
 --!optimize 2
 
+--[=[
+	@class RenderConfig
+	Tunable configuration parameters for the software rasterizer, viewport display,
+	parallel worker actors, lighting, frustum culling, and camera defaults.
+]=]
+
 -- Tables --
 local RenderConfig = {}
-
--- Configs --
 
 -- Display & Worker Settings --
 
@@ -17,6 +21,12 @@ RenderConfig.RenderHeight = 240 :: number
 
 RenderConfig.RenderTotalPixels = RenderConfig.RenderWidth * RenderConfig.RenderHeight :: number
 -- Total pixel count of the renderer canvas (RenderWidth * RenderHeight).
+
+RenderConfig.RendererScreenGuiName = "RendererScreenGui" :: string
+-- Name assigned to the self-created ScreenGui instantiated by RenderService.
+
+RenderConfig.RendererImageLabelName = "ViewportLabel" :: string
+-- Name assigned to the full-screen ImageLabel created inside RenderService's ScreenGui.
 
 RenderConfig.ActorCount = 3 :: number
 -- Number of parallel worker Actors spawned to rasterize triangles across frames.
@@ -90,31 +100,7 @@ RenderConfig.OccluderInscribedRadiusFactor = 0.32 :: number
 RenderConfig.OccluderMinProjectedRadius = 0.26 :: number
 -- Minimum projected screen-space radius required for a foreground entity to become the active dominant occluder without false edge pop-in.
 
--- Camera & Scene Cleaner --
-
-RenderConfig.ScriptableCameraParkPosition = Vector3.new(0, -50000, 0) :: Vector3
--- World position where the client's Workspace Camera is initially parked when switched to Scriptable.
-
-RenderConfig.CameraFixedPosition = Vector3.new(0, 1000, -5000) :: Vector3
--- Fixed distant world position where CameraStore locks the Workspace Camera every frame to avoid rendering default Roblox geometry.
-
-RenderConfig.DefaultCameraCFrame = CFrame.new(5, 5, 5) :: CFrame
--- Initial virtual camera CFrame in CameraStore before the camera host updates it.
-
-RenderConfig.DefaultCameraFOV = 70 :: number
--- Default vertical field of view in degrees for the virtual camera and projection math.
-
-RenderConfig.DefaultCameraView = "FirstPerson" :: string
--- Initial CameraService view preset activated when the render controller starts.
-
-RenderConfig.CameraMaxVerticalAngle = 60 :: number
--- Default maximum vertical look angle in degrees (up/down pitch clamp) in CameraService.
-
-RenderConfig.CameraPlayerEyeOffset = 2.5 :: number
--- Vertical eye-height offset in studs above the simulated player physics body when no BasePart camera host is used.
-
-RenderConfig.CameraMouseUnlockKey = Enum.KeyCode.LeftAlt :: Enum.KeyCode
--- Keyboard keybind (UserInputService) that toggles mouse center lock on/off for the active camera view.
+-- Scene Cleaner --
 
 RenderConfig.CleanerTickInterval = 0 :: number
 -- Yield duration in seconds between client RendererCleaner culling passes.

@@ -3,9 +3,9 @@
 --!optimize 2
 
 -- Services --
-const Players = game:GetService("Players")
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
-const RunService = game:GetService("RunService")
+const Players = game:GetService("Players") :: Players
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+const RunService = game:GetService("RunService") :: RunService
 
 -- Static References --
 const IS_CLIENT = RunService:IsClient() :: boolean
@@ -47,6 +47,7 @@ local CharacterAddedConnection: RBXScriptConnection? = nil
 local ECSObjectStorage: any, ECSDataModule: any = nil, nil
 local ECSPositionBuffer: buffer?, ECSSizeBuffer: buffer? = nil, nil
 local ECSDirectionsBuffer: buffer?, ECSPropertiesBuffer: buffer? = nil, nil
+local ECSActiveFlags: buffer? = nil
 
 -- Tables --
 local PhysicsController = {}
@@ -56,6 +57,10 @@ local PhysicsController = {}
 -- 1. PUBLIC CONTROLLER FACADE - INITIALIZATION, DIRECT ACTIONS & SIMULATION
 -- ============================================================================
 
+--[=[
+	Binds a player character model to the physics controller, updating spawn and current position.
+	@param Character Model -- Character model instance to bind.
+]=]
 function PhysicsController.BindCharacter(Character: Model)
 	const RootPart, StartX, StartY, StartZ = PhysicsControllerHelper.ConfigureCharacterInstance(Character)
 	HostRootPart = RootPart
@@ -69,6 +74,9 @@ function PhysicsController.BindCharacter(Character: Model)
 	PlayerVelX, PlayerVelY, PlayerVelZ = 0, 0, 0
 end
 
+--[=[
+	Initializes the physics subsystem, hooking into Heartbeat and caching ECS storage buffers.
+]=]
 function PhysicsController.InitializePhysics()
 	if Initialized then return end
 
@@ -81,8 +89,8 @@ function PhysicsController.InitializePhysics()
 		ECSSizeBuffer = ObjectStorage.SizeData.GetData()
 		ECSDirectionsBuffer = ObjectStorage.DirectionsData.GetData()
 		ECSPropertiesBuffer = ObjectStorage.PropertiesData.GetData()
-		if ECSDataModule and ECSDataModule.SetSwapPopCallback then
-			ECSDataModule.SetSwapPopCallback(PhysicsAwakeState.OnEntitySwapPop)
+		if ECSDataModule and ECSDataModule.GetActiveFlags then
+			ECSActiveFlags = ECSDataModule.GetActiveFlags()
 		end
 	end
 
@@ -115,6 +123,15 @@ function PhysicsController.InitializePhysics()
 	end
 end
 
+--[=[
+	Applies directional movement intent or an instantaneous impulse to the player body.
+	@param DirX number -- Movement direction X component.
+	@param DirY number -- Movement direction Y component.
+	@param DirZ number -- Movement direction Z component.
+	@param Scale number? -- Optional movement scale scalar.
+	@param Jump boolean? -- Optional jump request flag.
+	@param IsImpulse boolean? -- Optional instantaneous impulse flag.
+]=]
 function PhysicsController.AddPlayerMovement(DirX: number, DirY: number, DirZ: number, Scale: number?, Jump: boolean?, IsImpulse: boolean?)
 	const ResolvedScale = if Scale ~= nil then Scale else 1.0 :: number
 	if Jump then PendingJumpRequested = true end
@@ -129,11 +146,24 @@ function PhysicsController.AddPlayerMovement(DirX: number, DirY: number, DirZ: n
 	PendingMaxScale = math.max(PendingMaxScale, math.abs(ResolvedScale))
 end
 
+--[=[
+	Applies continuous force or instantaneous impulse to a dynamic ECS entity.
+	@param EntityId number -- 1-based ECS entity identifier.
+	@param DirX number -- Force direction X component.
+	@param DirY number -- Force direction Y component.
+	@param DirZ number -- Force direction Z component.
+	@param Magnitude number -- Force or impulse magnitude.
+	@param IsImpulse boolean? -- Optional instantaneous impulse flag.
+]=]
 function PhysicsController.AddObjectMovement(EntityId: number, DirX: number, DirY: number, DirZ: number, Magnitude: number, IsImpulse: boolean?)
 	if not Initialized then PhysicsController.InitializePhysics() end
 	PhysicsInstanceManager.ApplyObjectMovement(EntityId, DirX, DirY, DirZ, Magnitude, IsImpulse, ECSSizeBuffer, ECSPropertiesBuffer)
 end
 
+--[=[
+	Simulates a full physics frame across player motion, rigid body collisions, and awake entities.
+	@param DeltaTime number? -- Optional frame delta time in seconds.
+]=]
 function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 	if not Initialized then PhysicsController.InitializePhysics() end
 
@@ -179,7 +209,7 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 		end
 
 		PhysicsInstanceManager.StepAwakeEntitiesSubstep(
-			EntityCount, StepDeltaTime, PositionBuffer, SizeBuffer, DirectionsBuffer, ECSDataModule
+			EntityCount, StepDeltaTime, PositionBuffer, SizeBuffer, DirectionsBuffer, ECSActiveFlags, ECSDataModule
 		)
 	end
 
@@ -198,16 +228,35 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 	end
 end
 
+--[=[
+	Activates rigid-body simulation on an unanchored ECS entity with launch velocity.
+	@param EntityId number -- 1-based ECS entity identifier.
+	@param Angle (Vector3 | number)? -- Launch direction vector or horizontal yaw angle in degrees.
+	@param Impulse number? -- Launch impulse scalar.
+	@param Speed number? -- Direct launch speed scalar.
+	@param CustomMass number? -- Optional explicit mass override.
+	@return boolean -- True when simulation started successfully.
+]=]
 function PhysicsController.SimulateInstance(EntityId: number, Angle: (Vector3 | number)?, Impulse: number?, Speed: number?, CustomMass: number?): boolean
 	if not Initialized then PhysicsController.InitializePhysics() end
 	return PhysicsInstanceManager.StartSimulatingEntity(EntityId, Angle, Impulse, Speed, CustomMass, ECSSizeBuffer, ECSPropertiesBuffer)
 end
 
+--[=[
+	Halts simulation for an ECS entity and clears its dynamic physics state.
+	@param EntityId number -- 1-based ECS entity identifier.
+]=]
 function PhysicsController.StopSimulatingInstance(EntityId: number)
 	if not Initialized then PhysicsController.InitializePhysics() end
 	PhysicsInstanceManager.StopSimulatingEntity(EntityId)
 end
 
+--[=[
+	Sets the dynamic simulation state for an ECS entity.
+	@param EntityId number -- 1-based ECS entity identifier.
+	@param IsDynamic boolean -- True to activate simulation, false to halt.
+	@param CustomMass number? -- Optional explicit mass override.
+]=]
 function PhysicsController.SetEntityDynamic(EntityId: number, IsDynamic: boolean, CustomMass: number?)
 	if not IsDynamic then
 		PhysicsController.StopSimulatingInstance(EntityId)
@@ -216,11 +265,42 @@ function PhysicsController.SetEntityDynamic(EntityId: number, IsDynamic: boolean
 	PhysicsController.SimulateInstance(EntityId, Vector3.zero, 0, 0, CustomMass)
 end
 
-function PhysicsController.GetPlayerPosition(): Vector3 return Vector3.new(PlayerPosX, PlayerPosY, PlayerPosZ) end
-function PhysicsController.GetPlayerVelocity(): Vector3 return Vector3.new(PlayerVelX, PlayerVelY, PlayerVelZ) end
-function PhysicsController.IsPlayerGrounded(): boolean return PlayerGrounded end
-function PhysicsController.SetPlayerVelocity(NewVelocity: Vector3) PlayerVelX, PlayerVelY, PlayerVelZ = NewVelocity.X, NewVelocity.Y, NewVelocity.Z end
+--[=[
+	Returns the player's current world-space position.
+	@return Vector3 -- Current position vector.
+]=]
+function PhysicsController.GetPlayerPosition(): Vector3
+	return Vector3.new(PlayerPosX, PlayerPosY, PlayerPosZ)
+end
 
+--[=[
+	Returns the player's current linear velocity.
+	@return Vector3 -- Current velocity vector.
+]=]
+function PhysicsController.GetPlayerVelocity(): Vector3
+	return Vector3.new(PlayerVelX, PlayerVelY, PlayerVelZ)
+end
+
+--[=[
+	Returns whether the player is currently grounded on a surface.
+	@return boolean -- True if grounded.
+]=]
+function PhysicsController.IsPlayerGrounded(): boolean
+	return PlayerGrounded
+end
+
+--[=[
+	Sets the player's linear velocity directly.
+	@param NewVelocity Vector3 -- Target linear velocity.
+]=]
+function PhysicsController.SetPlayerVelocity(NewVelocity: Vector3)
+	PlayerVelX, PlayerVelY, PlayerVelZ = NewVelocity.X, NewVelocity.Y, NewVelocity.Z
+end
+
+--[=[
+	Sets the player's world-space position directly and repositions any bound character root part.
+	@param NewPosition Vector3 -- Target position vector.
+]=]
 function PhysicsController.SetPlayerPosition(NewPosition: Vector3)
 	PlayerPosX, PlayerPosY, PlayerPosZ = NewPosition.X, NewPosition.Y, NewPosition.Z
 	if HostRootPart and HostRootPart.Parent then

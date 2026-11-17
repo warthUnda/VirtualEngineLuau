@@ -3,17 +3,12 @@
 --!optimize 2
 
 -- Services --
-const Players = game:GetService("Players")
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
-const ServerScriptService = game:GetService("ServerScriptService")
+const Players = game:GetService("Players") :: Players
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 
 -- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const EntityVersionTracker = require(script.Parent.EntityVersionTracker)
-
--- Storage --
-const Storage = require(ServerScriptService.Server.Objects.ObjectsECS.Storage)
-const ECSData = Storage.ECSData
 
 -- Configs --
 const DEFAULT_SPAWN = SystemsConfigs.PlayerDefaultSpawnPosition :: Vector3
@@ -42,7 +37,6 @@ export type PlayerDeltaState = {
 	FovDegrees: number,
 	LastEntityCount: number,
 	SentVersion: buffer,
-	ForceResync: buffer,
 }
 
 -- Tables --
@@ -52,24 +46,10 @@ local PlayerFunctions = {
 	GetEntityDeltaMask = EntityVersionTracker.GetEntityDeltaMask,
 }
 
+-- Functions --
 -- ============================================================================
--- 1. PLAYER OBSERVER STATE & SWAP-POP RESYNC MANAGEMENT
+-- 1. PLAYER OBSERVER STATE & REPLICATION SESSION MANAGEMENT
 -- ============================================================================
-
-ECSData.SetSwapPopCallback(function(DeletedEntityId: number, MovedFromEntityId: number)
-	if DeletedEntityId == MovedFromEntityId or DeletedEntityId < 1 or DeletedEntityId > MAX_ENTITIES then
-		return
-	end
-
-	const FlagOffset = DeletedEntityId - 1 :: number
-	const VersionOffset = FlagOffset * 4 :: number
-	for _, State in pairs(PlayerStates) do
-		if buffer.readu32(State.SentVersion, VersionOffset) > 0 then
-			buffer.writeu8(State.ForceResync, FlagOffset, 1)
-			buffer.writeu32(State.SentVersion, VersionOffset, 0)
-		end
-	end
-end)
 
 --[=[
 	Cleans up the delta replication state cache for a leaving player.
@@ -112,7 +92,7 @@ end
 --[=[
 	Retrieves or instantiates the cached replication state for a player.
 	@param PlayerObject Player -- Target replicating player.
-	@param EntityCount number -- Current total world entity count.
+	@param EntityCount number -- Current world high-water entity index bound.
 	@return PlayerDeltaState -- Player's delta tracking state.
 ]=]
 function PlayerFunctions.GetOrCreatePlayerState(PlayerObject: Player, EntityCount: number): PlayerDeltaState
@@ -138,7 +118,6 @@ function PlayerFunctions.GetOrCreatePlayerState(PlayerObject: Player, EntityCoun
 			FovDegrees = DEFAULT_CAMERA_FOV,
 			LastEntityCount = EntityCount,
 			SentVersion = buffer.create(MAX_ENTITIES * 4),
-			ForceResync = buffer.create(MAX_ENTITIES),
 		}
 		PlayerFunctions.TrySeedObserverFromCharacter(NewState, PlayerObject.Character)
 		PlayerStates[PlayerObject] = NewState
@@ -148,24 +127,18 @@ function PlayerFunctions.GetOrCreatePlayerState(PlayerObject: Player, EntityCoun
 	if not State.CharacterSeeded and not State.ClientSynced then
 		PlayerFunctions.TrySeedObserverFromCharacter(State, PlayerObject.Character)
 	end
-
-	if EntityCount < State.LastEntityCount then
-		const ShrankCount = State.LastEntityCount - EntityCount :: number
-		buffer.fill(State.SentVersion, EntityCount * 4, 0, ShrankCount * 4)
-		buffer.fill(State.ForceResync, EntityCount, 0, ShrankCount)
-	end
-
 	return State
 end
 
 --[=[
 	Marks a player's Actor-hosted ReplicationReceiver as connected and clears SentVersion.
 	@param PlayerObject Player -- Target replicating player.
-	@param EntityCount number -- Current total world entity count.
+	@param EntityCount number -- Current world entity count.
 ]=]
 function PlayerFunctions.MarkClientReady(PlayerObject: Player, EntityCount: number)
 	const State = PlayerFunctions.GetOrCreatePlayerState(PlayerObject, EntityCount)
 	State.ClientReady = true
+	State.LastEntityCount = EntityCount
 	buffer.fill(State.SentVersion, 0, 0, MAX_ENTITIES * 4)
 end
 

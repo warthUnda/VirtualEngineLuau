@@ -151,7 +151,7 @@ while true do
 				buffer.writeu32(ObjectIdByRenderSlot, RenderSlot * 4, i)
 			end
 
-			if IsNewSlot or buffer.readu8(ObjectDirtyFlags, i - 1) == 1 then
+			if IsNewSlot or buffer.readu8(ObjectDirtyFlags, i - 1) ~= 0 then
 				const SourceOffset = (i - 1) * COMPONENT_STRIDE :: number
 				const SourceDirOffset = (i - 1) * DIRECTION_STRIDE :: number
 				const SourceVisOffset = (i - 1) * VISUAL_STRIDE :: number

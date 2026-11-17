@@ -2,6 +2,13 @@
 --!native
 --!optimize 2
 
+--[=[
+	@class ECSConfig
+	Canonical buffer capacity, byte stride, CollectionService tag, and server
+	replication configuration parameters for the contiguous Entity Component System.
+]=]
+
+-- Tables --
 local ECSConfig = {}
 
 -- ECS Component Buffer Layout --
@@ -67,5 +74,8 @@ ECSConfig.ObserverSyncInterval = 0.05 :: number
 
 ECSConfig.TextureSyncRemoteEventName = "TextureSyncEvent" :: string
 -- Name of the RemoteEvent used to replicate TextureTable's public texture hashmap from server to client.
+
+ECSConfig.PlaneCollectionTag = "Plane" :: string
+-- CollectionService tag categorizing a Workspace BasePart as a single-face Plane mesh instead of a Cube.
 
 return ECSConfig

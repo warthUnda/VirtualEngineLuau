@@ -13,8 +13,8 @@ return function()
 	const expect = SpecEnv.expect
 
 	-- Services --
-	const ReplicatedStorage = game:GetService("ReplicatedStorage")
-	const ServerScriptService = game:GetService("ServerScriptService")
+	const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+	const ServerScriptService = game:GetService("ServerScriptService") :: ServerScriptService
 
 	-- Static References --
 	const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
@@ -33,8 +33,9 @@ return function()
 
 	-- Configs --
 	const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
+	const MASK_DESPAWN = 0x80 :: number
 
-	describe("1. Replication Delta Culling & Swap-Pop Resync", function()
+	describe("1. Replication Delta Culling & Free-List Despawns", function()
 		it("should not re-send unchanged entities when leaving and re-entering the observer frustum", function()
 			const EntityId = TestHelper.SpawnBoxEntity(ServerStorage, CFrame.new(0, 0, -25), Vector3.new(4, 4, 4), false)
 			const MockPlayer = ({ Character = nil } :: any) :: Player
@@ -63,7 +64,7 @@ return function()
 			buffer.writef32(BackwardPayload, 44, 0)
 			buffer.writef32(BackwardPayload, 52, 70)
 
-			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, ForwardPayload, EntityId)
+			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, ForwardPayload, ServerStorage.ECSData.GetCounts().EntityECSCount)
 			local TotalInitialSent = 0 :: number
 			for _ = 1, 64 do
 				const BatchPacket = PlayerCuller.CullObjects(MockPlayer)
@@ -74,7 +75,7 @@ return function()
 			end
 			expect(TotalInitialSent >= 1).to.equal(true)
 
-			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, BackwardPayload, EntityId)
+			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, BackwardPayload, ServerStorage.ECSData.GetCounts().EntityECSCount)
 			for _ = 1, 64 do
 				const AwayPacket = PlayerCuller.CullObjects(MockPlayer)
 				if not AwayPacket then
@@ -82,7 +83,7 @@ return function()
 				end
 			end
 
-			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, ForwardPayload, EntityId)
+			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, ForwardPayload, ServerStorage.ECSData.GetCounts().EntityECSCount)
 			const ReenterPacket = PlayerCuller.CullObjects(MockPlayer)
 			expect(ReenterPacket == nil).to.equal(true)
 
@@ -96,17 +97,19 @@ return function()
 			end
 
 			ServerStorage.ECSData.DeleteEntity(EntityId)
-			const ShrinkPacket = PlayerCuller.CullObjects(MockPlayer)
-			expect(ShrinkPacket ~= nil).to.equal(true)
-			if ShrinkPacket then
-				expect(buffer.readu16(ShrinkPacket, 2)).to.equal(ServerStorage.ECSData.GetCounts().EntityECSCount)
+			const DespawnPacket = PlayerCuller.CullObjects(MockPlayer)
+			expect(DespawnPacket ~= nil).to.equal(true)
+			if DespawnPacket then
+				expect(buffer.readu16(DespawnPacket, 0)).to.equal(1)
+				expect(buffer.readu16(DespawnPacket, 8)).to.equal(EntityId)
+				expect(buffer.readu8(DespawnPacket, 10)).to.equal(MASK_DESPAWN)
 			end
 
 			PlayerFunctions.RemovePlayerState(MockPlayer)
 			ViewCulling.UpdateObserverFromVectors(0, 0, 0, 0, 0, -1, 0, 1, 0, 1, 0, 0, 0, 70)
 		end)
 
-		it("should force-resync a swap-popped slot even when the moved tail entity is outside the frustum", function()
+		it("should emit a compact 3-byte MASK_DESPAWN record for deleted middle slots without disturbing later entities", function()
 			const FrontEntity = TestHelper.SpawnBoxEntity(ServerStorage, CFrame.new(0, 0, -25), Vector3.new(4, 4, 4), false)
 			const BehindTailEntity = TestHelper.SpawnBoxEntity(ServerStorage, CFrame.new(0, 0, 80), Vector3.new(4, 4, 4), false)
 			const MockPlayer = ({ Character = nil } :: any) :: Player
@@ -123,7 +126,7 @@ return function()
 			buffer.writef32(ForwardPayload, 44, 0)
 			buffer.writef32(ForwardPayload, 52, 70)
 
-			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, ForwardPayload, BehindTailEntity)
+			PlayerFunctions.UpdateObserverFromBuffer(MockPlayer, ForwardPayload, ServerStorage.ECSData.GetCounts().EntityECSCount)
 			for _ = 1, 64 do
 				const InitPacket = PlayerCuller.CullObjects(MockPlayer)
 				if not InitPacket then
@@ -132,13 +135,16 @@ return function()
 			end
 
 			ServerStorage.ECSData.DeleteEntity(FrontEntity)
-			const SwapPopPacket = PlayerCuller.CullObjects(MockPlayer)
-			expect(SwapPopPacket ~= nil).to.equal(true)
-			if SwapPopPacket then
-				expect(buffer.readu16(SwapPopPacket, 0) >= 1).to.equal(true)
+			const DespawnPacket = PlayerCuller.CullObjects(MockPlayer)
+			expect(DespawnPacket ~= nil).to.equal(true)
+			if DespawnPacket then
+				expect(buffer.readu16(DespawnPacket, 0)).to.equal(1)
+				expect(buffer.readu16(DespawnPacket, 8)).to.equal(FrontEntity)
+				expect(buffer.readu8(DespawnPacket, 10)).to.equal(MASK_DESPAWN)
+				expect(buffer.len(DespawnPacket)).to.equal(11)
 			end
 
-			ServerStorage.ECSData.DeleteEntity(FrontEntity)
+			ServerStorage.ECSData.DeleteEntity(BehindTailEntity)
 			PlayerFunctions.RemovePlayerState(MockPlayer)
 			ViewCulling.UpdateObserverFromVectors(0, 0, 0, 0, 0, -1, 0, 1, 0, 1, 0, 0, 0, 70)
 		end)

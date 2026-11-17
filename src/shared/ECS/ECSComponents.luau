@@ -3,7 +3,7 @@
 --!optimize 2
 
 -- Services --
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 
 -- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
@@ -11,8 +11,6 @@ const ECSTypes = require(script.Parent.ECSTypes)
 const ECSBitfield = require(script.Parent.ECSBitfield)
 
 -- Configs --
-const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
-const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
 const VISUAL_STRIDE = (SystemsConfigs.ECSVisualStride or 4) :: number
 const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 const COMPONENT_BUFFER_SIZE = SystemsConfigs.ECSComponentBufferSize :: number
@@ -26,95 +24,129 @@ local ECSComponents = {}
 
 -- Functions --
 -- ============================================================================
--- 1. ENTITY LIFECYCLE & ISOLATED COMPONENT FACTORIES
+-- 1. FREE-LIST ENTITY LIFECYCLE & ISOLATED COMPONENT FACTORIES
 -- ============================================================================
 
 --[=[
-	Registers a new entity slot across the synchronized ECS count table.
+	Updates synchronized high-water mark counts across the ECS count table.
+	@param Counts ECSTypes.ECSTable -- Target ECS count table.
+	@param HighWaterCount number -- New high-water entity index bound.
 ]=]
-function ECSComponents.RegisterEntity(Counts: ECSTypes.ECSTable, StaticBuffer: buffer?, IsStatic: boolean?): number
-	const CurrentCount = Counts.EntityECSCount :: number
-	if CurrentCount >= MAX_ENTITIES then
-		return 0
+function ECSComponents.SetEntityCount(Counts: ECSTypes.ECSTable, HighWaterCount: number)
+	Counts.EntityECSCount = HighWaterCount
+	Counts.OrientationECSCount = HighWaterCount
+	Counts.PositionECSCount = HighWaterCount
+	Counts.VisualECSCount = HighWaterCount
+	Counts.SizeECSCount = HighWaterCount
+	Counts.DirectionsECSCount = HighWaterCount
+	Counts.PropertiesECSCount = HighWaterCount
+end
+
+--[=[
+	Allocates a 1-based entity slot by popping from the flat FreeSlotsBuffer stack or advancing the high-water mark.
+	@param Counts ECSTypes.ECSTable -- Target ECS count table.
+	@param ActiveFlags buffer -- Per-slot active occupancy buffer (1 = active, 0 = empty).
+	@param FreeSlotsBuffer buffer -- Pre-allocated u32 free-slot stack buffer.
+	@param FreeSlotTop number -- Current stack depth in FreeSlotsBuffer.
+	@param StaticBuffer buffer? -- Optional static geometry marker buffer.
+	@param IsStatic boolean? -- Optional static marker flag.
+	@return (number, number) -- Allocated 1-based EntityId (or 0 if at capacity) and updated FreeSlotTop.
+]=]
+function ECSComponents.RegisterEntity(
+	Counts: ECSTypes.ECSTable,
+	ActiveFlags: buffer,
+	FreeSlotsBuffer: buffer,
+	FreeSlotTop: number,
+	StaticBuffer: buffer?,
+	IsStatic: boolean?
+): (number, number)
+	const HighWater = Counts.EntityECSCount :: number
+	local NextTop = FreeSlotTop :: number
+	local SlotId = 0 :: number
+
+	while NextTop > 0 do
+		NextTop -= 1
+		const Candidate = buffer.readu32(FreeSlotsBuffer, NextTop * 4) :: number
+		if Candidate >= 1 and Candidate <= HighWater and buffer.readu8(ActiveFlags, Candidate - 1) == 0 then
+			SlotId = Candidate
+			break
+		end
 	end
 
-	const NextCount = CurrentCount + 1 :: number
-	Counts.EntityECSCount = NextCount
-	Counts.OrientationECSCount = NextCount
-	Counts.PositionECSCount = NextCount
-	Counts.VisualECSCount = NextCount
-	Counts.SizeECSCount = NextCount
-	Counts.DirectionsECSCount = NextCount
-	Counts.PropertiesECSCount = NextCount
+	if SlotId == 0 then
+		if HighWater >= MAX_ENTITIES then
+			return 0, NextTop
+		end
+		SlotId = HighWater + 1
+		ECSComponents.SetEntityCount(Counts, SlotId)
+	end
 
+	Counts.ActiveEntityCount += 1
+	buffer.writeu8(ActiveFlags, SlotId - 1, 1)
 	if StaticBuffer then
-		buffer.writeu8(StaticBuffer, NextCount - 1, if IsStatic then 1 else 0)
+		buffer.writeu8(StaticBuffer, SlotId - 1, if IsStatic then 1 else 0)
 	end
-	return NextCount
+	return SlotId, NextTop
 end
 
 --[=[
-	Directly resets all component count fields in the ECS table.
-]=]
-function ECSComponents.SetEntityCount(Counts: ECSTypes.ECSTable, EntityCount: number)
-	Counts.EntityECSCount = EntityCount
-	Counts.OrientationECSCount = EntityCount
-	Counts.PositionECSCount = EntityCount
-	Counts.VisualECSCount = EntityCount
-	Counts.SizeECSCount = EntityCount
-	Counts.DirectionsECSCount = EntityCount
-	Counts.PropertiesECSCount = EntityCount
-end
-
---[=[
-	Deletes an entity using O(1) swap-and-pop compaction to keep component buffers contiguous.
+	Frees an entity slot in place into FreeSlotsBuffer without moving any other entities, trimming trailing empty slots.
+	@param EntityId number -- 1-based entity slot to release.
+	@param Counts ECSTypes.ECSTable -- Target ECS count table.
+	@param ActiveFlags buffer -- Per-slot active occupancy buffer.
+	@param FreeSlotsBuffer buffer -- Pre-allocated u32 free-slot stack buffer.
+	@param FreeSlotTop number -- Current stack depth in FreeSlotsBuffer.
+	@param StaticBuffer buffer? -- Optional static geometry marker buffer.
+	@param PropertiesBuffer buffer? -- Optional properties bitfield buffer to zero out.
+	@return number -- Updated FreeSlotTop stack depth.
 ]=]
 function ECSComponents.DeleteEntity(
 	EntityId: number,
 	Counts: ECSTypes.ECSTable,
-	PositionBuffer: buffer,
-	OrientationBuffer: buffer?,
-	VisualBuffer: buffer,
-	SizeBuffer: buffer,
-	DirectionsBuffer: buffer,
+	ActiveFlags: buffer,
+	FreeSlotsBuffer: buffer,
+	FreeSlotTop: number,
 	StaticBuffer: buffer?,
 	PropertiesBuffer: buffer?
-)
-	const LastEntityId = Counts.EntityECSCount :: number
-	if EntityId < 1 or EntityId > LastEntityId then
-		return
+): number
+	const HighWater = Counts.EntityECSCount :: number
+	if EntityId < 1 or EntityId > HighWater or buffer.readu8(ActiveFlags, EntityId - 1) == 0 then
+		return FreeSlotTop
 	end
 
-	if EntityId ~= LastEntityId then
-		const TargetOffset = (EntityId - 1) * COMPONENT_STRIDE :: number
-		const LastOffset = (LastEntityId - 1) * COMPONENT_STRIDE :: number
-
-		buffer.copy(PositionBuffer, TargetOffset, PositionBuffer, LastOffset, COMPONENT_STRIDE)
-		if OrientationBuffer and OrientationBuffer ~= DirectionsBuffer then
-			buffer.copy(OrientationBuffer, TargetOffset, OrientationBuffer, LastOffset, COMPONENT_STRIDE)
-		end
-		buffer.copy(VisualBuffer, (EntityId - 1) * VISUAL_STRIDE, VisualBuffer, (LastEntityId - 1) * VISUAL_STRIDE, VISUAL_STRIDE)
-		buffer.copy(SizeBuffer, TargetOffset, SizeBuffer, LastOffset, COMPONENT_STRIDE)
-		buffer.copy(DirectionsBuffer, (EntityId - 1) * DIRECTION_STRIDE, DirectionsBuffer, (LastEntityId - 1) * DIRECTION_STRIDE, DIRECTION_STRIDE)
-
-		if PropertiesBuffer then
-			buffer.writeu32(PropertiesBuffer, (EntityId - 1) * PROPERTIES_STRIDE, buffer.readu32(PropertiesBuffer, (LastEntityId - 1) * PROPERTIES_STRIDE))
-		end
-		if StaticBuffer then
-			buffer.writeu8(StaticBuffer, EntityId - 1, buffer.readu8(StaticBuffer, LastEntityId - 1))
-		end
-	end
-
+	buffer.writeu8(ActiveFlags, EntityId - 1, 0)
 	if PropertiesBuffer then
-		buffer.writeu32(PropertiesBuffer, (LastEntityId - 1) * PROPERTIES_STRIDE, 0)
+		buffer.writeu32(PropertiesBuffer, (EntityId - 1) * PROPERTIES_STRIDE, 0)
 	end
 	if StaticBuffer then
-		buffer.writeu8(StaticBuffer, LastEntityId - 1, 0)
+		buffer.writeu8(StaticBuffer, EntityId - 1, 0)
 	end
 
-	ECSComponents.SetEntityCount(Counts, LastEntityId - 1)
+	const RemainingActive = Counts.ActiveEntityCount - 1 :: number
+	if RemainingActive <= 0 then
+		Counts.ActiveEntityCount = 0
+		ECSComponents.SetEntityCount(Counts, 0)
+		return 0
+	end
+	Counts.ActiveEntityCount = RemainingActive
+
+	if EntityId == HighWater then
+		local TrimmedHigh = HighWater - 1 :: number
+		while TrimmedHigh > 0 and buffer.readu8(ActiveFlags, TrimmedHigh - 1) == 0 do
+			TrimmedHigh -= 1
+		end
+		ECSComponents.SetEntityCount(Counts, TrimmedHigh)
+		return FreeSlotTop
+	end
+
+	buffer.writeu32(FreeSlotsBuffer, FreeSlotTop * 4, EntityId)
+	return FreeSlotTop + 1
 end
 
+--[=[
+	Constructs an isolated Vector3 component stream buffer and layout encoder.
+	@return ECSTypes.Vector3Component -- Initialized Vector3 component interface.
+]=]
 function ECSComponents.CreateVector3Component(): ECSTypes.Vector3Component
 	const ComponentBuffer = buffer.create(COMPONENT_BUFFER_SIZE) :: buffer
 	return {
@@ -127,6 +159,10 @@ function ECSComponents.CreateVector3Component(): ECSTypes.Vector3Component
 	}
 end
 
+--[=[
+	Constructs an isolated visual color component stream buffer and layout encoder.
+	@return ECSTypes.VisualComponent -- Initialized Visual component interface.
+]=]
 function ECSComponents.CreateVisualComponent(): ECSTypes.VisualComponent
 	const VisualBuffer = buffer.create(VISUAL_BUFFER_SIZE) :: buffer
 	return {
@@ -139,6 +175,10 @@ function ECSComponents.CreateVisualComponent(): ECSTypes.VisualComponent
 	}
 end
 
+--[=[
+	Constructs an isolated directions (look, up, right basis) component stream buffer and layout encoder.
+	@return ECSTypes.DirectionsComponent -- Initialized Directions component interface.
+]=]
 function ECSComponents.CreateDirectionsComponent(): ECSTypes.DirectionsComponent
 	const DirectionsBuffer = buffer.create(DIRECTION_BUFFER_SIZE) :: buffer
 	return {
@@ -156,6 +196,18 @@ function ECSComponents.CreateDirectionsComponent(): ECSTypes.DirectionsComponent
 	}
 end
 
+--[=[
+	Constructs an isolated properties bitfield component stream buffer or encodes directly into an existing buffer.
+	@param TargetBuffer buffer? -- Optional target buffer to encode layout directly into.
+	@param MemoryOffset number? -- Optional memory offset for direct encoding.
+	@param CanCollide boolean? -- Optional CanCollide bit flag.
+	@param IsVisible boolean? -- Optional IsVisible bit flag.
+	@param Anchored boolean? -- Optional Anchored bit flag.
+	@param DynamicId number? -- Optional DynamicId identifier.
+	@param TextureId number? -- Optional TextureId index.
+	@param ShapeId number? -- Optional ShapeId index.
+	@return any -- Encoded offset (number) if writing to buffer, or ECSTypes.PropertiesComponent table.
+]=]
 function ECSComponents.CreatePropertiesComponent(
 	TargetBuffer: buffer?, MemoryOffset: number?,
 	CanCollide: boolean?, IsVisible: boolean?, Anchored: boolean?,

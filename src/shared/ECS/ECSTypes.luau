@@ -11,6 +11,7 @@ export type ECSTable = {
 	DirectionsECSCount: number,
 	PropertiesECSCount: number?,
 	EntityECSCount: number,
+	ActiveEntityCount: number,
 }
 
 export type DynamicListCounts = {
@@ -58,18 +59,21 @@ export type PropertiesComponent = {
 }
 
 export type ECSDataComponent = {
-	ECSDataTable: ECSTable,
+	ECSDataTable: ECSTypes_ECSTableAlias,
 	GetCounts: () -> ECSTable,
+	GetActiveFlags: () -> buffer,
+	IsEntityActive: (EntityId: number) -> boolean,
 	GetStaticData: () -> buffer,
 	GetDirtyFlags: () -> buffer,
 	GetVersionBuffer: () -> buffer,
 	MarkDirty: (EntityId: number) -> (),
 	ClearDirty: (EntityId: number) -> (),
-	SetSwapPopCallback: (Callback: ((DeletedEntityId: number, MovedFromEntityId: number) -> ())?) -> (),
 	RegisterEntity: (IsStatic: boolean?) -> number,
 	SetEntityCount: (EntityCount: number) -> (),
 	DeleteEntity: (EntityId: number) -> (),
 }
+
+type ECSTypes_ECSTableAlias = ECSTable
 
 export type DynamicObjectsComponent = {
 	ObjectsTable: { [number]: any },

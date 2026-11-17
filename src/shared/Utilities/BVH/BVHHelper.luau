@@ -3,10 +3,10 @@
 --!optimize 2
 
 -- Services --
-const Players = game:GetService("Players")
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
-const RunService = game:GetService("RunService")
-const ServerScriptService = game:GetService("ServerScriptService")
+const Players = game:GetService("Players") :: Players
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+const RunService = game:GetService("RunService") :: RunService
+const ServerScriptService = game:GetService("ServerScriptService") :: ServerScriptService
 
 -- Static References --
 const IS_SERVER = RunService:IsServer() :: boolean
@@ -14,17 +14,8 @@ const SelfActor = script:GetActor() :: Actor?
 const RequireAny = require :: any
 
 -- Libraries --
-const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
 const BVHSubtreeBuilder = require(script.Parent.BVHSubtreeBuilder)
-
--- Configs --
-const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
-const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
-const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
-const MUTATION_SCAN_BUDGET = SystemsConfigs.BVHMutationScanBudget :: number
-const ITEM_BOUNDS_STRIDE = 36 :: number
-const CACHED_STATE_STRIDE = 28 :: number
 
 -- Variables --
 local DefaultServerStorage: ECSMain.ECSStorage? = nil
@@ -37,11 +28,15 @@ local BVHHelper = {
 }
 
 -- Functions --
-
 -- ============================================================================
--- 1. STORAGE RESOLUTION, MUTATION DETECTION & IGNORE FILTER HELPERS
+-- 1. ECS STORAGE VALIDATION & RESOLUTION HELPERS
 -- ============================================================================
 
+--[=[
+	Checks whether a candidate value matches the ECSStorage table layout.
+	@param Candidate any -- Value to inspect.
+	@return boolean -- True when Candidate exposes ECSData, PositionData, SizeData, and DirectionsData.
+]=]
 function BVHHelper.IsECSStorage(Candidate: any): boolean
 	return type(Candidate) == "table"
 		and Candidate.ECSData ~= nil
@@ -50,6 +45,11 @@ function BVHHelper.IsECSStorage(Candidate: any): boolean
 		and Candidate.DirectionsData ~= nil
 end
 
+--[=[
+	Resolves the active Server or Client ECSStorage (or returns ProvidedStorage when valid).
+	@param ProvidedStorage ECSMain.ECSStorage? -- Optional explicit storage override.
+	@return ECSMain.ECSStorage? -- Resolved storage container, or nil if unavailable.
+]=]
 function BVHHelper.ResolveStorage(ProvidedStorage: ECSMain.ECSStorage?): ECSMain.ECSStorage?
 	if ProvidedStorage and BVHHelper.IsECSStorage(ProvidedStorage) then
 		return ProvidedStorage
@@ -104,99 +104,6 @@ function BVHHelper.ResolveStorage(ProvidedStorage: ECSMain.ECSStorage?): ECSMain
 	end
 
 	return DefaultRenderStorage or DefaultClientStorage
-end
-
-function BVHHelper.NeedsRebuild(
-	Storage: ECSMain.ECSStorage,
-	ActiveStorage: ECSMain.ECSStorage?,
-	EntityCount: number,
-	LastBuiltEntityCount: number,
-	LastDynamicActiveCount: number,
-	LastDynamicNextId: number,
-	MutationScanCursor: number,
-	CachedStateBuffer: buffer,
-	EntityIsDynamicBuffer: buffer,
-	ItemBoundsBuffer: buffer
-): (boolean, number)
-	if Storage ~= ActiveStorage or EntityCount ~= LastBuiltEntityCount then
-		return true, MutationScanCursor
-	end
-
-	const DynList = Storage.DynamicObjectsList
-	if DynList and (DynList.Counts.ActiveCount ~= LastDynamicActiveCount or DynList.Counts.NextId ~= LastDynamicNextId) then
-		return true, MutationScanCursor
-	end
-	if EntityCount <= 0 then
-		return false, MutationScanCursor
-	end
-
-	const PositionBuffer = Storage.PositionData.GetData() :: buffer
-	const SizeBuffer = Storage.SizeData.GetData() :: buffer
-	const DirectionsBuffer = Storage.DirectionsData.GetData() :: buffer
-	const PropertiesBuffer = Storage.PropertiesData.GetData() :: buffer
-
-	const CheckCount = math.min(EntityCount, MUTATION_SCAN_BUDGET) :: number
-	local EntityId = MutationScanCursor :: number
-	if EntityId < 1 or EntityId > EntityCount then
-		EntityId = 1
-	end
-
-	for _ = 1, CheckCount do
-		const StateOffset = (EntityId - 1) * CACHED_STATE_STRIDE :: number
-		const CurrentProp = buffer.readu32(PropertiesBuffer, (EntityId - 1) * PROPERTIES_STRIDE) :: number
-		if CurrentProp ~= buffer.readu32(CachedStateBuffer, StateOffset + 24) then
-			return true, EntityId
-		end
-
-		if buffer.readu8(EntityIsDynamicBuffer, EntityId) == 0 then
-			const CompOffset = (EntityId - 1) * COMPONENT_STRIDE :: number
-			const DirOffset = (EntityId - 1) * DIRECTION_STRIDE :: number
-			const BoundsOffset = (EntityId - 1) * ITEM_BOUNDS_STRIDE :: number
-			if
-				buffer.readf32(PositionBuffer, CompOffset) ~= buffer.readf32(ItemBoundsBuffer, BoundsOffset + 24)
-				or buffer.readf32(PositionBuffer, CompOffset + 4) ~= buffer.readf32(ItemBoundsBuffer, BoundsOffset + 28)
-				or buffer.readf32(PositionBuffer, CompOffset + 8) ~= buffer.readf32(ItemBoundsBuffer, BoundsOffset + 32)
-				or buffer.readf32(SizeBuffer, CompOffset) ~= buffer.readf32(CachedStateBuffer, StateOffset)
-				or buffer.readf32(SizeBuffer, CompOffset + 4) ~= buffer.readf32(CachedStateBuffer, StateOffset + 4)
-				or buffer.readf32(SizeBuffer, CompOffset + 8) ~= buffer.readf32(CachedStateBuffer, StateOffset + 8)
-				or buffer.readf32(DirectionsBuffer, DirOffset) ~= buffer.readf32(CachedStateBuffer, StateOffset + 12)
-				or buffer.readf32(DirectionsBuffer, DirOffset + 16) ~= buffer.readf32(CachedStateBuffer, StateOffset + 16)
-				or buffer.readf32(DirectionsBuffer, DirOffset + 32) ~= buffer.readf32(CachedStateBuffer, StateOffset + 20)
-			then
-				return true, EntityId
-			end
-		end
-
-		EntityId += 1
-		if EntityId > EntityCount then
-			EntityId = 1
-		end
-	end
-
-	return false, EntityId
-end
-
-function BVHHelper.IsIgnored(EntityId: number, DynObject: any, IgnoredId: number, IgnoreFilter: any): boolean
-	if EntityId > 0 and EntityId == IgnoredId then
-		return true
-	end
-	if IgnoreFilter == nil then
-		return false
-	end
-	if DynObject ~= nil and IgnoreFilter == DynObject then
-		return true
-	end
-	if type(IgnoreFilter) == "table" then
-		if EntityId > 0 and IgnoreFilter[EntityId] == true then
-			return true
-		end
-		for _, Item in ipairs(IgnoreFilter) do
-			if (EntityId > 0 and Item == EntityId) or (DynObject ~= nil and Item == DynObject) then
-				return true
-			end
-		end
-	end
-	return false
 end
 
 return BVHHelper

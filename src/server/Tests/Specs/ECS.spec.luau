@@ -2,6 +2,13 @@
 --!native
 --!optimize 2
 
+--[=[
+	@class ECS.spec
+	TestEZ specifications verifying contiguous ECS component buffer layout,
+	property bitfield packing, O(1) free-list slot recycling, dynamic OOP binding,
+	and CollectionService Plane tag shape resolution.
+]=]
+
 return function()
 	const SpecEnv = getfenv() :: {
 		describe: (string, () -> ()) -> (),
@@ -13,7 +20,7 @@ return function()
 	const expect = SpecEnv.expect
 
 	-- Services --
-	const ReplicatedStorage = game:GetService("ReplicatedStorage")
+	const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 
 	-- Static References --
 	const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
@@ -63,7 +70,6 @@ return function()
 			expect(ECSMain.IsEntityVisible(UpdatedReg)).to.equal(false)
 			expect(ECSMain.IsEntityAnchored(UpdatedReg)).to.equal(true)
 
-			-- Updating DynamicId must also preserve TextureId and ShapeId
 			Storage.PropertiesData.CreateLayout(0, true, false, true, 77, 2, 3)
 			expect(ECSMain.GetEntityShapeId(buffer.readu32(PropsBuf, 0))).to.equal(3)
 			ECSMain.SetEntityShapeId(PropsBuf, EntityId, 4)
@@ -76,7 +82,7 @@ return function()
 		end)
 	end)
 
-	describe("2. ECS Entity Lifecycle & O(1) Swap-Pop Deletion", function()
+	describe("2. ECS Entity Lifecycle & O(1) Free-List Slot Recycling", function()
 		it("should register sequential entity IDs across synchronized counts", function()
 			const Storage = ECSMain.CreateStorage(true)
 			const Id1 = Storage.ECSData.RegisterEntity(true)
@@ -85,31 +91,45 @@ return function()
 			expect(Id1).to.equal(1)
 			expect(Id2).to.equal(2)
 			expect(Storage.ECSData.GetCounts().EntityECSCount).to.equal(2)
+			expect(Storage.ECSData.GetCounts().ActiveEntityCount).to.equal(2)
+			expect(Storage.ECSData.IsEntityActive(1)).to.equal(true)
+			expect(Storage.ECSData.IsEntityActive(2)).to.equal(true)
 		end)
 
-		it("should swap-and-pop the last entity into the deleted slot", function()
+		it("should recycle deleted middle slots via free-list without moving live entities and trim empty tails", function()
 			const Storage = ECSMain.CreateStorage(true)
 			const PosBuf = Storage.PositionData.GetData()
 
-			const _Id1 = Storage.ECSData.RegisterEntity(true)
+			const Id1 = Storage.ECSData.RegisterEntity(true)
 			const Id2 = Storage.ECSData.RegisterEntity(true)
-			const _Id3 = Storage.ECSData.RegisterEntity(true)
+			const Id3 = Storage.ECSData.RegisterEntity(true)
 
-			-- Write distinct X positions for each entity
 			buffer.writef32(PosBuf, 0, 10)
 			buffer.writef32(PosBuf, COMPONENT_STRIDE, 20)
 			buffer.writef32(PosBuf, COMPONENT_STRIDE * 2, 30)
 
-			-- Delete Id2 (middle entity)
+			-- Delete Id2 (middle entity): Id3 must remain untouched at slot 3
 			Storage.ECSData.DeleteEntity(Id2)
+			expect(Storage.ECSData.IsEntityActive(Id2)).to.equal(false)
+			expect(Storage.ECSData.IsEntityActive(Id3)).to.equal(true)
+			expect(Storage.ECSData.GetCounts().ActiveEntityCount).to.equal(2)
+			expect(Storage.ECSData.GetCounts().EntityECSCount).to.equal(3)
+			expect(buffer.readf32(PosBuf, COMPONENT_STRIDE * 2)).to.equal(30)
 
-			-- Count should be 2
-			expect(Storage.ECSData.GetCounts().EntityECSCount).to.equal(2)
-			-- Slot 2 should now have the data of former slot 3 (X = 30)
-			expect(buffer.readf32(PosBuf, COMPONENT_STRIDE)).to.equal(30)
+			-- Next spawn must recycle freed slot 2
+			const RecycledId = Storage.ECSData.RegisterEntity(false)
+			expect(RecycledId).to.equal(2)
+			expect(Storage.ECSData.IsEntityActive(2)).to.equal(true)
+			expect(Storage.ECSData.GetCounts().ActiveEntityCount).to.equal(3)
+
+			-- Deleting slot 2 then tail slot 3 must trim HighWaterMark (EntityECSCount) down to 1
+			Storage.ECSData.DeleteEntity(2)
+			Storage.ECSData.DeleteEntity(3)
+			expect(Storage.ECSData.GetCounts().ActiveEntityCount).to.equal(1)
+			expect(Storage.ECSData.GetCounts().EntityECSCount).to.equal(Id1)
 		end)
 
-		it("should enforce exact capacity-multiple strides, dirty tracking, and swap-pop dynamic bindings", function()
+		it("should enforce exact capacity-multiple strides, dirty tracking, and stable dynamic bindings", function()
 			expect(SystemsConfigs.ECSVisualStride).to.equal(4)
 			expect(SystemsConfigs.ECSComponentBufferSize).to.equal(SystemsConfigs.ECSMaxEntities * SystemsConfigs.ECSComponentStride)
 			expect(SystemsConfigs.ECSDirectionBufferSize).to.equal(SystemsConfigs.ECSMaxEntities * SystemsConfigs.ECSDirectionStride)
@@ -131,7 +151,7 @@ return function()
 
 			const DirtyFlags = Storage.ECSData.GetDirtyFlags()
 			const VersionBuffer = Storage.ECSData.GetVersionBuffer()
-			expect(buffer.readu8(DirtyFlags, Entity1 - 1)).to.equal(1)
+			expect(buffer.readu8(DirtyFlags, Entity1 - 1) > 0).to.equal(true)
 			const InitialVer = buffer.readu32(VersionBuffer, (Entity1 - 1) * 4)
 			Storage.ECSData.ClearDirty(Entity1)
 			expect(buffer.readu8(DirtyFlags, Entity1 - 1)).to.equal(0)
@@ -139,21 +159,12 @@ return function()
 			expect(buffer.readu8(DirtyFlags, Entity1 - 1)).to.equal(1)
 			expect(buffer.readu32(VersionBuffer, (Entity1 - 1) * 4) > InitialVer).to.equal(true)
 
-			local CallbackDeleted = 0
-			local CallbackMovedFrom = 0
-			Storage.ECSData.SetSwapPopCallback(function(DeletedId: number, MovedId: number)
-				CallbackDeleted = DeletedId
-				CallbackMovedFrom = MovedId
-			end)
-
 			Storage.ECSData.DeleteEntity(Entity2)
-			expect(CallbackDeleted).to.equal(Entity2)
-			expect(CallbackMovedFrom).to.equal(Entity3)
 			expect(Storage.DynamicObjectsList.GetObject(Dyn2)).to.equal(nil)
 			expect(Storage.DynamicObjectsList.GetBoundEntityId(Dyn2)).to.equal(0)
-			expect(Storage.DynamicObjectsList.GetBoundEntityId(Dyn3)).to.equal(Entity2)
-			expect(Storage.DynamicObjectsList.GetObjectByEntityId(Entity2)).to.equal(Obj3)
-			expect(Storage.DynamicObjectsList.GetObjectByEntityId(Entity3)).to.equal(nil)
+			expect(Storage.DynamicObjectsList.GetBoundEntityId(Dyn3)).to.equal(Entity3)
+			expect(Storage.DynamicObjectsList.GetObjectByEntityId(Entity3)).to.equal(Obj3)
+			expect(Storage.DynamicObjectsList.GetObjectByEntityId(Entity2)).to.equal(nil)
 		end)
 	end)
 
@@ -170,7 +181,6 @@ return function()
 			expect(Storage.DynamicObjectsList.GetObjectByEntityId(EntityId)).to.equal(TestData)
 			expect(Storage.DynamicObjectsList.GetBoundEntityId(DynamicId)).to.equal(EntityId)
 
-			-- Remove object
 			Storage.DynamicObjectsList.RemoveObject(DynamicId)
 			expect(Storage.DynamicObjectsList.GetObject(DynamicId)).to.equal(nil)
 			expect(Storage.DynamicObjectsList.GetObjectByEntityId(EntityId)).to.equal(nil)
@@ -191,6 +201,29 @@ return function()
 			Storage.DynamicObjectsList.RemoveObject(ReplicatedDynamicId)
 			expect(Storage.DynamicObjectsList.GetObject(ReplicatedDynamicId)).to.equal(nil)
 			expect(Storage.DynamicObjectsList.GetBoundEntityId(ReplicatedDynamicId)).to.equal(0)
+		end)
+	end)
+
+	describe("5. Plane CollectionTag Detection (ECSBuilderHelper)", function()
+		it("should categorize a Part tagged with PlaneCollectionTag as Plane instead of Cube", function()
+			const CollectionService = game:GetService("CollectionService")
+			const ReplicatedStorage = game:GetService("ReplicatedStorage")
+			const ServerScriptService = game:GetService("ServerScriptService")
+			const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+			const VerticeFile = require(
+				ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("VerticeFile")
+			)
+			const ECSBuilderHelper = require(
+				ServerScriptService:WaitForChild("Server"):WaitForChild("Objects"):WaitForChild("ObjectsECS"):WaitForChild("ECSBuilderHelper")
+			)
+
+			const TestPart = Instance.new("Part")
+			expect(ECSBuilderHelper.ResolvePartShapeId(TestPart)).to.equal(VerticeFile.ShapeToId.Cube)
+
+			CollectionService:AddTag(TestPart, SystemsConfigs.PlaneCollectionTag)
+			expect(ECSBuilderHelper.ResolvePartShapeId(TestPart)).to.equal(VerticeFile.ShapeToId.Plane)
+
+			TestPart:Destroy()
 		end)
 	end)
 end

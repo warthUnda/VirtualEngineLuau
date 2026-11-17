@@ -3,7 +3,7 @@
 --!optimize 2
 
 -- Services --
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 
 -- Static References --
 const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
@@ -26,11 +26,11 @@ local ECSStorageFactory = {}
 
 -- Functions --
 -- ============================================================================
--- 1. UNIFIED ECS STORAGE CONTAINER FACTORY
+-- 1. UNIFIED FREE-LIST ECS STORAGE CONTAINER FACTORY
 -- ============================================================================
 
 --[=[
-	Constructs a complete, unified ECS storage container with all component buffers and swap-pop hooks.
+	Constructs a complete, unified ECS storage container with contiguous component streams and a flat free-list allocator.
 	@param IncludeStaticBuffer boolean? -- Whether to allocate a static geometry marker buffer.
 	@return ECSTypes.ECSStorage -- Fully initialized ECS storage structure.
 ]=]
@@ -41,15 +41,14 @@ function ECSStorageFactory.CreateStorage(IncludeStaticBuffer: boolean?): ECSType
 	const DirectionsData = ECSComponents.CreateDirectionsComponent()
 	const PropertiesData = ECSComponents.CreatePropertiesComponent() :: ECSTypes.PropertiesComponent
 
-	const PositionBuffer = PositionData.GetData() :: buffer
-	const VisualBuffer = VisualData.GetData() :: buffer
-	const SizeBuffer = SizeData.GetData() :: buffer
 	const DirectionsBuffer = DirectionsData.GetData() :: buffer
 	const PropertiesBuffer = PropertiesData.GetData() :: buffer
+	const ActiveFlags = buffer.create(MAX_ENTITIES) :: buffer
+	const FreeSlotsBuffer = buffer.create(MAX_ENTITIES * 4) :: buffer
 	const StaticBuffer = if IncludeStaticBuffer then buffer.create(MAX_ENTITIES) else nil :: buffer?
 	const DirtyFlags = buffer.create(MAX_ENTITIES) :: buffer
 	const VersionBuffer = buffer.create(MAX_ENTITIES * 4) :: buffer
-	const SwapPopCallbacks = {} :: { (DeletedEntityId: number, MovedFromEntityId: number) -> () }
+	local FreeSlotTop = 0 :: number
 
 	const OrientationData: ECSTypes.Vector3Component = {
 		CreateLayout = function(MemoryOffset: number, X: number, Y: number, Z: number): number
@@ -72,6 +71,7 @@ function ECSStorageFactory.CreateStorage(IncludeStaticBuffer: boolean?): ECSType
 		DirectionsECSCount = 0,
 		PropertiesECSCount = 0,
 		EntityECSCount = 0,
+		ActiveEntityCount = 0,
 	}
 
 	const DynamicObjectsList = DynamicObjectsMain.CreateComponent(PropertiesBuffer)
@@ -80,6 +80,16 @@ function ECSStorageFactory.CreateStorage(IncludeStaticBuffer: boolean?): ECSType
 
 	function ECSData.GetCounts(): ECSTypes.ECSTable
 		return ECSDataTable
+	end
+
+	function ECSData.GetActiveFlags(): buffer
+		return ActiveFlags
+	end
+
+	function ECSData.IsEntityActive(EntityId: number): boolean
+		return EntityId >= 1
+			and EntityId <= ECSDataTable.EntityECSCount
+			and buffer.readu8(ActiveFlags, EntityId - 1) == 1
 	end
 
 	function ECSData.GetStaticData(): buffer
@@ -98,7 +108,9 @@ function ECSStorageFactory.CreateStorage(IncludeStaticBuffer: boolean?): ECSType
 		if EntityId < 1 or EntityId > MAX_ENTITIES then
 			return
 		end
-		buffer.writeu8(DirtyFlags, EntityId - 1, 1)
+		if buffer.readu8(DirtyFlags, EntityId - 1) == 0 then
+			buffer.writeu8(DirtyFlags, EntityId - 1, 1)
+		end
 		const VersionOffset = (EntityId - 1) * 4 :: number
 		buffer.writeu32(VersionBuffer, VersionOffset, buffer.readu32(VersionBuffer, VersionOffset) + 1)
 	end
@@ -110,31 +122,31 @@ function ECSStorageFactory.CreateStorage(IncludeStaticBuffer: boolean?): ECSType
 		buffer.writeu8(DirtyFlags, EntityId - 1, 0)
 	end
 
-	function ECSData.SetSwapPopCallback(Callback: ((DeletedEntityId: number, MovedFromEntityId: number) -> ())?)
-		if not Callback then
-			table.clear(SwapPopCallbacks)
-			return
-		end
-		if not table.find(SwapPopCallbacks, Callback) then
-			table.insert(SwapPopCallbacks, Callback)
-		end
-	end
-
 	function ECSData.RegisterEntity(IsStatic: boolean?): number
-		const NewId = ECSComponents.RegisterEntity(ECSDataTable, StaticBuffer, IsStatic) :: number
+		local NewId: number
+		NewId, FreeSlotTop = ECSComponents.RegisterEntity(
+			ECSDataTable, ActiveFlags, FreeSlotsBuffer, FreeSlotTop, StaticBuffer, IsStatic
+		)
 		if NewId > 0 then
-			ECSData.MarkDirty(NewId)
+			buffer.writeu8(DirtyFlags, NewId - 1, 2)
+			const VersionOffset = (NewId - 1) * 4 :: number
+			buffer.writeu32(VersionBuffer, VersionOffset, buffer.readu32(VersionBuffer, VersionOffset) + 1)
 		end
 		return NewId
 	end
 
 	function ECSData.SetEntityCount(EntityCount: number)
 		ECSComponents.SetEntityCount(ECSDataTable, EntityCount)
+		ECSDataTable.ActiveEntityCount = EntityCount
+		FreeSlotTop = 0
+		buffer.fill(ActiveFlags, 0, 1, math.clamp(EntityCount, 0, MAX_ENTITIES))
+		if EntityCount < MAX_ENTITIES then
+			buffer.fill(ActiveFlags, math.max(0, EntityCount), 0, MAX_ENTITIES - math.max(0, EntityCount))
+		end
 	end
 
 	function ECSData.DeleteEntity(EntityId: number)
-		const LastEntityId = ECSDataTable.EntityECSCount :: number
-		if EntityId < 1 or EntityId > LastEntityId then
+		if EntityId < 1 or EntityId > ECSDataTable.EntityECSCount or buffer.readu8(ActiveFlags, EntityId - 1) == 0 then
 			return
 		end
 
@@ -144,25 +156,13 @@ function ECSStorageFactory.CreateStorage(IncludeStaticBuffer: boolean?): ECSType
 			DynamicObjectsList.RemoveObject(DeletedDynId)
 		end
 
-		ECSComponents.DeleteEntity(
-			EntityId, ECSDataTable, PositionBuffer, nil, VisualBuffer, SizeBuffer, DirectionsBuffer, StaticBuffer, PropertiesBuffer
+		buffer.writeu8(DirtyFlags, EntityId - 1, 0)
+		const VersionOffset = (EntityId - 1) * 4 :: number
+		buffer.writeu32(VersionBuffer, VersionOffset, buffer.readu32(VersionBuffer, VersionOffset) + 1)
+
+		FreeSlotTop = ECSComponents.DeleteEntity(
+			EntityId, ECSDataTable, ActiveFlags, FreeSlotsBuffer, FreeSlotTop, StaticBuffer, PropertiesBuffer
 		)
-
-		if EntityId ~= LastEntityId then
-			const MovedProp = buffer.readu32(PropertiesBuffer, (EntityId - 1) * PROPERTIES_STRIDE) :: number
-			const MovedDynId = ECSBitfield.GetEntityDynamicId(MovedProp) :: number
-			if MovedDynId > 0 then
-				DynamicObjectsList.BindEntity(MovedDynId, EntityId)
-			end
-			ECSData.MarkDirty(EntityId)
-		end
-
-		buffer.writeu8(DirtyFlags, LastEntityId - 1, 0)
-		buffer.writeu32(VersionBuffer, (LastEntityId - 1) * 4, 0)
-
-		for _, Callback in SwapPopCallbacks do
-			Callback(EntityId, LastEntityId)
-		end
 	end
 
 	return {

@@ -2,13 +2,20 @@
 --!native
 --!optimize 2
 
+--[=[
+	@class ViewObserverCodec
+	Binary observer state encoder and frustum padding calculator for client-side
+	replication culling updates.
+]=]
+
 -- Services --
-const Players = game:GetService("Players")
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
-const RunService = game:GetService("RunService")
+const Players = game:GetService("Players") :: Players
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+const RunService = game:GetService("RunService") :: RunService
 
 -- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const EventBus = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities"):WaitForChild("EventBus"))
 const CameraStore = if RunService:IsClient()
 	then require(
 		ReplicatedStorage:WaitForChild("Shared")
@@ -23,10 +30,12 @@ const CameraStore = if RunService:IsClient()
 const PADDING_AMOUNT = SystemsConfigs.CullingPaddingAmount :: number
 const PLAYER_EYE_OFFSET = SystemsConfigs.CameraPlayerEyeOffset :: number
 const DEFAULT_CAMERA_FOV = SystemsConfigs.DefaultCameraFOV :: number
+const OBSERVER_SYNC_INTERVAL = SystemsConfigs.ObserverSyncInterval :: number
 const OBSERVER_PAYLOAD_BYTES = 56 :: number
 const OBSERVER_HEARTBEAT_INTERVAL = 0.5 :: number
 
 -- Variables --
+local ObserverAccumulator = OBSERVER_SYNC_INTERVAL :: number
 local HasSentObserver = false :: boolean
 local LastSentClock = 0 :: number
 local LastSentOriginX = 0 :: number
@@ -36,6 +45,9 @@ local LastSentLookX = 0 :: number
 local LastSentLookY = 0 :: number
 local LastSentLookZ = -1 :: number
 local LastSentFov = DEFAULT_CAMERA_FOV :: number
+
+-- Buffers
+const ClientObserverPayload = buffer.create(OBSERVER_PAYLOAD_BYTES) :: buffer
 
 -- Tables --
 local ViewObserverCodec = {
@@ -149,6 +161,23 @@ function ViewObserverCodec.PackClientObserverState(PayloadBuffer: buffer, Player
 	buffer.writef32(PayloadBuffer, 48, ExtraBackPadding)
 	buffer.writef32(PayloadBuffer, 52, CamFov)
 	return true
+end
+
+--[=[
+	Advances the client observer sync timer and emits SendObserverState on EventBus when due.
+	@param DeltaTime number -- Elapsed frame time in seconds.
+	@param PlayerPosition Vector3 -- Simulated local player world position.
+]=]
+function ViewObserverCodec.StepObserverSync(DeltaTime: number, PlayerPosition: Vector3)
+	ObserverAccumulator += DeltaTime
+	if ObserverAccumulator < OBSERVER_SYNC_INTERVAL then
+		return
+	end
+	ObserverAccumulator = 0
+
+	if ViewObserverCodec.PackClientObserverState(ClientObserverPayload, PlayerPosition) then
+		EventBus.Emit(EventBus.Events.SendObserverState, ClientObserverPayload)
+	end
 end
 
 return ViewObserverCodec

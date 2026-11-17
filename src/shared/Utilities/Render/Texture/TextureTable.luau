@@ -2,11 +2,19 @@
 --!native
 --!optimize 2
 
+--[=[
+	@class TextureTable
+	Central texture registry and URL translator.
+	Maintains bidirectional ID/name/URL mappings, deduplicates URLs, and caches
+	decoded 64x64 RGBA pixel buffers for the software renderer.
+]=]
+
 -- Services --
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
 
 -- Libraries --
-const RenderConfig = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Configs"):WaitForChild("RenderConfig"))
+const RenderConfig =
+	require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Configs"):WaitForChild("RenderConfig"))
 const TextureHelper = require(script.Parent.TextureHelper)
 
 -- Configs --
@@ -20,6 +28,7 @@ export type TextureEntry = {
 
 -- Variables --
 local NextDynamicId = 1 :: number
+local CacheVersion = 0 :: number
 
 -- Tables --
 local TextureTable = {}
@@ -64,6 +73,7 @@ function TextureTable.ResetEntries()
 	table.clear(TextureTable.UrlToId)
 	table.clear(TextureTable.CachedBuffers)
 	NextDynamicId = 1
+	CacheVersion += 1
 end
 
 --[=[
@@ -100,6 +110,7 @@ function TextureTable.RegisterUrl(RawUrl: string, TextureName: string?, DecodeNo
 		const DecodedBuffer = TextureTable.DecodeRawUrl(NormalizedUrl)
 		if DecodedBuffer then
 			TextureTable.CachedBuffers[AssignedId] = DecodedBuffer
+			CacheVersion += 1
 		end
 	end
 
@@ -113,7 +124,11 @@ end
 	@param TextureName string? -- Optional texture name.
 	@return (buffer?, boolean) -- Cached 64x64 RGBA buffer (or nil), and true if newly decoded/updated.
 ]=]
-function TextureTable.RegisterEntryWithId(TextureId: number, RawUrl: string, TextureName: string?): (buffer?, boolean)
+function TextureTable.RegisterEntryWithId(
+	TextureId: number,
+	RawUrl: string,
+	TextureName: string?
+): (buffer?, boolean)
 	const NormalizedUrl = TextureTable.NormalizeUrl(RawUrl)
 	if NormalizedUrl == "" then
 		return TextureTable.CachedBuffers[TextureId], false
@@ -137,6 +152,7 @@ function TextureTable.RegisterEntryWithId(TextureId: number, RawUrl: string, Tex
 			end
 		end
 		TextureTable.Entries[TextureId] = { Id = TextureId, Url = NormalizedUrl, Name = ResolvedSharedName }
+		CacheVersion += 1
 		return SharedBuffer, true
 	end
 
@@ -155,6 +171,7 @@ function TextureTable.RegisterEntryWithId(TextureId: number, RawUrl: string, Tex
 	const DecodedBuffer = TextureTable.DecodeRawUrl(NormalizedUrl)
 	if DecodedBuffer then
 		TextureTable.CachedBuffers[TextureId] = DecodedBuffer
+		CacheVersion += 1
 		return DecodedBuffer, true
 	end
 	return nil, false
@@ -221,6 +238,14 @@ end
 ]=]
 function TextureTable.GetAllCachedBuffers(): { [number]: buffer }
 	return TextureTable.CachedBuffers
+end
+
+--[=[
+	Returns the monotonic cache version incremented whenever CachedBuffers is updated or reset.
+	@return number -- Current texture cache version counter.
+]=]
+function TextureTable.GetVersion(): number
+	return CacheVersion
 end
 
 return TextureTable

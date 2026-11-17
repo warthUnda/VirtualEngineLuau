@@ -12,35 +12,33 @@ return function()
 	const it = SpecEnv.it
 	const expect = SpecEnv.expect
 
-	const ReplicatedStorage = game:GetService("ReplicatedStorage")
+	-- Services --
+	const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+
+	-- Static References --
 	const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
 
+	-- Libraries --
 	const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
 	const CleanerHelper = require(
-		SharedFolder:WaitForChild("Utilities")
-			:WaitForChild("Render")
-			:WaitForChild("Scene")
-			:WaitForChild("CleanerHelper")
+		SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Scene"):WaitForChild("CleanerHelper")
 	)
 
-	describe("1. Client Scene Cleaner & Slot Compaction", function()
-		it("should remove entities from render storage and update bidirectional slot maps", function()
+	describe("1. Client Scene Cleaner & Free-List Slot Recycling", function()
+		it("should free render slots in place without moving other slots and recycle freed slots", function()
 			const RenderStorage = ECSMain.CreateStorage(false)
 			const RenderECSData = RenderStorage.ECSData
 			const RenderCounts = RenderECSData.ECSDataTable
 
-			-- Register 3 render slots
 			const Slot1 = RenderECSData.RegisterEntity()
 			const Slot2 = RenderECSData.RegisterEntity()
 			const Slot3 = RenderECSData.RegisterEntity()
 
-			expect(RenderCounts.EntityECSCount).to.equal(3)
+			expect(RenderCounts.ActiveEntityCount).to.equal(3)
 
-			-- Set up bidirectional lookup buffers for 10 entities
 			const RenderSlotByObjectId = buffer.create((10 + 1) * 4)
 			const ObjectIdByRenderSlot = buffer.create((10 + 1) * 4)
 
-			-- Map Server ObjectId 101 -> Slot 1, 102 -> Slot 2, 103 -> Slot 3
 			buffer.writeu32(RenderSlotByObjectId, 1 * 4, Slot1)
 			buffer.writeu32(ObjectIdByRenderSlot, Slot1 * 4, 1)
 
@@ -50,7 +48,6 @@ return function()
 			buffer.writeu32(RenderSlotByObjectId, 3 * 4, Slot3)
 			buffer.writeu32(ObjectIdByRenderSlot, Slot3 * 4, 3)
 
-			-- Despawn entity 1 (currently in Slot 1)
 			CleanerHelper.RemoveRenderEntity(
 				RenderECSData,
 				RenderCounts,
@@ -60,16 +57,19 @@ return function()
 				Slot1
 			)
 
-			-- Total render count must now be 2
-			expect(RenderCounts.EntityECSCount).to.equal(2)
+			expect(RenderCounts.ActiveEntityCount).to.equal(2)
+			expect(RenderECSData.IsEntityActive(Slot1)).to.equal(false)
+			expect(RenderECSData.IsEntityActive(Slot3)).to.equal(true)
 
-			-- Slot 1 should now be occupied by former entity 3
-			expect(buffer.readu32(ObjectIdByRenderSlot, Slot1 * 4)).to.equal(3)
-			expect(buffer.readu32(RenderSlotByObjectId, 3 * 4)).to.equal(Slot1)
-
-			-- Despawned entity 1 and vacated slot 3 must be zeroed
+			-- Slot 3 remains mapped to entity 3 without moving
+			expect(buffer.readu32(ObjectIdByRenderSlot, Slot3 * 4)).to.equal(3)
+			expect(buffer.readu32(RenderSlotByObjectId, 3 * 4)).to.equal(Slot3)
 			expect(buffer.readu32(RenderSlotByObjectId, 1 * 4)).to.equal(0)
-			expect(buffer.readu32(ObjectIdByRenderSlot, Slot3 * 4)).to.equal(0)
+			expect(buffer.readu32(ObjectIdByRenderSlot, Slot1 * 4)).to.equal(0)
+
+			-- Next registration recycles Slot 1
+			const RecycledSlot = RenderECSData.RegisterEntity()
+			expect(RecycledSlot).to.equal(Slot1)
 		end)
 
 		it("should filter invisible entities via IsEntityVisible and reset dirty flags after sync", function()
@@ -85,8 +85,8 @@ return function()
 			expect(ECSMain.IsEntityVisible(buffer.readu32(PropsBuf, 4))).to.equal(false)
 
 			const DirtyFlags = SourceStorage.ECSData.GetDirtyFlags()
-			expect(buffer.readu8(DirtyFlags, VisibleId - 1)).to.equal(1)
-			expect(buffer.readu8(DirtyFlags, InvisibleId - 1)).to.equal(1)
+			expect(buffer.readu8(DirtyFlags, VisibleId - 1) > 0).to.equal(true)
+			expect(buffer.readu8(DirtyFlags, InvisibleId - 1) > 0).to.equal(true)
 
 			SourceStorage.ECSData.ClearDirty(VisibleId)
 			expect(buffer.readu8(DirtyFlags, VisibleId - 1)).to.equal(0)

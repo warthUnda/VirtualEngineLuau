@@ -2,9 +2,16 @@
 --!native
 --!optimize 2
 
+--[=[
+	@class main.client
+	Main client entry point executed inside the Controller Actor VM.
+	Initializes local physics, player input/camera controllers, and the software
+	renderer, driving the unthrottled RenderStepped simulation and render loop.
+]=]
+
 -- Services --
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
-const RunService = game:GetService("RunService")
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+const RunService = game:GetService("RunService") :: RunService
 
 -- Static References --
 -- Cloned into the Controller Actor by RenderBootstrap; skip execution in the PlayerScripts template copy.
@@ -13,32 +20,16 @@ if not SelfActor then
 	return
 end
 
-const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
-const Utilities = SharedFolder:WaitForChild("Utilities")
+const SharedFolder = ReplicatedStorage:WaitForChild("Shared") :: Folder
+const Utilities = SharedFolder:WaitForChild("Utilities") :: Folder
 
 -- Libraries --
-const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 const PhysicsController =
 	require(Utilities:WaitForChild("Physics"):WaitForChild("Controller"):WaitForChild("PhysicsController"))
 const PlayerController =
 	require(Utilities:WaitForChild("Player"):WaitForChild("Controller"):WaitForChild("PlayerController"))
-const Renderer = require(Utilities:WaitForChild("Render"):WaitForChild("Controller"):WaitForChild("RenderController"))
 const ViewCulling = require(Utilities:WaitForChild("Render"):WaitForChild("Core"):WaitForChild("ViewCulling"))
-
--- Configs --
-const CORE_EVENTS_FOLDER_NAME = SystemsConfigs.CoreEventsFolderName :: string
-const OBSERVER_REMOTE_EVENT_NAME = SystemsConfigs.ObserverRemoteEventName :: string
-const OBSERVER_SYNC_INTERVAL = SystemsConfigs.ObserverSyncInterval :: number
-
--- Remote Events --
-const CoreEvents = ReplicatedStorage:WaitForChild(CORE_EVENTS_FOLDER_NAME) :: Folder
-const ObserverStateEvent = CoreEvents:WaitForChild(OBSERVER_REMOTE_EVENT_NAME) :: any
-
--- Variables --
-local SyncAccumulator = OBSERVER_SYNC_INTERVAL :: number
-
--- Buffers
-const ObserverPayload = buffer.create(ViewCulling.ObserverPayloadBytes) :: buffer
+const RenderLibrary = require(Utilities:WaitForChild("Render"):WaitForChild("RenderLibrary"))
 
 -- Functions --
 -- ============================================================================
@@ -47,10 +38,10 @@ const ObserverPayload = buffer.create(ViewCulling.ObserverPayloadBytes) :: buffe
 
 PhysicsController.InitializePhysics()
 PlayerController.Initialize()
-Renderer.Init()
+RenderLibrary.Init()
 
 -- ============================================================================
--- 2. MAIN LOOP - SIMULATE PHYSICS, DRAW FRAME & STREAM VIRTUAL OBSERVER
+-- 2. MAIN LOOP - SIMULATE PHYSICS & DRAW FRAME
 -- ============================================================================
 
 while true do
@@ -58,18 +49,9 @@ while true do
 	debug.profilebegin("SimulatePhysics")
 	PhysicsController.SimulatePhysicsFrame(DeltaTime)
 	PlayerController.StepClient(DeltaTime)
+	ViewCulling.StepObserverSync(DeltaTime, PhysicsController.GetPlayerPosition())
 	debug.profileend()
 	debug.profilebegin("Render all instances")
-	Renderer.DrawFrame()
-	debug.profileend()
-
-	debug.profilebegin("Send replication info")
-	SyncAccumulator += DeltaTime
-	if SyncAccumulator >= OBSERVER_SYNC_INTERVAL then
-		SyncAccumulator = 0
-		if ViewCulling.PackClientObserverState(ObserverPayload, PhysicsController.GetPlayerPosition()) then
-			ObserverStateEvent:FireServer(ObserverPayload)
-		end
-	end
+	RenderLibrary.DrawFrame()
 	debug.profileend()
 end

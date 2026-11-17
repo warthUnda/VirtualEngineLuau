@@ -2,12 +2,24 @@
 --!native
 --!optimize 2
 
+--[=[
+	@class ReplicationReceiverHelper
+	Helper module for client replication ingestion, texture synchronization,
+	player registry forwarding, and delta packet decoding with free-list slot management.
+]=]
+
 -- Services --
-const ReplicatedStorage = game:GetService("ReplicatedStorage")
+const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+
+-- Static References --
+const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
+const UtilitiesFolder = SharedFolder:WaitForChild("Utilities")
 
 -- Libraries --
-const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
-const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
+const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
+const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
+const EventBus = require(UtilitiesFolder:WaitForChild("EventBus"))
+const TextureTable = require(UtilitiesFolder:WaitForChild("Render"):WaitForChild("Texture"):WaitForChild("TextureTable"))
 
 -- Configs --
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
@@ -15,8 +27,10 @@ const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
 const VISUAL_STRIDE = SystemsConfigs.ECSVisualStride :: number
 const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 const HEADER_BYTES = 8 :: number
+const MASK_DESPAWN = 0x80 :: number
 const FLAG_CAN_COLLIDE = bit32.lshift(1, 1) :: number
 const NOT_CAN_COLLIDE = bit32.bnot(FLAG_CAN_COLLIDE) :: number
+const Events = EventBus.Events
 
 export type ReceiverState = {
 	Storage: ECSMain.ECSStorage,
@@ -24,7 +38,6 @@ export type ReceiverState = {
 	MaxEntities: number,
 	ClientSlotByServerId: buffer,
 	ServerIdByClientSlot: buffer,
-	LastWorldEntityCount: number,
 }
 
 -- Tables --
@@ -32,11 +45,11 @@ local ReplicationReceiverHelper = {}
 
 -- Functions --
 -- ============================================================================
--- 1. STATE INITIALIZATION & BINARY DELTA PAYLOAD INGESTION
+-- 1. STATE INITIALIZATION, INBOUND EVENT DISPATCH & DELTA PAYLOAD INGESTION
 -- ============================================================================
 
 --[=[
-	Creates bidirectional server<->client entity slot maps and registers the O(1) swap-and-pop hook on Storage.
+	Creates bidirectional server<->client entity slot maps over the target client ECSStorage.
 	@param Storage ECSMain.ECSStorage -- Target client ECSStorage instance.
 	@param LocalUserId number -- Local player's UserId (or 0 if unavailable).
 	@return ReceiverState -- Initialized replication receiver state.
@@ -50,49 +63,52 @@ function ReplicationReceiverHelper.CreateReceiverState(
 	const LocalDirectionsBuffer = Storage.DirectionsData.GetData() :: buffer
 	const LocalVisualBuffer = Storage.VisualData.GetData() :: buffer
 
-	const MaxComponentEntities = math.min(
-		buffer.len(LocalPositionBuffer),
-		buffer.len(LocalSizeBuffer)
-	) // COMPONENT_STRIDE :: number
+	const MaxComponentEntities = math.min(buffer.len(LocalPositionBuffer), buffer.len(LocalSizeBuffer)) // COMPONENT_STRIDE :: number
 	const MaxDirectionEntities = buffer.len(LocalDirectionsBuffer) // DIRECTION_STRIDE :: number
 	const MaxVisualEntities = buffer.len(LocalVisualBuffer) // VISUAL_STRIDE :: number
 	const MaxEntities = math.min(MaxComponentEntities, MaxDirectionEntities, MaxVisualEntities) :: number
-
-	const ClientSlotByServerId = buffer.create((MaxEntities + 1) * 4) :: buffer
-	const ServerIdByClientSlot = buffer.create((MaxEntities + 1) * 4) :: buffer
-	const ECSData = Storage.ECSData
-	const DynamicObjectsList = Storage.DynamicObjectsList
-
-	ECSData.SetSwapPopCallback(function(DeletedSlot: number, LastSlot: number)
-		if DeletedSlot ~= LastSlot then
-			const MovedServerId = buffer.readu32(ServerIdByClientSlot, LastSlot * 4) :: number
-			buffer.writeu32(ServerIdByClientSlot, DeletedSlot * 4, MovedServerId)
-			if MovedServerId > 0 and MovedServerId <= MaxEntities then
-				buffer.writeu32(ClientSlotByServerId, MovedServerId * 4, DeletedSlot)
-			end
-			const MovedObj = DynamicObjectsList.GetObjectByEntityId(DeletedSlot)
-			if type(MovedObj) == "table" then
-				const MovedRecord = MovedObj :: { [string]: any }
-				MovedRecord.EntityId = DeletedSlot
-			end
-			ECSData.MarkDirty(DeletedSlot)
-		end
-		buffer.writeu32(ServerIdByClientSlot, LastSlot * 4, 0)
-	end)
 
 	return {
 		Storage = Storage,
 		LocalUserId = LocalUserId,
 		MaxEntities = MaxEntities,
-		ClientSlotByServerId = ClientSlotByServerId,
-		ServerIdByClientSlot = ServerIdByClientSlot,
-		LastWorldEntityCount = 0,
+		ClientSlotByServerId = buffer.create((MaxEntities + 1) * 4),
+		ServerIdByClientSlot = buffer.create((MaxEntities + 1) * 4),
 	}
 end
 
 --[=[
-	Unpacks a binary replication delta payload into Storage, reconstructing orthonormal basis vectors,
-	compacting despawned tail server IDs, and binding replicated DynamicIds into DynamicObjectsList.
+	Asynchronously decodes replicated server texture entries into TextureTable without stalling the frame loop.
+	@param Entries any -- Replicated TextureEntry array from TextureSyncEvent.
+]=]
+function ReplicationReceiverHelper.ApplySyncedTextures(Entries: any)
+	if type(Entries) ~= "table" then
+		return
+	end
+	task.spawn(function()
+		for _, Entry: any in ipairs(Entries :: { any }) do
+			if type(Entry) == "table" and type(Entry.Id) == "number" and type(Entry.Url) == "string" then
+				TextureTable.RegisterEntryWithId(Entry.Id, Entry.Url, Entry.Name)
+			end
+		end
+	end)
+end
+
+--[=[
+	Publishes inbound player registry snapshots onto the client EventBus so PlayerController never touches RemoteEvents.
+	@param Bus EventBus.BusInstance -- Target EventBus instance.
+	@param Entries any -- Replicated player registry entries array.
+]=]
+function ReplicationReceiverHelper.ForwardPlayerRegistry(Bus: EventBus.BusInstance, Entries: any)
+	if type(Entries) ~= "table" then
+		return
+	end
+	Bus.Emit(Events.PlayerRegistryReceived, Entries)
+end
+
+--[=[
+	Unpacks a binary replication delta payload into Storage, releasing MASK_DESPAWN slots in place into the free-list
+	and reconstructing orthonormal basis vectors and DynamicId bindings for active records.
 	@param State ReceiverState -- Active replication receiver state.
 	@param Payload buffer -- Binary replication delta packet from ReplicateEvent.
 ]=]
@@ -116,21 +132,6 @@ function ReplicationReceiverHelper.IngestPayload(State: ReceiverState, Payload: 
 	const ServerIdByClientSlot = State.ServerIdByClientSlot :: buffer
 
 	const UpdatedCount = buffer.readu16(Payload, 0) :: number
-	const WorldEntityCount = buffer.readu16(Payload, 2) :: number
-	const PreviousWorldCount = State.LastWorldEntityCount :: number
-
-	if WorldEntityCount < PreviousWorldCount then
-		for ServerId = WorldEntityCount + 1, math.min(PreviousWorldCount, MaxEntities) do
-			const StaleSlot = buffer.readu32(ClientSlotByServerId, ServerId * 4) :: number
-			if StaleSlot > 0 then
-				buffer.writeu32(ClientSlotByServerId, ServerId * 4, 0)
-				ECSMain.SetEntityDynamicId(LocalPropertiesBuffer, StaleSlot, 0)
-				ECSData.DeleteEntity(StaleSlot)
-			end
-		end
-	end
-	State.LastWorldEntityCount = WorldEntityCount
-
 	local ReadOffset = HEADER_BYTES :: number
 	const PayloadLen = buffer.len(Payload) :: number
 
@@ -143,20 +144,32 @@ function ReplicationReceiverHelper.IngestPayload(State: ReceiverState, Payload: 
 		const Mask = buffer.readu8(Payload, ReadOffset + 2) :: number
 		ReadOffset += 3
 
+		if Mask == MASK_DESPAWN then
+			if ServerId <= 0 or ServerId > MaxEntities then
+				continue
+			end
+			const FreedSlot = buffer.readu32(ClientSlotByServerId, ServerId * 4) :: number
+			if FreedSlot > 0 then
+				buffer.writeu32(ClientSlotByServerId, ServerId * 4, 0)
+				buffer.writeu32(ServerIdByClientSlot, FreedSlot * 4, 0)
+				ECSMain.SetEntityDynamicId(LocalPropertiesBuffer, FreedSlot, 0)
+				ECSData.DeleteEntity(FreedSlot)
+			end
+			continue
+		end
+
 		local TargetSlot = if ServerId > 0 and ServerId <= MaxEntities
 			then buffer.readu32(ClientSlotByServerId, ServerId * 4)
 			else 0
 
 		if TargetSlot == 0 then
-			if ECSData.GetCounts().EntityECSCount >= MaxEntities then
+			if ECSData.GetCounts().ActiveEntityCount >= MaxEntities then
 				break
 			end
-
 			TargetSlot = ECSData.RegisterEntity()
 			if TargetSlot <= 0 then
 				break
 			end
-
 			if ServerId > 0 and ServerId <= MaxEntities then
 				buffer.writeu32(ClientSlotByServerId, ServerId * 4, TargetSlot)
 				buffer.writeu32(ServerIdByClientSlot, TargetSlot * 4, ServerId)
@@ -191,7 +204,6 @@ function ReplicationReceiverHelper.IngestPayload(State: ReceiverState, Payload: 
 			const RightY = LookZ * UpX - LookX * UpZ :: number
 			const RightZ = LookX * UpY - LookY * UpX :: number
 
-			-- Directions layout: Look (0..11), Up (12..23), Right (24..35)
 			buffer.writef32(LocalDirectionsBuffer, DirectionWriteOffset, LookX)
 			buffer.writef32(LocalDirectionsBuffer, DirectionWriteOffset + 4, LookY)
 			buffer.writef32(LocalDirectionsBuffer, DirectionWriteOffset + 8, LookZ)
@@ -221,11 +233,7 @@ function ReplicationReceiverHelper.IngestPayload(State: ReceiverState, Payload: 
 					DynamicObjectsList.BindEntity(ReplicatedDynId, TargetSlot)
 					LinkedRecord.EntityId = TargetSlot
 					if LocalUserId ~= 0 and LinkedRecord.UserId == LocalUserId then
-						buffer.writeu32(
-							LocalPropertiesBuffer,
-							PropertiesWriteOffset,
-							bit32.band(ReplicatedReg, NOT_CAN_COLLIDE)
-						)
+						buffer.writeu32(LocalPropertiesBuffer, PropertiesWriteOffset, bit32.band(ReplicatedReg, NOT_CAN_COLLIDE))
 					end
 				elseif LinkedObj ~= nil then
 					DynamicObjectsList.BindEntity(ReplicatedDynId, TargetSlot)

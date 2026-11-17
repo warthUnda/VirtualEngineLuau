@@ -16,6 +16,7 @@ const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
 const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 const MAX_ENTITIES = SystemsConfigs.ECSMaxEntities :: number
 const STACK_CAPACITY = SystemsConfigs.BVHStackCapacity :: number
+const MUTATION_SCAN_BUDGET = SystemsConfigs.BVHMutationScanBudget :: number
 
 const NODE_STRIDE = 32 :: number
 const ITEM_BOUNDS_STRIDE = 36 :: number
@@ -50,6 +51,7 @@ local BVHState = {
 	AllocatedNodeBytes = 0 :: number,
 	DynamicEntityCount = 0 :: number,
 	LastBuiltEntityCount = -1 :: number,
+	LastBuiltActiveCount = -1 :: number,
 	LastDynamicNextId = -1 :: number,
 	LastDynamicActiveCount = -1 :: number,
 	MutationScanCursor = 1 :: number,
@@ -58,12 +60,12 @@ local BVHState = {
 
 -- Functions --
 -- ============================================================================
--- 1. FLAT-BUFFER TREE BUILDER & FRESHNESS SYNCHRONIZATION
+-- 1. FLAT-BUFFER TREE BUILDER & DIRECT AUTO-REBUILD SYNCHRONIZATION
 -- ============================================================================
 
 --[=[
 	Rebuilds the static and dynamic BVH hierarchy over the given ECS storage.
-	@param ProvidedStorage ECSMain.ECSStorage? -- Optional override ECS storage (used for tests or isolated VM contexts).
+	@param ProvidedStorage ECSMain.ECSStorage? -- Optional override ECS storage.
 ]=]
 function BVHState.Rebuild(ProvidedStorage: ECSMain.ECSStorage?)
 	const Storage = BVHHelper.ResolveStorage(ProvidedStorage)
@@ -71,9 +73,11 @@ function BVHState.Rebuild(ProvidedStorage: ECSMain.ECSStorage?)
 		return
 	end
 
-	const EntityCount = math.clamp(Storage.ECSData.GetCounts().EntityECSCount :: number, 0, MAX_ENTITIES) :: number
+	const Counts = Storage.ECSData.GetCounts()
+	const EntityCount = math.clamp(Counts.EntityECSCount :: number, 0, MAX_ENTITIES) :: number
 	BVHState.ActiveStorage = Storage
 	BVHState.LastBuiltEntityCount = EntityCount
+	BVHState.LastBuiltActiveCount = Counts.ActiveEntityCount :: number
 	BVHState.AllocatedNodeBytes = 0
 	BVHState.DynamicEntityCount = 0
 	BVHState.MutationScanCursor = 1
@@ -82,7 +86,7 @@ function BVHState.Rebuild(ProvidedStorage: ECSMain.ECSStorage?)
 	BVHState.LastDynamicActiveCount = if DynList then DynList.Counts.ActiveCount else 0
 	BVHState.LastDynamicNextId = if DynList then DynList.Counts.NextId else 0
 
-	if EntityCount <= 0 then
+	if EntityCount <= 0 or Counts.ActiveEntityCount <= 0 then
 		return
 	end
 
@@ -90,12 +94,19 @@ function BVHState.Rebuild(ProvidedStorage: ECSMain.ECSStorage?)
 	const SizeBuffer = Storage.SizeData.GetData() :: buffer
 	const DirectionsBuffer = Storage.DirectionsData.GetData() :: buffer
 	const PropertiesBuffer = Storage.PropertiesData.GetData() :: buffer
+	const ActiveFlags = Storage.ECSData.GetActiveFlags() :: buffer
 	const StaticBuffer = Storage.ECSData.GetStaticData() :: buffer?
 
 	local StaticItemCount = 0 :: number
 	local DynamicCount = 0 :: number
 
 	for EntityId = 1, EntityCount do
+		if buffer.readu8(ActiveFlags, EntityId - 1) == 0 then
+			buffer.writeu8(EntityIsDynamicBuffer, EntityId, 1)
+			buffer.writeu32(CachedStateBuffer, (EntityId - 1) * CACHED_STATE_STRIDE + 24, 0)
+			continue
+		end
+
 		const CompOffset = (EntityId - 1) * COMPONENT_STRIDE :: number
 		const DirOffset = (EntityId - 1) * DIRECTION_STRIDE :: number
 		const PropRegister = buffer.readu32(PropertiesBuffer, (EntityId - 1) * PROPERTIES_STRIDE) :: number
@@ -175,36 +186,79 @@ function BVHState.Rebuild(ProvidedStorage: ECSMain.ECSStorage?)
 end
 
 --[=[
-	Ensures the BVH is up-to-date for the current frame/substep and returns the resolved Storage + EntityCount.
+	Directly checks storage/count/static-slot state and rebuilds in place when out of date, returning resolved Storage and EntityCount.
 	@param ProvidedStorage ECSMain.ECSStorage? -- Optional override ECS storage.
-	@param SkipNeedsRebuild boolean? -- Whether to bypass mutation freshness checking.
-	@return (ECSMain.ECSStorage?, number) -- The active storage and total entity count.
+	@param SkipCheck boolean? -- True when freshness was already verified earlier in the same substep.
+	@return (ECSMain.ECSStorage?, number) -- Resolved storage and active entity count.
 ]=]
-function BVHState.EnsureFreshAndResolve(ProvidedStorage: ECSMain.ECSStorage?, SkipNeedsRebuild: boolean?): (ECSMain.ECSStorage?, number)
+function BVHState.EnsureFreshAndResolve(ProvidedStorage: ECSMain.ECSStorage?, SkipCheck: boolean?): (ECSMain.ECSStorage?, number)
 	const Storage = BVHHelper.ResolveStorage(ProvidedStorage)
 	if not Storage then
 		return nil, 0
 	end
 
-	const EntityCount = math.clamp(Storage.ECSData.GetCounts().EntityECSCount :: number, 0, MAX_ENTITIES) :: number
-	if not SkipNeedsRebuild then
-		local ShouldRebuild: boolean
-		ShouldRebuild, BVHState.MutationScanCursor = BVHHelper.NeedsRebuild(
-			Storage,
-			BVHState.ActiveStorage,
-			EntityCount,
-			BVHState.LastBuiltEntityCount,
-			BVHState.LastDynamicActiveCount,
-			BVHState.LastDynamicNextId,
-			BVHState.MutationScanCursor,
-			CachedStateBuffer,
-			EntityIsDynamicBuffer,
-			ItemBoundsBuffer
-		)
-		if ShouldRebuild then
-			BVHState.Rebuild(Storage)
-		end
+	const Counts = Storage.ECSData.GetCounts()
+	const EntityCount = math.clamp(Counts.EntityECSCount :: number, 0, MAX_ENTITIES) :: number
+	if SkipCheck then
+		return Storage, EntityCount
 	end
+
+	const DynList = Storage.DynamicObjectsList
+	const DynActive = if DynList then DynList.Counts.ActiveCount else 0 :: number
+	const DynNext = if DynList then DynList.Counts.NextId else 0 :: number
+	if
+		Storage ~= BVHState.ActiveStorage
+		or EntityCount ~= BVHState.LastBuiltEntityCount
+		or Counts.ActiveEntityCount ~= BVHState.LastBuiltActiveCount
+		or DynActive ~= BVHState.LastDynamicActiveCount
+		or DynNext ~= BVHState.LastDynamicNextId
+	then
+		BVHState.Rebuild(Storage)
+		return Storage, EntityCount
+	end
+
+	if EntityCount <= 0 then
+		return Storage, 0
+	end
+
+	const PositionBuffer = Storage.PositionData.GetData() :: buffer
+	const SizeBuffer = Storage.SizeData.GetData() :: buffer
+	const DirectionsBuffer = Storage.DirectionsData.GetData() :: buffer
+	const PropertiesBuffer = Storage.PropertiesData.GetData() :: buffer
+	const CheckCount = math.min(EntityCount, MUTATION_SCAN_BUDGET) :: number
+
+	local EntityId = if BVHState.MutationScanCursor >= 1 and BVHState.MutationScanCursor <= EntityCount then BVHState.MutationScanCursor else 1 :: number
+
+	for _ = 1, CheckCount do
+		const StateOffset = (EntityId - 1) * CACHED_STATE_STRIDE :: number
+		const CurrentProp = buffer.readu32(PropertiesBuffer, (EntityId - 1) * PROPERTIES_STRIDE) :: number
+		if CurrentProp ~= buffer.readu32(CachedStateBuffer, StateOffset + 24) then
+			BVHState.Rebuild(Storage)
+			return Storage, EntityCount
+		end
+
+		if buffer.readu8(EntityIsDynamicBuffer, EntityId) == 0 then
+			const CompOffset, DirOffset, BoundsOffset = (EntityId - 1) * COMPONENT_STRIDE, (EntityId - 1) * DIRECTION_STRIDE, (EntityId - 1) * ITEM_BOUNDS_STRIDE
+			if
+				buffer.readf32(PositionBuffer, CompOffset) ~= buffer.readf32(ItemBoundsBuffer, BoundsOffset + 24)
+				or buffer.readf32(PositionBuffer, CompOffset + 4) ~= buffer.readf32(ItemBoundsBuffer, BoundsOffset + 28)
+				or buffer.readf32(PositionBuffer, CompOffset + 8) ~= buffer.readf32(ItemBoundsBuffer, BoundsOffset + 32)
+				or buffer.readf32(SizeBuffer, CompOffset) ~= buffer.readf32(CachedStateBuffer, StateOffset)
+				or buffer.readf32(SizeBuffer, CompOffset + 4) ~= buffer.readf32(CachedStateBuffer, StateOffset + 4)
+				or buffer.readf32(SizeBuffer, CompOffset + 8) ~= buffer.readf32(CachedStateBuffer, StateOffset + 8)
+				or buffer.readf32(DirectionsBuffer, DirOffset) ~= buffer.readf32(CachedStateBuffer, StateOffset + 12)
+				or buffer.readf32(DirectionsBuffer, DirOffset + 16) ~= buffer.readf32(CachedStateBuffer, StateOffset + 16)
+				or buffer.readf32(DirectionsBuffer, DirOffset + 32) ~= buffer.readf32(CachedStateBuffer, StateOffset + 20)
+			then
+				BVHState.Rebuild(Storage)
+				return Storage, EntityCount
+			end
+		end
+
+		EntityId = if EntityId >= EntityCount then 1 else EntityId + 1
+	end
+
+	BVHState.MutationScanCursor = EntityId
 	return Storage, EntityCount
 end
 

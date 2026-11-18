@@ -5,9 +5,8 @@
 --[=[
 	@class RenderEntityStageHelper
 	Per-frame ECS entity gather and face-staging helper for RenderService.
-	Applies the Cube-to-Plane perspective impostor fast path for ShapeId = 0 entities
-	(transforming 4 vertices and staging 1 quad directly) and falls back to full
-	multi-face mesh projection when multiple faces are visible or for curved/wedge shapes.
+	Transforms visible entity OBBs into camera space, runs per-face backface culling,
+	and stages clipped screen-space triangles for parallel rasterization.
 ]=]
 
 -- Services --
@@ -22,7 +21,6 @@ const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
 const VerticeFile = require(RenderRoot:WaitForChild("Core"):WaitForChild("VerticeFile"))
 const RenderMath = require(RenderRoot:WaitForChild("Core"):WaitForChild("RenderMath"))
-const CubeImpostorMath = require(RenderRoot:WaitForChild("Core"):WaitForChild("CubeImpostorMath"))
 const RenderControllerHelper = require(script.Parent:WaitForChild("RenderControllerHelper"))
 
 -- Configs --
@@ -36,20 +34,17 @@ const ECS_VISUAL_STRIDE = SystemsConfigs.ECSVisualStride :: number
 const ECS_PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 const TEXTURE_STUDS_PER_TILE = SystemsConfigs.TextureStudsPerTile :: number
 const INV_TEXTURE_STUDS_PER_TILE = if TEXTURE_STUDS_PER_TILE > 0 then 1 / TEXTURE_STUDS_PER_TILE else 0 :: number
-const PLANE_IMPOSTOR_MAX_PIXELS = SystemsConfigs.PlaneImpostorMaxPixels :: number
-const CUBE_FACES = VerticeFile.ShapeData[0].Faces
 
 -- Tables --
 local RenderEntityStageHelper = {}
 
 -- Functions --
 -- ============================================================================
--- 1. ENTITY GATHER, CUBE-TO-PLANE IMPOSTOR FAST PATH & MESH FACE STAGING
+-- 1. ENTITY GATHER & MESH FACE STAGING
 -- ============================================================================
 
 --[=[
-	Transforms and stages all visible entities in Storage into StagedTriangles, automatically
-	collapsing eligible Cubes (ShapeId = 0) into single-quad Plane impostors.
+	Transforms and stages all visible entities in Storage into StagedTriangles.
 	@param Storage ECSMain.ECSStorage -- Active render ECS storage.
 	@param ScreenVertices buffer -- Scratch camera-space vertex buffer.
 	@param ProjectedVertices buffer -- Scratch projected 2D vertex buffer.
@@ -115,55 +110,6 @@ function RenderEntityStageHelper.StageEntities(
 		const TileScaleX = if HasTiling then math.clamp(math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset) * INV_TEXTURE_STUDS_PER_TILE + 0.5), 1, 8) else 1 :: number
 		const TileScaleY = if HasTiling then math.clamp(math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset + 4) * INV_TEXTURE_STUDS_PER_TILE + 0.5), 1, 8) else 1 :: number
 		const TileScaleZ = if HasTiling then math.clamp(math.floor(buffer.readf32(ECSSizeBuffer, ComponentOffset + 8) * INV_TEXTURE_STUDS_PER_TILE + 0.5), 1, 8) else 1 :: number
-
-		if EntityShapeId == 0 then
-			const CubeMode: number, LocalCamPos: vector, HalfSize: vector, LocalSun: vector =
-				CubeImpostorMath.TransformCubeOrPlaneImpostor(
-					ECSPositionBuffer, ECSDirectionsBuffer, ECSSizeBuffer,
-					ComponentOffset, DirectionOffset, ScreenVertices,
-					CamPosVec, CamRightVec, CamUpVec, CamLookVec,
-					SUN_VEC, FocalLength, PLANE_IMPOSTOR_MAX_PIXELS, GuardBandX, GuardBandY
-				)
-			if CubeMode == 0 then
-				continue
-			end
-
-			if CubeMode <= 6 then
-				const DiffuseDot: number, ScaleU: number, ScaleV: number =
-					CubeImpostorMath.GetImpostorShadingAndUV(CubeMode, LocalSun, TileScaleX, TileScaleY, TileScaleZ)
-				const ImpostorColor = RenderControllerHelper.PackShadedColor(
-					PartColorR, PartColorG, PartColorB, AMBIENT_LIGHT + DIFFUSE_LIGHT * DiffuseDot
-				)
-				StagedTriangleCount = RenderControllerHelper.SubmitFace(
-					ScreenVertices, ProjectedVertices, ClipBufferA, ClipBufferB,
-					StagedTriangles, StagedBounds, StagedTriangleCount, StagedCapacity, RowWorkDiff,
-					0, 12, 24, 36,
-					ScaleU, ScaleV, ImpostorColor, EntityTextureId, FocalLength, GuardBandX, GuardBandY,
-					ViewportWidth, ViewportHeight
-				)
-				continue
-			end
-
-			for _, Face in ipairs(CUBE_FACES) do
-				if vector.dot(LocalCamPos - Face.PointOnFace * HalfSize, Face.Normal) <= -1e-3 then
-					continue
-				end
-				const Color = RenderControllerHelper.PackShadedColor(
-					PartColorR, PartColorG, PartColorB,
-					AMBIENT_LIGHT + DIFFUSE_LIGHT * math.max(0, vector.dot(Face.Normal, LocalSun))
-				)
-				const ScaleU = if Face.UAxisIndex == 1 then TileScaleX elseif Face.UAxisIndex == 2 then TileScaleY else TileScaleZ
-				const ScaleV = if Face.VAxisIndex == 1 then TileScaleX elseif Face.VAxisIndex == 2 then TileScaleY else TileScaleZ
-				StagedTriangleCount = RenderControllerHelper.SubmitFace(
-					ScreenVertices, ProjectedVertices, ClipBufferA, ClipBufferB,
-					StagedTriangles, StagedBounds, StagedTriangleCount, StagedCapacity, RowWorkDiff,
-					Face.V0ByteOffset, Face.V1ByteOffset, Face.V2ByteOffset, Face.V3ByteOffset,
-					ScaleU, ScaleV, Color, EntityTextureId, FocalLength, GuardBandX, GuardBandY,
-					ViewportWidth, ViewportHeight
-				)
-			end
-			continue
-		end
 
 		const ShapeMesh = VerticeFile.ShapeData[EntityShapeId] or VerticeFile.ShapeData[0]
 		const IsVisible: boolean, LocalCameraPos: vector, HalfSize: vector, LocalSun: vector =

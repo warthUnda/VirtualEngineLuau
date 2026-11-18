@@ -93,6 +93,17 @@ function PhysicsMath.ResolveBodyWorldCollisions(
 	ObjectInvMassBuffer: buffer,
 	SkipBVHNeedsRebuild: boolean?
 ): (number, number, number, number, number, number, boolean)
+	if
+		BodyX ~= BodyX
+		or BodyY ~= BodyY
+		or BodyZ ~= BodyZ
+		or math.abs(BodyX) == math.huge
+		or math.abs(BodyY) == math.huge
+		or math.abs(BodyZ) == math.huge
+	then
+		return 0, 0, 0, 0, 0, 0, false
+	end
+
 	local NextX = BodyX :: number
 	local NextY = BodyY :: number
 	local NextZ = BodyZ :: number

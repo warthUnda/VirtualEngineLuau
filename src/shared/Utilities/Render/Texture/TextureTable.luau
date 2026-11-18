@@ -129,6 +129,19 @@ function TextureTable.RegisterEntryWithId(
 	RawUrl: string,
 	TextureName: string?
 ): (buffer?, boolean)
+	if
+		type(TextureId) ~= "number"
+		or TextureId ~= TextureId
+		or TextureId < 1
+		or TextureId > 255
+		or TextureId % 1 ~= 0
+		or type(RawUrl) ~= "string"
+	then
+		return nil, false
+	end
+	if TextureName ~= nil and type(TextureName) ~= "string" then
+		TextureName = nil
+	end
 	const NormalizedUrl = TextureTable.NormalizeUrl(RawUrl)
 	if NormalizedUrl == "" then
 		return TextureTable.CachedBuffers[TextureId], false

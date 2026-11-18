@@ -136,12 +136,15 @@ function ECSStorageFactory.CreateStorage(IncludeStaticBuffer: boolean?): ECSType
 	end
 
 	function ECSData.SetEntityCount(EntityCount: number)
-		ECSComponents.SetEntityCount(ECSDataTable, EntityCount)
-		ECSDataTable.ActiveEntityCount = EntityCount
+		const SafeCount = if EntityCount == EntityCount then math.clamp(math.floor(EntityCount), 0, MAX_ENTITIES) else 0 :: number
+		ECSComponents.SetEntityCount(ECSDataTable, SafeCount)
+		ECSDataTable.ActiveEntityCount = SafeCount
 		FreeSlotTop = 0
-		buffer.fill(ActiveFlags, 0, 1, math.clamp(EntityCount, 0, MAX_ENTITIES))
-		if EntityCount < MAX_ENTITIES then
-			buffer.fill(ActiveFlags, math.max(0, EntityCount), 0, MAX_ENTITIES - math.max(0, EntityCount))
+		if SafeCount > 0 then
+			buffer.fill(ActiveFlags, 0, 1, SafeCount)
+		end
+		if SafeCount < MAX_ENTITIES then
+			buffer.fill(ActiveFlags, SafeCount, 0, MAX_ENTITIES - SafeCount)
 		end
 	end
 

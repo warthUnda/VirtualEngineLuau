@@ -51,6 +51,9 @@ function PhysicsControllerHelper.EnsureDynamicEntityMass(
 	PropertiesBuffer: buffer?,
 	CustomMass: number?
 ): number
+	if EntityId ~= EntityId or EntityId < 1 or EntityId % 1 ~= 0 or EntityId * 4 > buffer.len(ObjectInvMassBuffer) then
+		return 0
+	end
 	const MassOffset = (EntityId - 1) * 4 :: number
 	const ExistingInvMass = buffer.readf32(ObjectInvMassBuffer, MassOffset) :: number
 	if ExistingInvMass > 0 and CustomMass == nil then
@@ -58,8 +61,8 @@ function PhysicsControllerHelper.EnsureDynamicEntityMass(
 	end
 
 	local ResolvedMass = CustomMass :: number?
-	if not ResolvedMass or ResolvedMass <= 0 then
-		if SizeBuffer then
+	if not ResolvedMass or ResolvedMass ~= ResolvedMass or ResolvedMass <= 1e-4 or ResolvedMass == math.huge then
+		if SizeBuffer and EntityId * COMPONENT_STRIDE <= buffer.len(SizeBuffer) then
 			const CompOffset = (EntityId - 1) * COMPONENT_STRIDE :: number
 			const SizeX = math.max(0.1, buffer.readf32(SizeBuffer, CompOffset)) :: number
 			const SizeY = math.max(0.1, buffer.readf32(SizeBuffer, CompOffset + 4)) :: number
@@ -70,9 +73,9 @@ function PhysicsControllerHelper.EnsureDynamicEntityMass(
 		end
 	end
 
-	const InverseMass = 1 / (ResolvedMass :: number) :: number
+	const InverseMass = math.clamp(1 / (ResolvedMass :: number), 1e-6, 1e4) :: number
 	buffer.writef32(ObjectInvMassBuffer, MassOffset, InverseMass)
-	if PropertiesBuffer then
+	if PropertiesBuffer and MassOffset + 4 <= buffer.len(PropertiesBuffer) then
 		const PropReg = buffer.readu32(PropertiesBuffer, MassOffset) :: number
 		buffer.writeu32(PropertiesBuffer, MassOffset, bit32.bor(bit32.band(PropReg, bit32.bnot(FLAG_ANCHORED)), FLAG_CAN_COLLIDE, FLAG_IS_VISIBLE))
 	end

@@ -178,9 +178,16 @@ function ECSBitfield.GetEntityShapeId(Register: number): number
 end
 
 function ECSBitfield.SetEntityShapeId(PropertiesBuffer: buffer, EntityId: number, ShapeId: number)
+	if EntityId ~= EntityId or EntityId < 1 or EntityId % 1 ~= 0 then
+		return
+	end
 	const Offset = (EntityId - 1) * PROPERTIES_STRIDE :: number
+	if Offset + PROPERTIES_STRIDE > buffer.len(PropertiesBuffer) then
+		return
+	end
 	const BaseFlags = bit32.band(buffer.readu32(PropertiesBuffer, Offset), bit32.bnot(SHAPE_ID_MASK)) :: number
-	buffer.writeu32(PropertiesBuffer, Offset, bit32.bor(BaseFlags, bit32.lshift(math.clamp(math.floor(ShapeId), 0, MAX_SHAPE_ID), SHAPE_ID_SHIFT)))
+	const SafeShape = if ShapeId == ShapeId then math.clamp(math.floor(ShapeId), 0, MAX_SHAPE_ID) else 0 :: number
+	buffer.writeu32(PropertiesBuffer, Offset, bit32.bor(BaseFlags, bit32.lshift(SafeShape, SHAPE_ID_SHIFT)))
 end
 
 function ECSBitfield.GetEntityDynamicId(Register: number): number
@@ -191,13 +198,19 @@ function ECSBitfield.GetEntityDynamicId(Register: number): number
 end
 
 function ECSBitfield.SetEntityDynamicId(PropertiesBuffer: buffer, EntityId: number, DynamicId: number)
+	if EntityId ~= EntityId or EntityId < 1 or EntityId % 1 ~= 0 then
+		return
+	end
 	const Offset = (EntityId - 1) * PROPERTIES_STRIDE :: number
+	if Offset + PROPERTIES_STRIDE > buffer.len(PropertiesBuffer) then
+		return
+	end
 	const BaseFlags = bit32.band(buffer.readu32(PropertiesBuffer, Offset), LOWER_FLAGS_MASK) :: number
-	if DynamicId <= 0 then
+	if DynamicId ~= DynamicId or DynamicId <= 0 then
 		buffer.writeu32(PropertiesBuffer, Offset, bit32.band(BaseFlags, bit32.bnot(FLAG_HAS_DYNAMIC_ID)))
 		return
 	end
-	const ClampedId = math.min(DynamicId, MAX_DYNAMIC_ID) :: number
+	const ClampedId = math.clamp(math.floor(DynamicId), 1, MAX_DYNAMIC_ID) :: number
 	buffer.writeu32(PropertiesBuffer, Offset, bit32.bor(BaseFlags, FLAG_HAS_DYNAMIC_ID, bit32.lshift(ClampedId, DYNAMIC_ID_SHIFT)))
 end
 
@@ -206,9 +219,16 @@ function ECSBitfield.GetEntityTextureId(Register: number): number
 end
 
 function ECSBitfield.SetEntityTextureId(PropertiesBuffer: buffer, EntityId: number, TextureId: number)
+	if EntityId ~= EntityId or EntityId < 1 or EntityId % 1 ~= 0 then
+		return
+	end
 	const Offset = (EntityId - 1) * PROPERTIES_STRIDE :: number
+	if Offset + PROPERTIES_STRIDE > buffer.len(PropertiesBuffer) then
+		return
+	end
 	const ClearedRegister = bit32.band(buffer.readu32(PropertiesBuffer, Offset), bit32.bnot(TEXTURE_ID_MASK)) :: number
-	buffer.writeu32(PropertiesBuffer, Offset, bit32.bor(ClearedRegister, bit32.lshift(math.clamp(math.floor(TextureId), 0, MAX_TEXTURE_ID), TEXTURE_ID_SHIFT)))
+	const SafeTex = if TextureId == TextureId then math.clamp(math.floor(TextureId), 0, MAX_TEXTURE_ID) else 0 :: number
+	buffer.writeu32(PropertiesBuffer, Offset, bit32.bor(ClearedRegister, bit32.lshift(SafeTex, TEXTURE_ID_SHIFT)))
 end
 
 return ECSBitfield

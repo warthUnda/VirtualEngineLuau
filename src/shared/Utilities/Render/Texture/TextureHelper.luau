@@ -32,20 +32,29 @@ function TextureHelper.ResampleTextureBuffer(
 	SourceHeight: number,
 	TargetSize: number
 ): buffer
-	if SourceWidth == TargetSize and SourceHeight == TargetSize then
+	const SafeTargetSize = math.max(1, math.floor(TargetSize)) :: number
+	const DestBuffer = buffer.create(SafeTargetSize * SafeTargetSize * 4) :: buffer
+	if
+		typeof(SourceBuffer) ~= "buffer"
+		or SourceWidth <= 0
+		or SourceHeight <= 0
+		or buffer.len(SourceBuffer) < SourceWidth * SourceHeight * 4
+	then
+		return DestBuffer
+	end
+	if SourceWidth == SafeTargetSize and SourceHeight == SafeTargetSize then
 		return SourceBuffer
 	end
 
-	const DestBuffer = buffer.create(TargetSize * TargetSize * 4) :: buffer
-	const ScaleX = SourceWidth / TargetSize :: number
-	const ScaleY = SourceHeight / TargetSize :: number
+	const ScaleX = SourceWidth / SafeTargetSize :: number
+	const ScaleY = SourceHeight / SafeTargetSize :: number
 
-	for DestY = 0, TargetSize - 1 do
+	for DestY = 0, SafeTargetSize - 1 do
 		const SourceY = math.min(SourceHeight - 1, math.floor(DestY * ScaleY)) :: number
 		const SourceRowOffset = SourceY * SourceWidth * 4 :: number
-		const DestRowOffset = DestY * TargetSize * 4 :: number
+		const DestRowOffset = DestY * SafeTargetSize * 4 :: number
 
-		for DestX = 0, TargetSize - 1 do
+		for DestX = 0, SafeTargetSize - 1 do
 			const SourceX = math.min(SourceWidth - 1, math.floor(DestX * ScaleX)) :: number
 			const Texel = buffer.readu32(SourceBuffer, SourceRowOffset + SourceX * 4) :: number
 			buffer.writeu32(DestBuffer, DestRowOffset + DestX * 4, Texel)

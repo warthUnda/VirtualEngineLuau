@@ -78,7 +78,7 @@ function DynamicObjectsMain.SetObjectAtId(
 	EntityId: number?,
 	PropertiesBuffer: buffer?
 ): boolean
-	if DynamicId <= 0 or DynamicId > MAX_DYNAMIC_OBJECTS or ObjectInstance == nil then
+	if DynamicId ~= DynamicId or DynamicId < 1 or DynamicId > MAX_DYNAMIC_OBJECTS or DynamicId % 1 ~= 0 or ObjectInstance == nil then
 		return false
 	end
 
@@ -90,21 +90,28 @@ function DynamicObjectsMain.SetObjectAtId(
 		Counts.ActiveCount += 1
 	end
 	if DynamicId > Counts.NextId then
+		for SkippedId = Counts.NextId + 1, DynamicId - 1 do
+			if ObjectsTable[SkippedId] == nil and not table.find(FreeIds, SkippedId) then
+				table.insert(FreeIds, SkippedId)
+			end
+		end
 		Counts.NextId = DynamicId
 	end
 	ObjectsTable[DynamicId] = ObjectInstance
 
-	if EntityId and EntityId > 0 then
-		buffer.writeu32(EntityIdByDynamicId, DynamicId * 4, EntityId)
-		if PropertiesBuffer then
-			ECSBitfield.SetEntityDynamicId(PropertiesBuffer, EntityId, DynamicId)
+	if EntityId and EntityId == EntityId and EntityId >= 1 and EntityId % 1 == 0 then
+		if not PropertiesBuffer or EntityId * PROPERTIES_STRIDE <= buffer.len(PropertiesBuffer) then
+			buffer.writeu32(EntityIdByDynamicId, DynamicId * 4, EntityId)
+			if PropertiesBuffer then
+				ECSBitfield.SetEntityDynamicId(PropertiesBuffer, EntityId, DynamicId)
+			end
 		end
 	end
 	return true
 end
 
 function DynamicObjectsMain.GetObject(ObjectsTable: { [number]: any }, DynamicId: number): any
-	if DynamicId <= 0 or DynamicId > MAX_DYNAMIC_OBJECTS then
+	if DynamicId ~= DynamicId or DynamicId <= 0 or DynamicId > MAX_DYNAMIC_OBJECTS or DynamicId % 1 ~= 0 then
 		return nil
 	end
 	return ObjectsTable[DynamicId]
@@ -116,7 +123,7 @@ function DynamicObjectsMain.GetObjectFromRegister(ObjectsTable: { [number]: any 
 end
 
 function DynamicObjectsMain.GetObjectByEntityId(ObjectsTable: { [number]: any }, PropertiesBuffer: buffer, EntityId: number): any
-	if EntityId < 1 then
+	if EntityId ~= EntityId or EntityId < 1 or EntityId % 1 ~= 0 or EntityId * PROPERTIES_STRIDE > buffer.len(PropertiesBuffer) then
 		return nil
 	end
 	const Register = buffer.readu32(PropertiesBuffer, (EntityId - 1) * PROPERTIES_STRIDE) :: number
@@ -125,7 +132,16 @@ function DynamicObjectsMain.GetObjectByEntityId(ObjectsTable: { [number]: any },
 end
 
 function DynamicObjectsMain.BindEntity(EntityIdByDynamicId: buffer, PropertiesBuffer: buffer, DynamicId: number, EntityId: number)
-	if DynamicId <= 0 or DynamicId > MAX_DYNAMIC_OBJECTS or EntityId < 1 then
+	if
+		DynamicId ~= DynamicId
+		or DynamicId < 1
+		or DynamicId > MAX_DYNAMIC_OBJECTS
+		or DynamicId % 1 ~= 0
+		or EntityId ~= EntityId
+		or EntityId < 1
+		or EntityId % 1 ~= 0
+		or EntityId * PROPERTIES_STRIDE > buffer.len(PropertiesBuffer)
+	then
 		return
 	end
 	buffer.writeu32(EntityIdByDynamicId, DynamicId * 4, EntityId)
@@ -133,7 +149,7 @@ function DynamicObjectsMain.BindEntity(EntityIdByDynamicId: buffer, PropertiesBu
 end
 
 function DynamicObjectsMain.GetBoundEntityId(EntityIdByDynamicId: buffer, DynamicId: number): number
-	if DynamicId <= 0 or DynamicId > MAX_DYNAMIC_OBJECTS then
+	if DynamicId ~= DynamicId or DynamicId <= 0 or DynamicId > MAX_DYNAMIC_OBJECTS or DynamicId % 1 ~= 0 then
 		return 0
 	end
 	return buffer.readu32(EntityIdByDynamicId, DynamicId * 4)

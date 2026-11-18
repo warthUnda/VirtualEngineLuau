@@ -43,6 +43,9 @@ local ControllerInterpreter = {}
 	@return number -- Clamped integer score in [1, 100].
 ]=]
 function ControllerInterpreter.ClampScore(Score: number): number
+	if Score ~= Score then
+		return MAX_SCORE
+	end
 	return math.clamp(math.floor(Score + 0.5), MIN_SCORE, MAX_SCORE)
 end
 
@@ -53,7 +56,7 @@ end
 	@return (number, number, number) -- (ActiveDutyPercent, EffectiveFrameStride, DtCompensationScale).
 ]=]
 function ControllerInterpreter.InterpretPhysics(Score: number): (number, number, number)
-	const ClampedScore = math.clamp(math.floor(Score + 0.5), MIN_SCORE, MAX_SCORE) :: number
+	const ClampedScore = ControllerInterpreter.ClampScore(Score) :: number
 	const ActiveDutyPercent = math.clamp(ClampedScore, MIN_PHYSICS_DUTY, 100) :: number
 	const EffectiveFrameStride = 100 / ActiveDutyPercent :: number
 	const DtCompensationScale = math.min(MAX_PHYSICS_DT_SCALE, EffectiveFrameStride) :: number

@@ -202,6 +202,9 @@ end
 ]=]
 function ViewCulling.IsEntityCulled(EntityIndex: number, Positions: buffer, Sizes: buffer): boolean
 	const Offset = (EntityIndex - 1) * COMPONENT_STRIDE :: number
+	if Offset < 0 or Offset + COMPONENT_STRIDE > buffer.len(Positions) or Offset + COMPONENT_STRIDE > buffer.len(Sizes) then
+		return true
+	end
 	const RelX = buffer.readf32(Positions, Offset) - ViewOriginX :: number
 	const RelY = buffer.readf32(Positions, Offset + 4) - ViewOriginY :: number
 	const RelZ = buffer.readf32(Positions, Offset + 8) - ViewOriginZ :: number
@@ -231,17 +234,6 @@ function ViewCulling.IsEntityCulled(EntityIndex: number, Positions: buffer, Size
 		and ProjY - ProjRadius >= OccMinY and ProjY + ProjRadius <= OccMaxY
 	then
 		return true
-	end
-
-	const InscribedRadius = math.min(SizeX, SizeY, SizeZ) * OCCLUDER_INSCRIBED_FACTOR * InvZ :: number
-	if
-		InscribedRadius > OCCLUDER_MIN_PROJ_RADIUS
-		and (not HasOccluder or (ForwardZ + Radius < OccFarZ and InscribedRadius >= (OccMaxX - OccMinX) * 0.5))
-	then
-		HasOccluder = true
-		OccFarZ = ForwardZ + Radius
-		OccMinX, OccMaxX = ProjX - InscribedRadius, ProjX + InscribedRadius
-		OccMinY, OccMaxY = ProjY - InscribedRadius, ProjY + InscribedRadius
 	end
 
 	return false

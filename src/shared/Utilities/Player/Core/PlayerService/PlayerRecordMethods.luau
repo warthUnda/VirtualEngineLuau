@@ -116,6 +116,17 @@ function PlayerRecordMethods.UpdateTransform(
 	LookX: number,
 	LookZ: number
 )
+	if
+		PosX ~= PosX
+		or PosY ~= PosY
+		or PosZ ~= PosZ
+		or math.abs(PosX) > 1e6
+		or math.abs(PosY) > 1e6
+		or math.abs(PosZ) > 1e6
+	then
+		return
+	end
+
 	const UnitLookX, UnitLookZ = PlayerServiceHelper.NormalizeHorizontalLook(LookX, LookZ, self.LookX, self.LookZ)
 	self.PositionX = PosX
 	self.PositionY = PosY
@@ -124,8 +135,24 @@ function PlayerRecordMethods.UpdateTransform(
 	self.LookY = 0
 	self.LookZ = UnitLookZ
 
-	const EntityId = self.EntityId :: number
-	if EntityId < 1 or EntityId > Storage.ECSData.GetCounts().EntityECSCount then
+	local EntityId = self.EntityId :: number
+	if self.DynamicId > 0 then
+		const BoundId = Storage.DynamicObjectsList.GetBoundEntityId(self.DynamicId) :: number
+		if BoundId > 0 then
+			EntityId = BoundId
+			self.EntityId = BoundId
+		end
+	end
+	if not self.Active or EntityId < 1 or not Storage.ECSData.IsEntityActive(EntityId) then
+		return
+	end
+
+	const PropBuffer = Storage.PropertiesData.GetData() :: buffer
+	const PropOffset = (EntityId - 1) * PROPERTIES_STRIDE :: number
+	if PropOffset + PROPERTIES_STRIDE > buffer.len(PropBuffer) then
+		return
+	end
+	if self.DynamicId > 0 and ECSMain.GetEntityDynamicId(buffer.readu32(PropBuffer, PropOffset)) ~= self.DynamicId then
 		return
 	end
 
@@ -133,6 +160,9 @@ function PlayerRecordMethods.UpdateTransform(
 	const DirOffset = (EntityId - 1) * DIRECTION_STRIDE :: number
 	const PositionBuffer = Storage.PositionData.GetData() :: buffer
 	const DirectionsBuffer = Storage.DirectionsData.GetData() :: buffer
+	if CompOffset + COMPONENT_STRIDE > buffer.len(PositionBuffer) or DirOffset + DIRECTION_STRIDE > buffer.len(DirectionsBuffer) then
+		return
+	end
 
 	buffer.writef32(PositionBuffer, CompOffset, PosX)
 	buffer.writef32(PositionBuffer, CompOffset + 4, PosY)

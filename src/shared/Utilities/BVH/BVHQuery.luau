@@ -39,6 +39,19 @@ function BVHQuery.QueryAABBScalar(
 	ProvidedStorage: ECSMain.ECSStorage?,
 	SkipNeedsRebuild: boolean?
 ): number
+	const SafeMaxResults = math.min(MaxResults, buffer.len(ResultsBuffer) // 4) :: number
+	if
+		SafeMaxResults <= 0
+		or MinX ~= MinX
+		or MinY ~= MinY
+		or MinZ ~= MinZ
+		or MaxX ~= MaxX
+		or MaxY ~= MaxY
+		or MaxZ ~= MaxZ
+	then
+		return 0
+	end
+
 	const Storage, EntityCount = BVHState.EnsureFreshAndResolve(ProvidedStorage, SkipNeedsRebuild)
 	if not Storage then
 		return 0

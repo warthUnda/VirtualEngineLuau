@@ -5,8 +5,7 @@
 --[=[
 	@class RenderMath
 	Core software rasterizer math facade for camera-space OBB vertex transformation,
-	projection parameter calculation, polygon clipping, Cube-to-Plane impostor selection,
-	and scanline triangle batch dispatch.
+	projection parameter calculation, polygon clipping, and scanline triangle batch dispatch.
 ]=]
 
 -- Services --
@@ -17,7 +16,6 @@ const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForC
 const BufferHelper = require(script.Parent.BufferHelper)
 const RasterizerMath = require(script.Parent.RasterizerMath)
 const PolygonClipMath = require(script.Parent.PolygonClipMath)
-const CubeImpostorMath = require(script.Parent.CubeImpostorMath)
 
 -- Configs --
 const NEAR_CLIP = SystemsConfigs.RenderNearClip :: number
@@ -163,9 +161,6 @@ end
 
 RenderMath.ClipAndProjectQuad = PolygonClipMath.ClipAndProjectQuad
 RenderMath.ClipAndProjectTriangleUV = PolygonClipMath.ClipAndProjectTriangleUV
-RenderMath.SelectCubeRenderMode = CubeImpostorMath.SelectCubeRenderMode
-RenderMath.TransformCubeOrPlaneImpostor = CubeImpostorMath.TransformCubeOrPlaneImpostor
-RenderMath.GetImpostorShadingAndUV = CubeImpostorMath.GetImpostorShadingAndUV
 
 --[=[
 	Iterates and rasterizes a packed batch of textured triangles from a render command buffer.

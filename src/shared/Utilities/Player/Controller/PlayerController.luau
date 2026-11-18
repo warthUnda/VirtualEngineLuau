@@ -161,6 +161,9 @@ function PlayerController.ApplyStatePayload(
 
 	local Record = RecordsByPlayer[PlayerInstance]
 	if not Record or not Record.Active then
+		if ProvidedStorage == nil then
+			return false
+		end
 		Record = PlayerController.RegisterPlayer(PlayerInstance, Storage)
 	end
 	if not Record then

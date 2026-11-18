@@ -136,6 +136,9 @@ end
 	@param EntityCount number -- Current world entity count.
 ]=]
 function PlayerFunctions.MarkClientReady(PlayerObject: Player, EntityCount: number)
+	if typeof(PlayerObject) == "Instance" and not PlayerObject:IsDescendantOf(Players) then
+		return
+	end
 	const State = PlayerFunctions.GetOrCreatePlayerState(PlayerObject, EntityCount)
 	State.ClientReady = true
 	State.LastEntityCount = EntityCount
@@ -181,23 +184,51 @@ function PlayerFunctions.UpdateObserverFromBuffer(PlayerObject: Player, PayloadB
 	const ExtraBackPadding = buffer.readf32(PayloadBuffer, 48) :: number
 	const FovDegrees = buffer.readf32(PayloadBuffer, 52) :: number
 
-	const SumCheck = OriginX + OriginY + OriginZ + LookX + LookY + LookZ + UpX + UpY + UpZ + RightX + RightY + RightZ + ExtraBackPadding + FovDegrees :: number
-	if SumCheck ~= SumCheck or math.abs(SumCheck) == math.huge then
+	const AllFinite = OriginX == OriginX and OriginY == OriginY and OriginZ == OriginZ
+		and LookX == LookX and LookY == LookY and LookZ == LookZ
+		and UpX == UpX and UpY == UpY and UpZ == UpZ
+		and RightX == RightX and RightY == RightY and RightZ == RightZ
+		and ExtraBackPadding == ExtraBackPadding and FovDegrees == FovDegrees
+		and math.abs(OriginX) < 1e6 and math.abs(OriginY) < 1e6 and math.abs(OriginZ) < 1e6 :: boolean
+	if not AllFinite then
 		return
 	end
 
 	const LookLenSq = LookX * LookX + LookY * LookY + LookZ * LookZ :: number
-	if LookLenSq < 0.5 or LookLenSq > 1.5 then
+	const UpLenSq = UpX * UpX + UpY * UpY + UpZ * UpZ :: number
+	const RightLenSq = RightX * RightX + RightY * RightY + RightZ * RightZ :: number
+	if LookLenSq < 0.8 or LookLenSq > 1.2 or UpLenSq < 0.8 or UpLenSq > 1.2 or RightLenSq < 0.8 or RightLenSq > 1.2 then
 		return
 	end
+
+	const InvLookLen = 1 / math.sqrt(LookLenSq) :: number
+	const NormLookX = LookX * InvLookLen :: number
+	const NormLookY = LookY * InvLookLen :: number
+	const NormLookZ = LookZ * InvLookLen :: number
+
+	local OrthoRightX = NormLookY * UpZ - NormLookZ * UpY :: number
+	local OrthoRightY = NormLookZ * UpX - NormLookX * UpZ :: number
+	local OrthoRightZ = NormLookX * UpY - NormLookY * UpX :: number
+	const OrthoRightLenSq = OrthoRightX * OrthoRightX + OrthoRightY * OrthoRightY + OrthoRightZ * OrthoRightZ :: number
+	if OrthoRightLenSq < 0.5 then
+		return
+	end
+	const InvRightLen = 1 / math.sqrt(OrthoRightLenSq) :: number
+	OrthoRightX *= InvRightLen
+	OrthoRightY *= InvRightLen
+	OrthoRightZ *= InvRightLen
+
+	const OrthoUpX = OrthoRightY * NormLookZ - OrthoRightZ * NormLookY :: number
+	const OrthoUpY = OrthoRightZ * NormLookX - OrthoRightX * NormLookZ :: number
+	const OrthoUpZ = OrthoRightX * NormLookY - OrthoRightY * NormLookX :: number
 
 	const State = PlayerFunctions.GetOrCreatePlayerState(PlayerObject, EntityCount)
 	State.CharacterSeeded = true
 	State.ClientSynced = true
 	State.OriginX, State.OriginY, State.OriginZ = OriginX, OriginY, OriginZ
-	State.LookX, State.LookY, State.LookZ = LookX, LookY, LookZ
-	State.UpX, State.UpY, State.UpZ = UpX, UpY, UpZ
-	State.RightX, State.RightY, State.RightZ = RightX, RightY, RightZ
+	State.LookX, State.LookY, State.LookZ = NormLookX, NormLookY, NormLookZ
+	State.UpX, State.UpY, State.UpZ = OrthoUpX, OrthoUpY, OrthoUpZ
+	State.RightX, State.RightY, State.RightZ = OrthoRightX, OrthoRightY, OrthoRightZ
 	State.ExtraBackPadding = math.clamp(ExtraBackPadding, 0, 200)
 	State.FovDegrees = math.clamp(FovDegrees, 10, 120)
 end

@@ -62,7 +62,8 @@ local EntityVersionTracker = {
 	@param EntityCount number -- Current high-water entity index bound.
 ]=]
 function EntityVersionTracker.SyncEntityVersions(EntityCount: number)
-	for i = 1, EntityCount do
+	const ClampedCount = math.clamp(math.floor(EntityCount), 0, MAX_ENTITIES) :: number
+	for i = 1, ClampedCount do
 		const FlagOffset = i - 1 :: number
 		if buffer.readu8(ActiveFlags, FlagOffset) == 0 then
 			continue
@@ -150,6 +151,9 @@ end
 	@return (number, number) -- (ComponentMask, CurrentEntityVersion).
 ]=]
 function EntityVersionTracker.GetEntityDeltaMask(EntityId: number, SentVersion: number): (number, number)
+	if EntityId ~= EntityId or EntityId < 1 or EntityId > MAX_ENTITIES or EntityId % 1 ~= 0 then
+		return 0, 0
+	end
 	const VersionOffset = (EntityId - 1) * 4 :: number
 	const CurrentVer = buffer.readu32(VersionBuffer, VersionOffset) :: number
 	if SentVersion == 0 then

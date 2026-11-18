@@ -56,8 +56,8 @@ return function()
 			const InitialRowToWorker = RendererObj.RowToWorker
 			const InitialStagedTriangles = RendererObj.StagedTriangles
 
-			-- Simulate heavy render frame feedback driving RendererScore below 100
-			for _ = 1, 10 do
+			-- Simulate 1 second (60 frames) of heavy render feedback to step RendererScore down gradually
+			for _ = 1, 60 do
 				ResourceController.ReportRendererFeedback(0.025)
 				ResourceController.ReportPhysicsFeedback(0.001)
 				ResourceController.StepController(0.028)

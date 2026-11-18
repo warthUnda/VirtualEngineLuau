@@ -103,23 +103,57 @@ function ServerReplicationGateway.InitializeGateway(): ServerRemoteSet
 	const ObserverStateRemote = ServerReplicationGateway.EnsureUnreliableRemote(EventsFolder, OBSERVER_REMOTE_NAME)
 	const PlayerStateRemote = ServerReplicationGateway.EnsureUnreliableRemote(EventsFolder, PLAYER_STATE_REMOTE_NAME)
 
+	local LastReadySyncByPlayer = {} :: { [Player]: number }
+	local LastTextureSyncByPlayer = {} :: { [Player]: number }
+	local LastRegistrySyncByPlayer = {} :: { [Player]: number }
+
+	game:GetService("Players").PlayerRemoving:Connect(function(LeavingPlayer: Player)
+		LastReadySyncByPlayer[LeavingPlayer] = nil
+		LastTextureSyncByPlayer[LeavingPlayer] = nil
+		LastRegistrySyncByPlayer[LeavingPlayer] = nil
+	end)
+
 	ReplicateRemote.OnServerEvent:Connect(function(PlayerObject: Player)
+		const Now = os.clock() :: number
+		const LastSync = LastReadySyncByPlayer[PlayerObject] or 0 :: number
+		if Now - LastSync < 1.0 then
+			return
+		end
+		LastReadySyncByPlayer[PlayerObject] = Now
 		PlayerFunctions.MarkClientReady(PlayerObject, ECSData.GetCounts().EntityECSCount)
 	end)
 
 	ObserverStateRemote.OnServerEvent:Connect(function(PlayerObject: Player, Payload: buffer)
+		if typeof(Payload) ~= "buffer" then
+			return
+		end
 		PlayerFunctions.UpdateObserverFromBuffer(PlayerObject, Payload, ECSData.GetCounts().EntityECSCount)
 	end)
 
 	TextureSyncRemote.OnServerEvent:Connect(function(PlayerObject: Player)
+		const Now = os.clock() :: number
+		const LastSync = LastTextureSyncByPlayer[PlayerObject] or 0 :: number
+		if Now - LastSync < 1.0 then
+			return
+		end
+		LastTextureSyncByPlayer[PlayerObject] = Now
 		TextureSyncRemote:FireClient(PlayerObject, TextureTable.ExportEntries())
 	end)
 
 	PlayerStateRemote.OnServerEvent:Connect(function(PlayerObject: Player, Payload: buffer)
+		if typeof(Payload) ~= "buffer" then
+			return
+		end
 		EventBus.Emit(Events.ServerPlayerStateReceived, PlayerObject, Payload)
 	end)
 
 	PlayerRegistryRemote.OnServerEvent:Connect(function(PlayerObject: Player)
+		const Now = os.clock() :: number
+		const LastSync = LastRegistrySyncByPlayer[PlayerObject] or 0 :: number
+		if Now - LastSync < 1.0 then
+			return
+		end
+		LastRegistrySyncByPlayer[PlayerObject] = Now
 		EventBus.Emit(Events.ServerPlayerRegistryRequested, PlayerObject)
 	end)
 

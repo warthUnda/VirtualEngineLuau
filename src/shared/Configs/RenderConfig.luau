@@ -13,10 +13,10 @@ local RenderConfig = {}
 
 -- Display & Worker Settings --
 
-RenderConfig.RenderWidth = 340 :: number
+RenderConfig.RenderWidth = 1000 :: number
 -- Horizontal pixel resolution of the renderer's EditableImage and frame buffers.
 
-RenderConfig.RenderHeight = 240 :: number
+RenderConfig.RenderHeight = 1000 :: number
 -- Vertical pixel resolution of the renderer's EditableImage and frame buffers.
 
 RenderConfig.RenderTotalPixels = RenderConfig.RenderWidth * RenderConfig.RenderHeight :: number
@@ -64,9 +64,6 @@ RenderConfig.AmbientLight = 0.3 :: number
 
 RenderConfig.MinTriangleArea = 0.5 :: number
 -- Minimum screen-space signed edge area (2x pixel area; >= 0.5 keeps all visible 1-pixel triangles while culling degenerate slivers).
-
-RenderConfig.PlaneImpostorMaxPixels = 1.25 :: number
--- Maximum projected screen-space side-face thickness in pixels below which a Cube (ShapeId = 0) renders as a single 4-vertex Plane quad impostor.
 
 -- Clipping & Frustum Culling --
 

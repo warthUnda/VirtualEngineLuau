@@ -19,6 +19,9 @@ ControllerTheoryConfig.ControllerTargetFPS = 60 :: number
 ControllerTheoryConfig.ControllerTargetFrameTime = (1 / ControllerTheoryConfig.ControllerTargetFPS) :: number
 -- Target frame duration in seconds (1 / 60 = 0.0166667s).
 
+ControllerTheoryConfig.ControllerFreeTimeReserve = 0.002 :: number
+-- Mandatory unused free frame time in seconds (2.0 ms) reserved every frame to absorb spikes without missing 60 FPS.
+
 ControllerTheoryConfig.ControllerRendererWeight = 0.60 :: number
 -- Runtime frame-budget weight assigned to the software renderer (60%).
 
@@ -34,30 +37,48 @@ ControllerTheoryConfig.ControllerMaxScore = 100 :: number
 ControllerTheoryConfig.ControllerInitialScore = 100 :: number
 -- Initial resource allocation score before frame-time feedback reduces resources.
 
--- Closed-Loop Feedback Gains --
+-- Closed-Loop Feedback Gains (Aggressive Downward Optimization & Conservative Rewards) --
 
-ControllerTheoryConfig.ControllerDownGain = 18.0 :: number
--- Proportional step-down gain applied when a subsystem exceeds its available 60 FPS frame budget.
+ControllerTheoryConfig.ControllerDownGain = 1.25 :: number
+-- Aggressive proportional step-down gain when exceeding usable frame budget.
 
-ControllerTheoryConfig.ControllerUpGain = 4.0 :: number
--- Proportional step-up recovery gain applied when frame headroom is available below 16.67ms.
+ControllerTheoryConfig.ControllerUpGain = 0.014 :: number
+-- Gradual proportional step-up reward gain (10x gentler than fast recovery) when headroom is available.
 
-ControllerTheoryConfig.ControllerDerivativeGain = 3.0 :: number
--- Derivative damping gain applied to frame-error rate of change to suppress score hunting.
+ControllerTheoryConfig.ControllerDerivativeGain = 0.25 :: number
+-- Derivative damping gain applied to frame-error rate of change to react quickly to rising spikes and suppress hunting.
 
-ControllerTheoryConfig.ControllerErrorDeadband = 0.03 :: number
--- Normalized budget error deadband (+/-3% of 16.67ms) where scores hold steady without jitter.
+ControllerTheoryConfig.ControllerErrorDeadband = 0.02 :: number
+-- Tighter normalized budget error deadband (+/-2% of 16.67ms) so optimization kicks in sooner.
 
-ControllerTheoryConfig.ControllerMaxDropPerFrame = 25.0 :: number
--- Maximum downward score step per single frame to prevent transient scheduler spikes from slamming to 1.
+ControllerTheoryConfig.ControllerMaxDropPerFrame = 0.25 :: number
+-- Maximum downward score step per frame (99 / 0.25 = 396 frames = ~6.6s minimum full drop at 60 FPS under severe lag).
 
-ControllerTheoryConfig.ControllerMaxRisePerFrame = 10.0 :: number
--- Maximum upward score recovery step per single frame.
+ControllerTheoryConfig.ControllerMaxRisePerFrame = 0.0055 :: number
+-- Maximum upward reward step per frame (10x reduced: 99 / 0.0055 = 18,000 frames = ~300s minimum full recovery at 60 FPS).
+
+ControllerTheoryConfig.ControllerEquilibriumBudgetRatio = 0.82 :: number
+-- Target fraction of allocated usable budget predicted by the plant internal model so steady state stays safely below the lag threshold.
+
+ControllerTheoryConfig.ControllerUpscaleHeadroomDeadband = 0.08 :: number
+-- Minimum normalized positive budget margin (+8% of frame period) required before rewarding resource scores upward.
+
+ControllerTheoryConfig.ControllerBaseCeilingHoldFrames = 300 :: number
+-- Initial stable frame count (~5.0s at 60 FPS) to hold a post-overrun safe ceiling before cautiously probing upward.
+
+ControllerTheoryConfig.ControllerMaxCeilingHoldFrames = 1800 :: number
+-- Maximum exponential-backoff hold duration (~30.0s at 60 FPS) after repeated ceiling hits in a heavy scene.
+
+ControllerTheoryConfig.ControllerCeilingProbeStep = 2.0 :: number
+-- Score increment tested per ceiling probe after HoldTargetFrames of uninterrupted stability.
+
+ControllerTheoryConfig.ControllerCeilingUnlockRatio = 0.70 :: number
+-- Per-unit plant cost ratio (<= 70%, i.e., >= 30% genuine load drop) that unlocks a post-overrun ceiling immediately.
 
 -- Interpreter Bounds (Renderer & Deterministic Physics) --
 
-ControllerTheoryConfig.ControllerMinResolutionScale = 0.25 :: number
--- Minimum linear resolution multiplier at score 1 (25% width x 25% height = 6.25% pixel count).
+ControllerTheoryConfig.ControllerMinResolutionScale = 0.20 :: number
+-- Minimum linear resolution multiplier at score 1 (20% width x 20% height = 4% pixel count).
 
 ControllerTheoryConfig.ControllerResolutionStep = 4 :: number
 -- Pixel alignment quantum for dynamically scaled viewport dimensions to avoid per-frame EditableImage churn.
@@ -65,8 +86,8 @@ ControllerTheoryConfig.ControllerResolutionStep = 4 :: number
 ControllerTheoryConfig.ControllerMinViewportDim = 32 :: number
 -- Minimum allowed scaled pixel width or height when BaseWidth/BaseHeight exceed 32.
 
-ControllerTheoryConfig.ControllerMinPhysicsDutyPercent = 10 :: number
--- Minimum active part percentage per frame at score 1 (10% = deterministic stride of every 10 frames).
+ControllerTheoryConfig.ControllerMinPhysicsDutyPercent = 5 :: number
+-- Minimum active part percentage per frame at score 1 (5% = deterministic stride of every 20 frames).
 
 ControllerTheoryConfig.ControllerMaxPhysicsDtScale = 2.0 :: number
 -- Maximum substep delta-time multiplier applied to frame-strided dynamic parts to preserve fall speed without tunneling.

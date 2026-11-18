@@ -109,11 +109,13 @@ function PlayerControllerHelper.PackStatePayload(
 	LookX: number,
 	LookZ: number
 ): boolean
-	if buffer.len(PayloadBuffer) < PAYLOAD_BYTES then
+	if typeof(PayloadBuffer) ~= "buffer" or buffer.len(PayloadBuffer) < PAYLOAD_BYTES then
 		return false
 	end
-	const CheckSum = PosX + PosY + PosZ + LookX + LookZ :: number
-	if CheckSum ~= CheckSum or math.abs(CheckSum) == math.huge then
+	const ValidFloats = PosX == PosX and PosY == PosY and PosZ == PosZ and LookX == LookX and LookZ == LookZ
+		and math.abs(PosX) < 1e6 and math.abs(PosY) < 1e6 and math.abs(PosZ) < 1e6
+		and math.abs(LookX) <= 2 and math.abs(LookZ) <= 2 :: boolean
+	if not ValidFloats then
 		return false
 	end
 	buffer.writef32(PayloadBuffer, 0, PosX)
@@ -140,8 +142,10 @@ function PlayerControllerHelper.UnpackStatePayload(
 	const PosZ = buffer.readf32(PayloadBuffer, 8) :: number
 	const LookX = buffer.readf32(PayloadBuffer, 12) :: number
 	const LookZ = buffer.readf32(PayloadBuffer, 16) :: number
-	const CheckSum = PosX + PosY + PosZ + LookX + LookZ :: number
-	if CheckSum ~= CheckSum or math.abs(CheckSum) == math.huge then
+	const ValidFloats = PosX == PosX and PosY == PosY and PosZ == PosZ and LookX == LookX and LookZ == LookZ
+		and math.abs(PosX) < 1e6 and math.abs(PosY) < 1e6 and math.abs(PosZ) < 1e6
+		and math.abs(LookX) <= 2 and math.abs(LookZ) <= 2 :: boolean
+	if not ValidFloats then
 		return false, 0, 0, 0, 0, -1
 	end
 	return true, PosX, PosY, PosZ, LookX, LookZ
@@ -154,18 +158,23 @@ end
 	@return number -- Entity ID (1-based) if found, or 0.
 ]=]
 function PlayerControllerHelper.FindEntitySlotByDynamicId(Storage: ECSMain.ECSStorage, DynamicId: number): number
-	if DynamicId <= 0 then
+	if DynamicId ~= DynamicId or DynamicId <= 0 or DynamicId % 1 ~= 0 then
 		return 0
 	end
-	const BoundId = Storage.DynamicObjectsList.GetBoundEntityId(DynamicId) :: number
-	const EntityCount = Storage.ECSData.GetCounts().EntityECSCount :: number
+	const ECSData = Storage.ECSData
 	const PropertiesBuffer = Storage.PropertiesData.GetData() :: buffer
-	if BoundId > 0 and BoundId <= EntityCount then
+	const MaxSlots = buffer.len(PropertiesBuffer) // PROPERTIES_STRIDE :: number
+	const EntityCount = math.min(ECSData.GetCounts().EntityECSCount, MaxSlots) :: number
+	const BoundId = Storage.DynamicObjectsList.GetBoundEntityId(DynamicId) :: number
+	if BoundId >= 1 and BoundId <= EntityCount and BoundId % 1 == 0 and ECSData.IsEntityActive(BoundId) then
 		if ECSMain.GetEntityDynamicId(buffer.readu32(PropertiesBuffer, (BoundId - 1) * PROPERTIES_STRIDE)) == DynamicId then
 			return BoundId
 		end
 	end
 	for EntityId = 1, EntityCount do
+		if not ECSData.IsEntityActive(EntityId) then
+			continue
+		end
 		if ECSMain.GetEntityDynamicId(buffer.readu32(PropertiesBuffer, (EntityId - 1) * PROPERTIES_STRIDE)) == DynamicId then
 			return EntityId
 		end

@@ -8,8 +8,8 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStor
 -- Libraries --
 const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
 const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
-const ControllerInterpreter = require(
-	SharedFolder:WaitForChild("Utilities"):WaitForChild("ControllerTheory"):WaitForChild("Core"):WaitForChild("ControllerInterpreter")
+const PhysicsRep = require(
+	SharedFolder:WaitForChild("Utilities"):WaitForChild("ControllerTheory"):WaitForChild("ControllerReps"):WaitForChild("PhysicsRep")
 )
 const PhysicsControllerHelper = require(script.Parent.PhysicsControllerHelper)
 const PhysicsAwakeState = require(script.Parent.PhysicsAwakeState)
@@ -154,7 +154,7 @@ end
 	@param ActiveFlags buffer? -- Optional ECS active flags buffer.
 	@param ECSDataModule any -- ECS data component interface.
 	@param FrameTick number? -- Optional monotonic physics frame tick for deterministic part striding.
-	@param ActiveDutyPercent number? -- Optional 1..100 active duty percentage from ControllerInterpreter.
+	@param ActiveDutyPercent number? -- Optional 1..100 active duty percentage from PhysicsRep.Interpret().
 	@param DtCompensationScale number? -- Optional substep delta-time stride scale factor.
 ]=]
 function PhysicsInstanceManager.StepAwakeEntitiesSubstep(
@@ -190,7 +190,7 @@ function PhysicsInstanceManager.StepAwakeEntitiesSubstep(
 			continue
 		end
 
-		if EffectiveDuty < 100 and not ControllerInterpreter.ShouldStepPhysicsEntity(EntityId, EffectiveTick, EffectiveDuty) then
+		if EffectiveDuty < 100 and not PhysicsRep.ShouldStepEntity(EntityId, EffectiveTick, EffectiveDuty) then
 			AwakeIndex += 1
 			continue
 		end

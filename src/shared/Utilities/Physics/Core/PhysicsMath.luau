@@ -20,6 +20,7 @@ const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
 const MAX_ENTITIES = SystemsConfigs.ECSMaxEntities :: number
 const BROADPHASE_PADDING = SystemsConfigs.PhysicsBroadphasePadding :: number
+const DENORMAL_EPSILON = 1e-12 :: number
 
 -- Variables --
 local WakeEntityCallback: ((EntityId: number) -> ())? = nil
@@ -56,22 +57,18 @@ function PhysicsMath.StepObjectVelocity(
 	DeltaTime: number
 ): (number, number, number)
 	const AccelerationScale = InverseMass * DeltaTime :: number
-	local NextVelocityX = VelocityX + ForceX * AccelerationScale :: number
-	local NextVelocityY = VelocityY + ForceY * AccelerationScale - GRAVITY * DeltaTime :: number
-	local NextVelocityZ = VelocityZ + ForceZ * AccelerationScale :: number
-
 	const LinearDecay = math.max(0, 1 - OBJECT_LINEAR_DRAG * DeltaTime) :: number
-	NextVelocityX *= LinearDecay
-	NextVelocityY *= LinearDecay
-	NextVelocityZ *= LinearDecay
+	const HorizontalDecay = if IsGrounded
+		then LinearDecay * math.max(0, 1 - OBJECT_SURFACE_FRICTION * DeltaTime)
+		else LinearDecay :: number
 
-	if IsGrounded then
-		const SurfaceDecay = math.max(0, 1 - OBJECT_SURFACE_FRICTION * DeltaTime) :: number
-		NextVelocityX *= SurfaceDecay
-		NextVelocityZ *= SurfaceDecay
-	end
+	const RawVelocityX = (VelocityX + ForceX * AccelerationScale) * HorizontalDecay :: number
+	const RawVelocityY = (VelocityY + ForceY * AccelerationScale - GRAVITY * DeltaTime) * LinearDecay :: number
+	const RawVelocityZ = (VelocityZ + ForceZ * AccelerationScale) * HorizontalDecay :: number
 
-	return NextVelocityX, NextVelocityY, NextVelocityZ
+	return if math.abs(RawVelocityX) < DENORMAL_EPSILON then 0 else RawVelocityX,
+		if math.abs(RawVelocityY) < DENORMAL_EPSILON then 0 else RawVelocityY,
+		if math.abs(RawVelocityZ) < DENORMAL_EPSILON then 0 else RawVelocityZ
 end
 
 --[=[
@@ -93,14 +90,7 @@ function PhysicsMath.ResolveBodyWorldCollisions(
 	ObjectInvMassBuffer: buffer,
 	SkipBVHNeedsRebuild: boolean?
 ): (number, number, number, number, number, number, boolean)
-	if
-		BodyX ~= BodyX
-		or BodyY ~= BodyY
-		or BodyZ ~= BodyZ
-		or math.abs(BodyX) == math.huge
-		or math.abs(BodyY) == math.huge
-		or math.abs(BodyZ) == math.huge
-	then
+	if (BodyX - BodyX) + (BodyY - BodyY) + (BodyZ - BodyZ) ~= 0 then
 		return 0, 0, 0, 0, 0, 0, false
 	end
 
@@ -122,6 +112,9 @@ function PhysicsMath.ResolveBodyWorldCollisions(
 	) :: number
 
 	const TestOBB = PhysicsSATMath.TestBoxVsOBB
+	const ResolveDynamic = PhysicsMathHelper.ResolveDynamicPairContact
+	const WakeCallback = WakeEntityCallback
+	const NegOnePlusRestitution = -(1 + Restitution) :: number
 	for CandidateIdx = 0, CandidateCount - 1 do
 		const EntityId = buffer.readu32(BroadphaseCandidatesBuffer, CandidateIdx * 4) :: number
 		if EntityId == IgnoreEntityId or EntityId < 1 or EntityId > EntityCount then
@@ -139,19 +132,17 @@ function PhysicsMath.ResolveBodyWorldCollisions(
 			continue
 		end
 
-		if NormalY >= WALKABLE_NORMAL_Y then
-			Grounded = true
-		end
+		Grounded = Grounded or (NormalY >= WALKABLE_NORMAL_Y)
 
 		const OtherDynamicState = buffer.readu8(DynamicFlags, EntityId - 1) :: number
 		if OtherDynamicState > 0 then
-			NextX, NextY, NextZ, NextVelocityX, NextVelocityY, NextVelocityZ = PhysicsMathHelper.ResolveDynamicPairContact(
+			NextX, NextY, NextZ, NextVelocityX, NextVelocityY, NextVelocityZ = ResolveDynamic(
 				NextX, NextY, NextZ, NextVelocityX, NextVelocityY, NextVelocityZ,
 				BodyInverseMass, EntityId, NormalX, NormalY, NormalZ, Penetration,
 				PositionBuffer, DynamicFlags, ObjectVelocityBuffer, ObjectInvMassBuffer
 			)
-			if OtherDynamicState == 2 and WakeEntityCallback and buffer.readu8(DynamicFlags, EntityId - 1) == 1 then
-				WakeEntityCallback(EntityId)
+			if OtherDynamicState == 2 and WakeCallback and buffer.readu8(DynamicFlags, EntityId - 1) == 1 then
+				WakeCallback(EntityId)
 			end
 			continue
 		end
@@ -162,7 +153,7 @@ function PhysicsMath.ResolveBodyWorldCollisions(
 
 		const NormalVelocity = NextVelocityX * NormalX + NextVelocityY * NormalY + NextVelocityZ * NormalZ :: number
 		if NormalVelocity < 0 then
-			const BounceScale = -(1 + Restitution) * NormalVelocity :: number
+			const BounceScale = NegOnePlusRestitution * NormalVelocity :: number
 			NextVelocityX += NormalX * BounceScale
 			NextVelocityY += NormalY * BounceScale
 			NextVelocityZ += NormalZ * BounceScale

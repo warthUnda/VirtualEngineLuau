@@ -2,14 +2,20 @@
 --!native
 --!optimize 2
 
+--[=[
+	@class ViewCulling
+	Frustum plane calculation, dominant foreground occluder prepass, single-entity culling,
+	and facade delegating BVH candidate filtering to ViewCullingBatchHelper.
+]=]
+
 -- Services --
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 const RunService = game:GetService("RunService")
 
 -- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
-const ECSMain = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ECSMain"))
 const ViewObserverCodec = require(script.Parent.ViewObserverCodec)
+const ViewCullingBatchHelper = require(script.Parent.ViewCullingBatchHelper)
 const CameraStore = if RunService:IsClient()
 	then require(
 		ReplicatedStorage:WaitForChild("Shared")
@@ -36,6 +42,7 @@ const OCCLUDER_MIN_PROJ_RADIUS = SystemsConfigs.OccluderMinProjectedRadius :: nu
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
 const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 const DEFAULT_CAMERA_FOV = SystemsConfigs.DefaultCameraFOV :: number
+const FLAG_IS_VISIBLE = bit32.lshift(1, 2) :: number
 
 -- Variables --
 local ViewOriginX, ViewOriginY, ViewOriginZ = 0 :: number, 0 :: number, 0 :: number
@@ -60,26 +67,9 @@ local ViewCulling = {
 
 -- Functions --
 -- ============================================================================
--- 1. FRUSTUM & DOMINANT OCCLUDER CULLING FACADE
+-- 1. FRUSTUM STATE UPDATES & PLANE PARAMETER ACCESSORS
 -- ============================================================================
 
---[=[
-	Updates the active frustum origin, basis axes, and FOV tangents directly from scalar observer parameters.
-	@param OriginX number -- Observer camera origin X.
-	@param OriginY number -- Observer camera origin Y.
-	@param OriginZ number -- Observer camera origin Z.
-	@param LookX number -- Forward basis X.
-	@param LookY number -- Forward basis Y.
-	@param LookZ number -- Forward basis Z.
-	@param UpX number -- Upward basis X.
-	@param UpY number -- Upward basis Y.
-	@param UpZ number -- Upward basis Z.
-	@param RightX number -- Rightward basis X.
-	@param RightY number -- Rightward basis Y.
-	@param RightZ number -- Rightward basis Z.
-	@param ExtraBackPadding number -- Additional backward origin shift.
-	@param FovDegrees number -- Active vertical FOV in degrees.
-]=]
 function ViewCulling.UpdateObserverFromVectors(
 	OriginX: number, OriginY: number, OriginZ: number,
 	LookX: number, LookY: number, LookZ: number,
@@ -102,15 +92,24 @@ function ViewCulling.UpdateObserverFromVectors(
 	HasOccluder = false
 end
 
---[=[
-	Updates the client frustum directly from CameraStore and simulated player position without requiring a Character.
-	@param PlayerPosition Vector3 -- Simulated player world position.
-]=]
+function ViewCulling.GetFrustumParams(): (
+	number, number, number,
+	number, number, number,
+	number, number, number,
+	number, number, number,
+	number, number, number, number
+)
+	return ViewOriginX, ViewOriginY, ViewOriginZ,
+		ViewLookX, ViewLookY, ViewLookZ,
+		ViewRightX, ViewRightY, ViewRightZ,
+		ViewUpX, ViewUpY, ViewUpZ,
+		ViewTanX, ViewTanY, NEAR_CLIP, FAR_CLIP
+end
+
 function ViewCulling.UpdateClientView(PlayerPosition: Vector3)
 	if not CameraStore then
 		return
 	end
-
 	const CamTable = CameraStore.GetCameraTable()
 	const CamCFrame = CamTable.CameraCFrame :: CFrame
 	const CamPos, Look, Up, Right = CamCFrame.Position, CamCFrame.LookVector, CamCFrame.UpVector, CamCFrame.RightVector
@@ -120,10 +119,6 @@ function ViewCulling.UpdateClientView(PlayerPosition: Vector3)
 	)
 end
 
---[=[
-	Pulls the frustum origin backward behind the camera based on Head-to-Camera distance (or CameraStore directly).
-	@param Head BasePart? -- Optional observer BasePart providing fallback position and orientation.
-]=]
 function ViewCulling.UpdateDynamicView(Head: BasePart?)
 	if CameraStore then
 		const CamTable = CameraStore.GetCameraTable()
@@ -139,7 +134,6 @@ function ViewCulling.UpdateDynamicView(Head: BasePart?)
 	if not Head then
 		return
 	end
-
 	const HeadPos, HeadCF = Head.Position, Head.CFrame
 	const Look, Up, Right = HeadCF.LookVector, HeadCF.UpVector, HeadCF.RightVector
 	ViewCulling.UpdateObserverFromVectors(
@@ -147,28 +141,27 @@ function ViewCulling.UpdateDynamicView(Head: BasePart?)
 	)
 end
 
---[=[
-	Pre-scans entities to select the closest dominant foreground occluder before per-entity culling.
-	@param EntityCount number -- Number of entities to scan.
-	@param Positions buffer -- Positions buffer.
-	@param Sizes buffer -- Sizes buffer.
-	@param Properties buffer -- Properties buffer.
-]=]
+-- ============================================================================
+-- 2. OCCLUDER PREPASS, BVH BATCH DELEGATION & SINGLE-ENTITY CULLING
+-- ============================================================================
+
 function ViewCulling.PrepassDominantOccluder(EntityCount: number, Positions: buffer, Sizes: buffer, Properties: buffer)
 	HasOccluder = false
 	local BestInscribedRadius = OCCLUDER_MIN_PROJ_RADIUS :: number
+	const OrigX, OrigY, OrigZ = ViewOriginX, ViewOriginY, ViewOriginZ
+	const LookX, LookY, LookZ = ViewLookX, ViewLookY, ViewLookZ
+	const RightX, RightY, RightZ = ViewRightX, ViewRightY, ViewRightZ
+	const UpX, UpY, UpZ = ViewUpX, ViewUpY, ViewUpZ
 
 	for EntityIndex = 1, EntityCount do
-		const PropertiesRegister = buffer.readu32(Properties, (EntityIndex - 1) * PROPERTIES_STRIDE) :: number
-		if not ECSMain.IsEntityVisible(PropertiesRegister) then
+		if not bit32.btest(buffer.readu32(Properties, (EntityIndex - 1) * PROPERTIES_STRIDE), FLAG_IS_VISIBLE) then
 			continue
 		end
-
 		const Offset = (EntityIndex - 1) * COMPONENT_STRIDE :: number
-		const RelX = buffer.readf32(Positions, Offset) - ViewOriginX :: number
-		const RelY = buffer.readf32(Positions, Offset + 4) - ViewOriginY :: number
-		const RelZ = buffer.readf32(Positions, Offset + 8) - ViewOriginZ :: number
-		const ForwardZ = RelX * ViewLookX + RelY * ViewLookY + RelZ * ViewLookZ :: number
+		const RelX = buffer.readf32(Positions, Offset) - OrigX :: number
+		const RelY = buffer.readf32(Positions, Offset + 4) - OrigY :: number
+		const RelZ = buffer.readf32(Positions, Offset + 8) - OrigZ :: number
+		const ForwardZ = RelX * LookX + RelY * LookY + RelZ * LookZ :: number
 		if ForwardZ <= NEAR_CLIP or ForwardZ > FAR_CLIP then
 			continue
 		end
@@ -176,30 +169,48 @@ function ViewCulling.PrepassDominantOccluder(EntityCount: number, Positions: buf
 		const SizeX = buffer.readf32(Sizes, Offset) :: number
 		const SizeY = buffer.readf32(Sizes, Offset + 4) :: number
 		const SizeZ = buffer.readf32(Sizes, Offset + 8) :: number
-		const InvZ = 1 / math.max(NEAR_CLIP, ForwardZ) :: number
+		const InvZ = 1 / ForwardZ :: number
 		const InscribedRadius = math.min(SizeX, SizeY, SizeZ) * OCCLUDER_INSCRIBED_FACTOR * InvZ :: number
 		if InscribedRadius > BestInscribedRadius then
 			const Radius = (SizeX + SizeY + SizeZ) * RADIUS_PADDING_FACTOR :: number
-			const ProjX = (RelX * ViewRightX + RelY * ViewRightY + RelZ * ViewRightZ) * InvZ :: number
-			const ProjY = (RelX * ViewUpX + RelY * ViewUpY + RelZ * ViewUpZ) * InvZ :: number
+			const ProjX = (RelX * RightX + RelY * RightY + RelZ * RightZ) * InvZ :: number
+			const ProjY = (RelX * UpX + RelY * UpY + RelZ * UpZ) * InvZ :: number
 			BestInscribedRadius = InscribedRadius
 			HasOccluder = true
 			OccFarZ = ForwardZ + Radius
-			OccMinX = ProjX - InscribedRadius
-			OccMaxX = ProjX + InscribedRadius
-			OccMinY = ProjY - InscribedRadius
-			OccMaxY = ProjY + InscribedRadius
+			OccMinX, OccMaxX = ProjX - InscribedRadius, ProjX + InscribedRadius
+			OccMinY, OccMaxY = ProjY - InscribedRadius, ProjY + InscribedRadius
 		end
 	end
 end
 
---[=[
-	Evaluates whether an entity is outside the view frustum or occluded by a dominant occluder.
-	@param EntityIndex number -- 1-based ECS entity index.
-	@param Positions buffer -- Positions buffer.
-	@param Sizes buffer -- Sizes buffer.
-	@return boolean -- True if the entity is culled (not visible).
-]=]
+function ViewCulling.PrepassDominantOccluderCandidates(
+	CandidateIds: buffer, CandidateCount: number, Positions: buffer, Sizes: buffer, Properties: buffer
+)
+	HasOccluder, OccFarZ, OccMinX, OccMaxX, OccMinY, OccMaxY = ViewCullingBatchHelper.PrepassCandidates(
+		CandidateIds, CandidateCount, Positions, Sizes, Properties,
+		ViewOriginX, ViewOriginY, ViewOriginZ,
+		ViewLookX, ViewLookY, ViewLookZ,
+		ViewRightX, ViewRightY, ViewRightZ,
+		ViewUpX, ViewUpY, ViewUpZ
+	)
+end
+
+function ViewCulling.FilterCandidatesFrontToBack(
+	CandidateIds: buffer, CandidateCount: number, ActiveFlags: buffer,
+	Positions: buffer, Sizes: buffer, Properties: buffer,
+	OutObjectIds: buffer, OutDepths: buffer
+): (number, boolean)
+	return ViewCullingBatchHelper.FilterCandidatesFrontToBack(
+		CandidateIds, CandidateCount, ActiveFlags, Positions, Sizes, Properties, OutObjectIds, OutDepths,
+		ViewOriginX, ViewOriginY, ViewOriginZ,
+		ViewLookX, ViewLookY, ViewLookZ,
+		ViewRightX, ViewRightY, ViewRightZ,
+		ViewUpX, ViewUpY, ViewUpZ,
+		ViewTanX, ViewTanY, HasOccluder, OccFarZ, OccMinX, OccMaxX, OccMinY, OccMaxY
+	)
+end
+
 function ViewCulling.IsEntityCulled(EntityIndex: number, Positions: buffer, Sizes: buffer): boolean
 	const Offset = (EntityIndex - 1) * COMPONENT_STRIDE :: number
 	if Offset < 0 or Offset + COMPONENT_STRIDE > buffer.len(Positions) or Offset + COMPONENT_STRIDE > buffer.len(Sizes) then
@@ -224,16 +235,19 @@ function ViewCulling.IsEntityCulled(EntityIndex: number, Positions: buffer, Size
 		return true
 	end
 
-	const InvZ = 1 / math.max(NEAR_CLIP, ForwardZ) :: number
-	const ProjRadius = Radius * InvZ :: number
-	const ProjX = LocalX * InvZ :: number
-	const ProjY = LocalY * InvZ :: number
-
-	if HasOccluder and ForwardZ - Radius > OccFarZ
-		and ProjX - ProjRadius >= OccMinX and ProjX + ProjRadius <= OccMaxX
-		and ProjY - ProjRadius >= OccMinY and ProjY + ProjRadius <= OccMaxY
-	then
-		return true
+	if HasOccluder and ForwardZ - Radius > OccFarZ then
+		const InvZ = 1 / math.max(NEAR_CLIP, ForwardZ) :: number
+		const ProjRadius = Radius * InvZ :: number
+		const ProjX = LocalX * InvZ :: number
+		const ProjY = LocalY * InvZ :: number
+		if
+			ProjX - ProjRadius >= OccMinX
+			and ProjX + ProjRadius <= OccMaxX
+			and ProjY - ProjRadius >= OccMinY
+			and ProjY + ProjRadius <= OccMaxY
+		then
+			return true
+		end
 	end
 
 	return false

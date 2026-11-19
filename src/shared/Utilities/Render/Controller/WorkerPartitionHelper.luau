@@ -2,17 +2,26 @@
 --!native
 --!optimize 2
 
+--[=[
+	@class WorkerPartitionHelper
+	Prefix-sum scanline cost recording (calibrated textured/untextured cost model), dynamic
+	equal-cost band partitioning, legacy textured batch dispatch, and dual-stream scatter facade.
+]=]
+
 -- Services --
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
+const WorkerScatterHelper = require(script.Parent:WaitForChild("WorkerScatterHelper"))
 
 -- Configs --
 const RENDER_BUFFER_LAYOUT_SIZE = SystemsConfigs.RenderBufferLayoutSize :: number
 
 -- Tables --
-local WorkerPartitionHelper = {}
+local WorkerPartitionHelper = {
+	ScatterDualChunksToWorkers = WorkerScatterHelper.ScatterDualChunksToWorkers,
+}
 
 -- Functions --
 -- ============================================================================
@@ -21,12 +30,6 @@ local WorkerPartitionHelper = {}
 
 --[=[
 	Records a projected triangle's estimated per-scanline rasterization cost into an i32 difference array in O(1) time.
-	@param RowWorkDiff buffer -- Difference buffer of size (Height + 1) * 4 bytes.
-	@param MinX number -- Clamped inclusive triangle minimum screen X.
-	@param MaxX number -- Clamped inclusive triangle maximum screen X.
-	@param MinY number -- Clamped inclusive triangle minimum screen Y.
-	@param MaxY number -- Clamped inclusive triangle maximum screen Y.
-	@param TextureId number -- TextureTable ID (0 for untextured solid fill, >0 for perspective-textured).
 ]=]
 function WorkerPartitionHelper.RecordTriangleRowWork(
 	RowWorkDiff: buffer,
@@ -40,32 +43,59 @@ function WorkerPartitionHelper.RecordTriangleRowWork(
 	if MaxRow < 0 or MinX > MaxX then
 		return
 	end
-
 	const ClampedMinY = math.max(0, MinY) :: number
 	const ClampedMaxY = math.min(MaxRow, MaxY) :: number
 	if ClampedMinY > ClampedMaxY then
 		return
 	end
-
-	const SpanWidth = math.max(1, MaxX - MinX + 1) :: number
-	const RowCost = if TextureId > 0 then SpanWidth * 2 + 4 else SpanWidth + 4 :: number
+	const HalfSpan = math.max(1, MaxX - MinX + 1) * 0.5 :: number
+	const RowCost = if TextureId > 0 then math.floor(HalfSpan * 2 + 20) else math.floor(HalfSpan + 28) :: number
 	const StartOffset = ClampedMinY * 4 :: number
 	const EndAfterOffset = (ClampedMaxY + 1) * 4 :: number
-
 	buffer.writei32(RowWorkDiff, StartOffset, buffer.readi32(RowWorkDiff, StartOffset) + RowCost)
 	buffer.writei32(RowWorkDiff, EndAfterOffset, buffer.readi32(RowWorkDiff, EndAfterOffset) - RowCost)
 end
 
 --[=[
-	Integrates RowWorkDiff into CumulativeWork (zeroing RowWorkDiff for the next frame), partitions [0..Height - 1]
-	into WorkerCount contiguous equal-cost scanline bands, and populates the O(1) RowToWorker lookup buffer.
-	@param RowWorkDiff buffer -- Difference buffer of size (Height + 1) * 4 bytes (zeroed in-place during sweep).
-	@param CumulativeWork buffer -- Scratch prefix-sum buffer of size Height * 4 bytes.
-	@param RowToWorker buffer -- Output lookup buffer of size Height bytes mapping Y -> 1..WorkerCount.
-	@param Height number -- Screen height in pixels.
-	@param WorkerCount number -- Active parallel worker count.
-	@param BandStarts { number } -- Output 1-based array of inclusive band start Y coordinates.
-	@param BandEnds { number } -- Output 1-based array of inclusive band end Y coordinates.
+	Computes front-to-back contiguous entity chunk sizes for Pass-1 geometry staging, giving Worker 1
+	a smaller slice to compensate for near/guardband polygon clipping cost on closest entities.
+]=]
+function WorkerPartitionHelper.ComputeStageChunkCounts(
+	EntityCount: number,
+	WorkerCount: number,
+	OutCounts: { number }
+): number
+	if EntityCount <= 0 or WorkerCount <= 0 then
+		return 0
+	end
+	if WorkerCount == 3 and EntityCount >= 9 then
+		const FirstCount = math.max(1, math.floor(EntityCount * 0.17)) :: number
+		const Remaining = EntityCount - FirstCount :: number
+		const SecondCount = math.ceil(Remaining * 0.5) :: number
+		OutCounts[1] = FirstCount
+		OutCounts[2] = SecondCount
+		OutCounts[3] = Remaining - SecondCount
+		return 3
+	end
+
+	const BaseSize = math.ceil(EntityCount / WorkerCount) :: number
+	local Dispatched = 0 :: number
+	local Assigned = 0 :: number
+	for w = 1, WorkerCount do
+		if Assigned >= EntityCount then
+			break
+		end
+		const Count = math.min(BaseSize, EntityCount - Assigned) :: number
+		Dispatched += 1
+		OutCounts[Dispatched] = Count
+		Assigned += Count
+	end
+	return Dispatched
+end
+
+--[=[
+	Integrates RowWorkDiff into CumulativeWork (zeroing RowWorkDiff for the next frame), partitions `[0..Height - 1]`
+	into WorkerCount contiguous equal-cost bands, and populates the O(1) RowToWorker lookup buffer.
 ]=]
 function WorkerPartitionHelper.PartitionWorkerBands(
 	RowWorkDiff: buffer,
@@ -81,16 +111,15 @@ function WorkerPartitionHelper.PartitionWorkerBands(
 	end
 
 	local RunningRowWork = 0 :: number
-	local TotalWork = 0 :: number
+	local TotalTriWork = 0 :: number
 
 	for RowY = 0, Height - 1 do
 		const ByteOffset = RowY * 4 :: number
 		RunningRowWork += buffer.readi32(RowWorkDiff, ByteOffset)
 		buffer.writei32(RowWorkDiff, ByteOffset, 0)
-		if RunningRowWork > 0 then
-			TotalWork += RunningRowWork
-		end
-		buffer.writeu32(CumulativeWork, ByteOffset, TotalWork)
+		const RowTriCost = if RunningRowWork > 0 then RunningRowWork else 0 :: number
+		TotalTriWork += RowTriCost
+		buffer.writeu32(CumulativeWork, ByteOffset, RowTriCost)
 	end
 	buffer.writei32(RowWorkDiff, Height * 4, 0)
 
@@ -101,7 +130,7 @@ function WorkerPartitionHelper.PartitionWorkerBands(
 		return
 	end
 
-	if TotalWork <= 0 then
+	if TotalTriWork <= 0 then
 		const UniformBandHeight = math.ceil(Height / WorkerCount) :: number
 		local CurrentStart = 0 :: number
 		for WorkerIdx = 1, WorkerCount do
@@ -110,19 +139,26 @@ function WorkerPartitionHelper.PartitionWorkerBands(
 				BandEnds[WorkerIdx] = Height - 1
 				continue
 			end
-
 			const RemainingWorkers = WorkerCount - WorkerIdx :: number
 			const MaxEndRow = math.max(CurrentStart, Height - 1 - RemainingWorkers) :: number
 			const EndRow = if WorkerIdx == WorkerCount
 				then Height - 1
 				else math.min(CurrentStart + UniformBandHeight - 1, MaxEndRow) :: number
-
 			BandStarts[WorkerIdx] = CurrentStart
 			BandEnds[WorkerIdx] = EndRow
 			buffer.fill(RowToWorker, CurrentStart, WorkerIdx, EndRow - CurrentStart + 1)
 			CurrentStart = EndRow + 1
 		end
 		return
+	end
+
+	-- Account for baseline per-row clear, slice copy, and GPU upload cost across empty sky rows
+	const BaseRowCost = math.max(1, TotalTriWork // (Height * 5)) :: number
+	local TotalWork = 0 :: number
+	for RowY = 0, Height - 1 do
+		const ByteOffset = RowY * 4 :: number
+		TotalWork += buffer.readu32(CumulativeWork, ByteOffset) + BaseRowCost
+		buffer.writeu32(CumulativeWork, ByteOffset, TotalWork)
 	end
 
 	local CurrentRow = 0 :: number
@@ -132,7 +168,6 @@ function WorkerPartitionHelper.PartitionWorkerBands(
 			BandEnds[WorkerIdx] = Height - 1
 			continue
 		end
-
 		const RemainingWorkers = WorkerCount - WorkerIdx :: number
 		const MaxEndRow = math.max(CurrentRow, Height - 1 - RemainingWorkers) :: number
 		const TargetWork = (TotalWork * WorkerIdx) / WorkerCount :: number
@@ -141,7 +176,6 @@ function WorkerPartitionHelper.PartitionWorkerBands(
 		while SplitRow < MaxEndRow and buffer.readu32(CumulativeWork, SplitRow * 4) < TargetWork do
 			SplitRow += 1
 		end
-
 		if SplitRow > CurrentRow then
 			const PreviousCumulative = buffer.readu32(CumulativeWork, (SplitRow - 1) * 4) :: number
 			const CurrentCumulative = buffer.readu32(CumulativeWork, SplitRow * 4) :: number
@@ -164,14 +198,7 @@ function WorkerPartitionHelper.PartitionWorkerBands(
 end
 
 --[=[
-	Dispatches staged 56-byte triangle commands into each overlapping worker's command queue in exact submission order.
-	@param StagedTriangles buffer -- Contiguous staged 56-byte triangle command buffer.
-	@param StagedBounds buffer -- Contiguous 4-byte (u16 MinY, u16 MaxY) bounds per staged triangle.
-	@param TriangleCount number -- Number of staged triangles this frame.
-	@param RowToWorker buffer -- Lookup buffer mapping screen Y -> 1..WorkerCount.
-	@param WorkerOffsets { number } -- Per-worker byte write offsets (mutated in-place).
-	@param BufferTable { buffer } -- Per-worker destination command buffers.
-	@param WorkerBufferCapacity number -- Maximum byte capacity per worker command buffer.
+	Legacy textured triangle batch dispatcher copying staged triangles into per-worker command buffers.
 ]=]
 function WorkerPartitionHelper.DispatchStagedTriangles(
 	StagedTriangles: buffer,
@@ -205,7 +232,6 @@ function WorkerPartitionHelper.DispatchStagedTriangles(
 			if DestOffset + RENDER_BUFFER_LAYOUT_SIZE > WorkerBufferCapacity then
 				continue
 			end
-
 			WorkerOffsets[WorkerIdx] = DestOffset + RENDER_BUFFER_LAYOUT_SIZE
 			buffer.copy(BufferTable[WorkerIdx], DestOffset, StagedTriangles, SourceOffset, RENDER_BUFFER_LAYOUT_SIZE)
 		end

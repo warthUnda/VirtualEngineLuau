@@ -34,8 +34,14 @@ RenderConfig.ActorCount = 3 :: number
 RenderConfig.WorkerBufferMultiplier = 4 :: number
 -- Per-pixel byte multiplier used to allocate each worker's triangle command buffer.
 
-RenderConfig.RenderBufferLayoutSize = 56 :: number
--- Byte stride of a single serialized textured triangle in the worker render buffer (three 16-byte vertices, one 4-byte packed RGBA color, and one 4-byte texture ID).
+RenderConfig.RenderBufferLayoutSize = 64 :: number
+-- Byte stride of a single serialized textured triangle in the worker render buffer (three 16-byte vertices, one 4-byte packed RGBA color, one 4-byte texture ID, and 8 bytes padding).
+
+RenderConfig.UntexturedBufferLayoutSize = 32 :: number
+-- Byte stride of a single serialized untextured triangle in the dual-stream worker render buffer (three 8-byte X/Y/InvZ vertices, one 4-byte packed RGBA color, and 4 bytes padding).
+
+RenderConfig.RasterTileSize = 32 :: number
+-- Square 2D tile dimension in pixels for L1-cache-resident tile binning and conservative Hi-Z rejection inside parallel workers.
 
 -- Texture Settings --
 

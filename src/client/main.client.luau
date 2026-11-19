@@ -24,9 +24,7 @@ const SharedFolder = ReplicatedStorage:WaitForChild("Shared") :: Folder
 const Utilities = SharedFolder:WaitForChild("Utilities") :: Folder
 
 -- Libraries --
-const ResourceController = require(
-	Utilities:WaitForChild("ControllerTheory"):WaitForChild("Controller"):WaitForChild("ResourceController")
-)
+const ResourceController = require(Utilities:WaitForChild("ControllerTheory"))
 const PhysicsController =
 	require(Utilities:WaitForChild("Physics"):WaitForChild("Controller"):WaitForChild("PhysicsController"))
 const PlayerController =

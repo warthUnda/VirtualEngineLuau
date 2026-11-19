@@ -25,11 +25,13 @@ const ControllerTheoryMath = require(ControllerTheoryRoot:WaitForChild("Core"):W
 const ResourceControllerHelper = require(script.Parent:WaitForChild("ResourceControllerHelper"))
 
 -- Configs --
+const CONTROLLER_ENABLED = if SystemsConfigs.ControllerEnabled ~= nil then SystemsConfigs.ControllerEnabled :: boolean else true
 const TARGET_FRAME_TIME = SystemsConfigs.ControllerTargetFrameTime :: number
 const FREE_TIME_RESERVE = SystemsConfigs.ControllerFreeTimeReserve :: number
 const USABLE_FRAME_TIME = math.max(1e-4, TARGET_FRAME_TIME - FREE_TIME_RESERVE) :: number
 const DEFAULT_RENDERER_WEIGHT = SystemsConfigs.ControllerRendererWeight :: number
 const DEFAULT_PHYSICS_WEIGHT = SystemsConfigs.ControllerPhysicsWeight :: number
+const MAX_SCORE = SystemsConfigs.ControllerMaxScore :: number
 const INITIAL_SCORE = SystemsConfigs.ControllerInitialScore :: number
 
 export type ControllerWeights = {
@@ -67,6 +69,7 @@ export type ControllerSingletonState = {
 	RendererBudget: number,
 	PhysicsBudget: number,
 	FrameTick: number,
+	Enabled: boolean,
 	Initialized: boolean,
 }
 
@@ -74,8 +77,8 @@ export type ControllerSingletonState = {
 local HeartbeatConnection: RBXScriptConnection? = nil
 
 -- Tables --
-local RendererChannelState = ResourceControllerHelper.CreateChannelState(false)
-local PhysicsChannelState = ResourceControllerHelper.CreateChannelState(true)
+local RendererChannelState = ResourceControllerHelper.CreateChannelState()
+local PhysicsChannelState = ResourceControllerHelper.CreateChannelState()
 
 local SingletonState: ControllerSingletonState = {
 	Weights = { Renderer = DEFAULT_RENDERER_WEIGHT, Physics = DEFAULT_PHYSICS_WEIGHT },
@@ -97,6 +100,7 @@ local SingletonState: ControllerSingletonState = {
 	RendererBudget = DEFAULT_RENDERER_WEIGHT * USABLE_FRAME_TIME,
 	PhysicsBudget = DEFAULT_PHYSICS_WEIGHT * USABLE_FRAME_TIME,
 	FrameTick = 0,
+	Enabled = CONTROLLER_ENABLED,
 	Initialized = false,
 }
 
@@ -122,21 +126,52 @@ function ResourceController.UpdateWhereInFrame(NowClockOverride: number?): numbe
 end
 
 --[=[
-	Records measured physics execution time feedback for the closed-loop controller.
-	@param ElapsedSeconds number -- Physics frame execution duration in seconds.
+	Binds system-specific load fraction and inverse score curves from a ControllerRep onto a channel.
+	@param ChannelName string -- Channel identifier ("Renderer" or "Physics").
+	@param GetLoadFractionFn (number) -> number -- Score-to-load-fraction curve.
+	@param ScoreFromLoadFractionFn (number) -> number -- Load-fraction-to-score curve.
 ]=]
-function ResourceController.ReportPhysicsFeedback(ElapsedSeconds: number)
-	SingletonState.Feedback.PhysicsFrameTime = math.max(0, ElapsedSeconds)
+function ResourceController.BindChannelCurves(
+	ChannelName: string,
+	GetLoadFractionFn: (number) -> number,
+	ScoreFromLoadFractionFn: (number) -> number
+)
+	const TargetChannel = if ChannelName == "Physics" then PhysicsChannelState else RendererChannelState
+	TargetChannel.GetLoadFraction = GetLoadFractionFn
+	TargetChannel.ScoreFromLoadFraction = ScoreFromLoadFractionFn
+end
+
+--[=[
+	Records measured frame execution time feedback for a named managed channel.
+	@param ChannelName string -- Channel identifier ("Renderer" or "Physics").
+	@param ElapsedSeconds number -- Frame execution duration in seconds.
+]=]
+function ResourceController.ReportChannelFeedback(ChannelName: string, ElapsedSeconds: number)
+	if not SingletonState.Enabled then
+		return
+	end
+	const ClampedElapsed = math.max(0, ElapsedSeconds) :: number
+	if ChannelName == "Physics" then
+		SingletonState.Feedback.PhysicsFrameTime = ClampedElapsed
+	else
+		SingletonState.Feedback.RendererFrameTime = ClampedElapsed
+	end
 	SingletonState.WhereInFrame = math.max(0, os.clock() - SingletonState.FrameStartClock)
 end
 
 --[=[
-	Records measured renderer execution time feedback for the closed-loop controller.
-	@param ElapsedSeconds number -- Renderer frame execution duration in seconds.
+	Returns the current 1..100 resource allocation score for a named managed channel.
+	@param ChannelName string -- Channel identifier ("Renderer" or "Physics").
+	@return number -- Integer score in [1, 100].
 ]=]
-function ResourceController.ReportRendererFeedback(ElapsedSeconds: number)
-	SingletonState.Feedback.RendererFrameTime = math.max(0, ElapsedSeconds)
-	SingletonState.WhereInFrame = math.max(0, os.clock() - SingletonState.FrameStartClock)
+function ResourceController.GetChannelScore(ChannelName: string): number
+	if not SingletonState.Enabled then
+		return MAX_SCORE
+	end
+	if ChannelName == "Physics" then
+		return SingletonState.Scores.Physics
+	end
+	return SingletonState.Scores.Renderer
 end
 
 --[=[
@@ -145,6 +180,9 @@ end
 	@param TotalFrameDeltaTime number -- Observed total frame duration in seconds.
 ]=]
 function ResourceController.StepController(TotalFrameDeltaTime: number)
+	if not SingletonState.Enabled then
+		return
+	end
 	const TargetDt = SingletonState.TargetFrameTime :: number
 	const SafeTotalDt = if TotalFrameDeltaTime > 0 then TotalFrameDeltaTime else TargetDt :: number
 	const PhysTime = SingletonState.Feedback.PhysicsFrameTime :: number
@@ -190,6 +228,9 @@ end
 	@param TotalFrameDeltaTime number? -- Optional explicit frame duration to step immediately.
 ]=]
 function ResourceController.BeginFrame(TotalFrameDeltaTime: number?)
+	if not SingletonState.Enabled then
+		return
+	end
 	const NowClock = os.clock() :: number
 	if TotalFrameDeltaTime ~= nil then
 		const MeasuredSpan = math.max(0, NowClock - SingletonState.FrameStartClock) :: number
@@ -206,6 +247,9 @@ end
 	@param SchedulerDeltaTime number -- Raw RenderStepped DeltaTime in seconds.
 ]=]
 function ResourceController.EndFrame(SchedulerDeltaTime: number)
+	if not SingletonState.Enabled then
+		return
+	end
 	const ActiveLoopSpan = math.max(0, os.clock() - SingletonState.FrameStartClock) :: number
 	SingletonState.WhereInFrame = ActiveLoopSpan
 	const ManagedWork = (SingletonState.Feedback.PhysicsFrameTime + SingletonState.Feedback.RendererFrameTime) :: number
@@ -227,37 +271,32 @@ function ResourceController.Initialize()
 	end
 	SingletonState.Initialized = true
 	SingletonState.FrameStartClock = os.clock()
+	HeartbeatConnection = ResourceControllerHelper.SyncServerHeartbeat(IS_CLIENT, HeartbeatConnection, SingletonState, ResourceController.StepController)
+end
 
-	if not IS_CLIENT and not HeartbeatConnection then
-		HeartbeatConnection = RunService.Heartbeat:Connect(function(DeltaTime: number)
-			const PhysWork = math.max(SingletonState.Feedback.PhysicsFrameTime, 0.0005) :: number
-			const EffectiveServerDt = ResourceControllerHelper.ResolveEffectiveFrameTime(
-				DeltaTime,
-				PhysWork,
-				SingletonState.TargetFrameTime
-			)
-			SingletonState.WhereInFrame = EffectiveServerDt
-			ResourceController.StepController(EffectiveServerDt)
-			SingletonState.FrameStartClock = os.clock()
-			SingletonState.WhereInFrame = 0
-		end)
+--[=[
+	Returns whether the closed-loop ResourceController is currently enabled.
+	@return boolean -- True when enabled, false when bypassed at max score.
+]=]
+function ResourceController.IsEnabled(): boolean
+	return SingletonState.Enabled
+end
+
+--[=[
+	Enables or disables the closed-loop ResourceController at runtime.
+	When disabled, scores are immediately restored and locked at ControllerMaxScore (100).
+	@param Enabled boolean -- Desired enabled state.
+]=]
+function ResourceController.SetEnabled(Enabled: boolean)
+	const NextEnabled = if Enabled then true else false
+	if SingletonState.Enabled == NextEnabled then
+		return
 	end
-end
-
---[=[
-	Returns the current 1..100 resource allocation score for the Renderer.
-	@return number -- Integer score in [1, 100].
-]=]
-function ResourceController.GetRendererScore(): number
-	return SingletonState.Scores.Renderer
-end
-
---[=[
-	Returns the current 1..100 resource allocation score for Physics.
-	@return number -- Integer score in [1, 100].
-]=]
-function ResourceController.GetPhysicsScore(): number
-	return SingletonState.Scores.Physics
+	SingletonState.Enabled = NextEnabled
+	if not NextEnabled then
+		ResourceControllerHelper.ApplyScorePreset(SingletonState, MAX_SCORE)
+	end
+	HeartbeatConnection = ResourceControllerHelper.SyncServerHeartbeat(IS_CLIENT, HeartbeatConnection, SingletonState, ResourceController.StepController)
 end
 
 --[=[
@@ -290,18 +329,7 @@ end
 function ResourceController.Reset()
 	SingletonState.Weights.Renderer = DEFAULT_RENDERER_WEIGHT
 	SingletonState.Weights.Physics = DEFAULT_PHYSICS_WEIGHT
-	SingletonState.Scores.Renderer = INITIAL_SCORE
-	SingletonState.Scores.Physics = INITIAL_SCORE
-	SingletonState.RawScores.Renderer = INITIAL_SCORE
-	SingletonState.RawScores.Physics = INITIAL_SCORE
-	SingletonState.CeilingScores.Renderer = INITIAL_SCORE
-	SingletonState.CeilingScores.Physics = INITIAL_SCORE
-	SingletonState.Feedback.RendererFrameTime = 0
-	SingletonState.Feedback.PhysicsFrameTime = 0
-	SingletonState.PreviousErrors.Renderer = 0
-	SingletonState.PreviousErrors.Physics = 0
-	ResourceControllerHelper.ResetChannelState(RendererChannelState)
-	ResourceControllerHelper.ResetChannelState(PhysicsChannelState)
+	ResourceControllerHelper.ApplyScorePreset(SingletonState, INITIAL_SCORE)
 	SingletonState.TargetFrameTime = TARGET_FRAME_TIME
 	SingletonState.FreeTimeReserve = FREE_TIME_RESERVE
 	SingletonState.FreeFrameTime = TARGET_FRAME_TIME
@@ -313,6 +341,8 @@ function ResourceController.Reset()
 	SingletonState.RendererBudget = DEFAULT_RENDERER_WEIGHT * USABLE_FRAME_TIME
 	SingletonState.PhysicsBudget = DEFAULT_PHYSICS_WEIGHT * USABLE_FRAME_TIME
 	SingletonState.FrameTick = 0
+	SingletonState.Enabled = CONTROLLER_ENABLED
+	HeartbeatConnection = ResourceControllerHelper.SyncServerHeartbeat(IS_CLIENT, HeartbeatConnection, SingletonState, ResourceController.StepController)
 end
 
 return ResourceController

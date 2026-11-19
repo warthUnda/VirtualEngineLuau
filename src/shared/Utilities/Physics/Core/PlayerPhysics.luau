@@ -10,18 +10,20 @@ const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForC
 
 -- Configs --
 const GRAVITY = SystemsConfigs.PhysicsGravity :: number
-const FALL_GRAVITY_MULTIPLIER = SystemsConfigs.PhysicsFallGravityMultiplier :: number
+const FALL_GRAVITY = GRAVITY * SystemsConfigs.PhysicsFallGravityMultiplier :: number
 
 const PLAYER_MASS = SystemsConfigs.PlayerMass :: number
 const PLAYER_INV_MASS = 1 / PLAYER_MASS :: number
 const PLAYER_JUMP_VELOCITY = SystemsConfigs.PlayerJumpImpulse / PLAYER_MASS :: number
-const PLAYER_MOVE_FORCE = SystemsConfigs.PlayerMoveForce :: number
+const PLAYER_MOVE_ACCEL = SystemsConfigs.PlayerMoveForce * PLAYER_INV_MASS :: number
+const PLAYER_AIR_ACCEL = PLAYER_MOVE_ACCEL * SystemsConfigs.PlayerAirControlMultiplier :: number
 const PLAYER_MAX_GROUND_SPEED = SystemsConfigs.PlayerMaxGroundSpeed :: number
 const PLAYER_GROUND_FRICTION = SystemsConfigs.PlayerGroundFriction :: number
-const PLAYER_BRAKE_MULTIPLIER = SystemsConfigs.PlayerBrakeMultiplier :: number
+const PLAYER_BRAKE_FRICTION = PLAYER_GROUND_FRICTION * SystemsConfigs.PlayerBrakeMultiplier :: number
 const PLAYER_STOP_SPEED = SystemsConfigs.PlayerStopSpeed :: number
-const PLAYER_AIR_CONTROL = SystemsConfigs.PlayerAirControlMultiplier :: number
 const PLAYER_AIR_DRAG = SystemsConfigs.PlayerAirDrag :: number
+const STOP_SPEED_SQ = 1e-10 :: number
+const DENORMAL_EPSILON = 1e-12 :: number
 
 -- Tables --
 local PlayerPhysics = {}
@@ -46,14 +48,19 @@ function PlayerPhysics.ApplyStopFriction(
 	FrictionRate: number,
 	DeltaTime: number
 ): (number, number)
-	const HorizontalSpeed = math.sqrt(VelocityX * VelocityX + VelocityZ * VelocityZ) :: number
-	if HorizontalSpeed <= 1e-5 then
+	const SpeedSq = VelocityX * VelocityX + VelocityZ * VelocityZ :: number
+	if SpeedSq <= STOP_SPEED_SQ then
 		return 0, 0
 	end
 
+	const HorizontalSpeed = math.sqrt(SpeedSq) :: number
 	const ControlSpeed = math.max(HorizontalSpeed, PLAYER_STOP_SPEED) :: number
 	const SpeedDrop = ControlSpeed * FrictionRate * DeltaTime :: number
-	const RetainedScale = math.max(0, HorizontalSpeed - SpeedDrop) / HorizontalSpeed :: number
+	if SpeedDrop >= HorizontalSpeed then
+		return 0, 0
+	end
+
+	const RetainedScale = (HorizontalSpeed - SpeedDrop) / HorizontalSpeed :: number
 	return VelocityX * RetainedScale, VelocityZ * RetainedScale
 end
 
@@ -79,7 +86,7 @@ function PlayerPhysics.IntegrateGroundedDrive(
 		return PlayerPhysics.ApplyStopFriction(
 			VelocityX,
 			VelocityZ,
-			PLAYER_GROUND_FRICTION * PLAYER_BRAKE_MULTIPLIER,
+			PLAYER_BRAKE_FRICTION,
 			DeltaTime
 		)
 	end
@@ -90,18 +97,21 @@ function PlayerPhysics.IntegrateGroundedDrive(
 	const LateralVelocityZ = (VelocityZ - ParallelSpeed * WishZ) * LateralDecay :: number
 
 	const TargetSpeed = PLAYER_MAX_GROUND_SPEED * WishScale :: number
-	const DriveStep = (PLAYER_MOVE_FORCE * PLAYER_INV_MASS) * WishScale * DeltaTime :: number
+	const DriveStep = PLAYER_MOVE_ACCEL * WishScale * DeltaTime :: number
 
 	if ParallelSpeed < 0 then
-		const BrakeDecay = math.max(0, 1 - PLAYER_GROUND_FRICTION * PLAYER_BRAKE_MULTIPLIER * DeltaTime) :: number
+		const BrakeDecay = math.max(0, 1 - PLAYER_BRAKE_FRICTION * DeltaTime) :: number
 		ParallelSpeed = math.min(TargetSpeed, ParallelSpeed * BrakeDecay + DriveStep)
 	elseif ParallelSpeed < TargetSpeed then
 		ParallelSpeed = math.min(TargetSpeed, ParallelSpeed + DriveStep)
 	else
-		ParallelSpeed = math.max(TargetSpeed, ParallelSpeed - ParallelSpeed * PLAYER_GROUND_FRICTION * DeltaTime)
+		ParallelSpeed = math.max(TargetSpeed, ParallelSpeed * LateralDecay)
 	end
 
-	return LateralVelocityX + WishX * ParallelSpeed, LateralVelocityZ + WishZ * ParallelSpeed
+	const NextVelocityX = LateralVelocityX + WishX * ParallelSpeed :: number
+	const NextVelocityZ = LateralVelocityZ + WishZ * ParallelSpeed :: number
+	return if math.abs(NextVelocityX) < DENORMAL_EPSILON then 0 else NextVelocityX,
+		if math.abs(NextVelocityZ) < DENORMAL_EPSILON then 0 else NextVelocityZ
 end
 
 --[=[
@@ -123,8 +133,10 @@ function PlayerPhysics.IntegrateAirborneDrive(
 	DeltaTime: number
 ): (number, number)
 	const AirDecay = math.max(0, 1 - PLAYER_AIR_DRAG * DeltaTime) :: number
-	local NextVelocityX = VelocityX * AirDecay :: number
-	local NextVelocityZ = VelocityZ * AirDecay :: number
+	const RawVelocityX = VelocityX * AirDecay :: number
+	const RawVelocityZ = VelocityZ * AirDecay :: number
+	const NextVelocityX = if math.abs(RawVelocityX) < DENORMAL_EPSILON then 0 else RawVelocityX :: number
+	const NextVelocityZ = if math.abs(RawVelocityZ) < DENORMAL_EPSILON then 0 else RawVelocityZ :: number
 
 	if WishScale <= 1e-4 then
 		return NextVelocityX, NextVelocityZ
@@ -132,7 +144,7 @@ function PlayerPhysics.IntegrateAirborneDrive(
 
 	const ProjectedSpeed = NextVelocityX * WishX + NextVelocityZ * WishZ :: number
 	const TargetSpeed = PLAYER_MAX_GROUND_SPEED * WishScale :: number
-	const MaxAirStep = (PLAYER_MOVE_FORCE * PLAYER_INV_MASS * PLAYER_AIR_CONTROL) * WishScale * DeltaTime :: number
+	const MaxAirStep = PLAYER_AIR_ACCEL * WishScale * DeltaTime :: number
 	const AirAddedSpeed = math.clamp(TargetSpeed - ProjectedSpeed, 0, MaxAirStep) :: number
 
 	return NextVelocityX + WishX * AirAddedSpeed, NextVelocityZ + WishZ * AirAddedSpeed
@@ -191,8 +203,7 @@ function PlayerPhysics.StepPlayerVelocity(
 		)
 	end
 
-	const GravityScale = if NextVelocityY < 0 then FALL_GRAVITY_MULTIPLIER else 1.0 :: number
-	NextVelocityY -= GRAVITY * GravityScale * DeltaTime
+	NextVelocityY -= (if NextVelocityY < 0 then FALL_GRAVITY else GRAVITY) * DeltaTime
 
 	return NextVelocityX, NextVelocityY, NextVelocityZ, NextGrounded
 end

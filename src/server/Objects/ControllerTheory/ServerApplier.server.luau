@@ -10,11 +10,10 @@ const ControllerTheoryFolder =
 	ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities"):WaitForChild("ControllerTheory")
 
 -- Libraries --
-const ResourceController =
-	require(ControllerTheoryFolder:WaitForChild("Controller"):WaitForChild("ResourceController"))
+const ControllerTheory = require(ControllerTheoryFolder)
 
 -- ============================================================================
--- 1. SERVER RESOURCE CONTROLLER BOOTSTRAP
+-- 1. SERVER CONTROLLER THEORY BOOTSTRAP
 -- ============================================================================
 
-ResourceController.Initialize()
+ControllerTheory.Initialize()

@@ -2,6 +2,12 @@
 --!native
 --!optimize 2
 
+--[=[
+	@class ParallelWorker
+	Isolated Actor VM worker executing Pass-1 entity geometry staging and Pass-2 32x32 tile
+	rasterization with steady-state output buffer reuse.
+]=]
+
 -- Services --
 const Players = game:GetService("Players")
 const ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -9,61 +15,54 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Static References --
 const ControllerActor = Players.LocalPlayer:WaitForChild("PlayerScripts"):WaitForChild("Controller") :: Actor
 const SelfActor = script.Parent :: Actor
+const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
+const RenderRoot = SharedFolder:WaitForChild("Utilities"):WaitForChild("Render")
 
 -- Libraries --
-const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
-const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper)
-const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath)
-const TextureTable = require(ReplicatedStorage.Shared.Utilities.Render.Texture.TextureTable)
+const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
+const VerticeFile = require(RenderRoot:WaitForChild("Core"):WaitForChild("VerticeFile"))
+const TileRasterizerMath = require(RenderRoot:WaitForChild("Core"):WaitForChild("TileRasterizerMath"))
+const RenderEntityStageHelper = require(RenderRoot:WaitForChild("Controller"):WaitForChild("RenderEntityStageHelper"))
+const TextureTable = require(RenderRoot:WaitForChild("Texture"):WaitForChild("TextureTable"))
 
 -- Configs --
-const WIDTH = SystemsConfigs.RenderWidth :: number
-const HEIGHT = SystemsConfigs.RenderHeight :: number
-const TOTAL_PIXELS = WIDTH * HEIGHT :: number
-const ROW_STRIDE = WIDTH * 4 :: number
+const MAX_WIDTH = SystemsConfigs.RenderWidth :: number
+const MAX_HEIGHT = SystemsConfigs.RenderHeight :: number
 const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
+const UNTEXTURED_STRIDE = SystemsConfigs.UntexturedBufferLayoutSize :: number
+const TEXTURED_STRIDE = SystemsConfigs.RenderBufferLayoutSize :: number
+const WORKER_BUFFER_MULTIPLIER = SystemsConfigs.WorkerBufferMultiplier :: number
+const MAX_STAGED_TRIS = math.max(1024, (MAX_WIDTH * MAX_HEIGHT * WORKER_BUFFER_MULTIPLIER) // TEXTURED_STRIDE) :: number
 
 -- Variables --
-local ActiveWidth = WIDTH :: number
-local ActiveHeight = HEIGHT :: number
-local ActiveRowStride = ROW_STRIDE :: number
-local ActiveTotalPixels = TOTAL_PIXELS :: number
-local BandStartY = 0 :: number
-local BandEndY = HEIGHT - 1 :: number
-local PrevLocalDirtyMinY = HEIGHT :: number
-local PrevLocalDirtyMaxY = -1 :: number
 local TextureWidth = TEXTURE_SIZE :: number
 local TextureHeight = TEXTURE_SIZE :: number
+local CachedDiffBytes = 0 :: number
+local CachedBandBytes = 0 :: number
+
+-- Buffers
+const EmptyPayload = buffer.create(0) :: buffer
+local CachedDiffOut = EmptyPayload :: buffer
+local CachedBandSlice = EmptyPayload :: buffer
+const ScreenVertices = buffer.create(VerticeFile.MaxShapeVertices * 12) :: buffer
+const ProjectedVertices = buffer.create(12 * 24) :: buffer
+const ClipBufferA = buffer.create(12 * 24) :: buffer
+const ClipBufferB = buffer.create(12 * 24) :: buffer
+const StageUntexTris = buffer.create(MAX_STAGED_TRIS * UNTEXTURED_STRIDE) :: buffer
+const StageUntexBounds = buffer.create(MAX_STAGED_TRIS * 4) :: buffer
+const StageTexTris = buffer.create(MAX_STAGED_TRIS * TEXTURED_STRIDE) :: buffer
+const StageTexBounds = buffer.create(MAX_STAGED_TRIS * 4) :: buffer
+const StageRowWorkDiff = buffer.create((MAX_HEIGHT + 1) * 4) :: buffer
 
 -- Tables --
 local TextureBuffers = TextureTable.GetAllCachedBuffers() :: { [number]: buffer }
 
--- Buffers
-const EmptyPayload = buffer.create(0) :: buffer
-const PixelBuffer = buffer.create(TOTAL_PIXELS * 4) :: buffer
-const ZBuffer = buffer.create(TOTAL_PIXELS * 4) :: buffer
-
 -- Functions --
-BufferHelper.ClearBuffers(TOTAL_PIXELS, PixelBuffer, ZBuffer)
-
 task.desynchronize()
 
 -- ============================================================================
--- 1. LISTENER - LISTENS TO RETURNING DATA AND COMPUTING IT
+-- 1. PARALLEL GEOMETRY STAGING & 2D TILE BAND RASTERIZATION HANDLERS
 -- ============================================================================
-
-SelfActor:BindToMessageParallel(
-	"Set Band Range",
-	function(NewBandStartY: number, NewBandEndY: number)
-		if PrevLocalDirtyMinY <= PrevLocalDirtyMaxY then
-			BufferHelper.ClearDirtyRows(ActiveWidth, PrevLocalDirtyMinY, PrevLocalDirtyMaxY, ActiveTotalPixels, PixelBuffer, ZBuffer)
-			PrevLocalDirtyMinY = ActiveHeight
-			PrevLocalDirtyMaxY = -1
-		end
-		BandStartY = NewBandStartY
-		BandEndY = NewBandEndY
-	end
-)
 
 SelfActor:BindToMessageParallel(
 	"Set Texture Table",
@@ -75,90 +74,146 @@ SelfActor:BindToMessageParallel(
 )
 
 SelfActor:BindToMessageParallel(
+	"Stage Entities",
+	function(
+		ChunkIdx: number,
+		PosSlice: buffer,
+		SizeSlice: buffer,
+		DirSlice: buffer,
+		VisSlice: buffer,
+		PropSlice: buffer,
+		ChunkEntityCount: number,
+		CamPosVec: vector,
+		CamRightVec: vector,
+		CamUpVec: vector,
+		CamLookVec: vector,
+		FocalLength: number,
+		GuardBandX: number,
+		GuardBandY: number,
+		PlaneLeft: vector,
+		PlaneRight: vector,
+		PlaneBottom: vector,
+		PlaneTop: vector,
+		ActiveWidth: number,
+		ActiveHeight: number,
+		FrameId: number
+	)
+		const StageStart = os.clock() :: number
+		const DiffBytes = (ActiveHeight + 1) * 4 :: number
+		buffer.fill(StageRowWorkDiff, 0, 0, DiffBytes)
+
+		const UntexCount: number, TexCount: number = RenderEntityStageHelper.StageEntitySlice(
+			ChunkEntityCount,
+			PosSlice, SizeSlice, DirSlice, VisSlice, PropSlice,
+			ScreenVertices, ProjectedVertices, ClipBufferA, ClipBufferB,
+			StageUntexTris, StageUntexBounds, MAX_STAGED_TRIS,
+			StageTexTris, StageTexBounds, MAX_STAGED_TRIS,
+			StageRowWorkDiff,
+			CamPosVec, CamRightVec, CamUpVec, CamLookVec,
+			FocalLength, GuardBandX, GuardBandY, ActiveWidth, ActiveHeight,
+			PlaneLeft, PlaneRight, PlaneBottom, PlaneTop
+		)
+
+		local UntexTrisOut = EmptyPayload :: buffer
+		local UntexBoundsOut = EmptyPayload :: buffer
+		if UntexCount > 0 then
+			const UBytes = UntexCount * UNTEXTURED_STRIDE :: number
+			const UBBytes = UntexCount * 4 :: number
+			UntexTrisOut = buffer.create(UBytes)
+			UntexBoundsOut = buffer.create(UBBytes)
+			buffer.copy(UntexTrisOut, 0, StageUntexTris, 0, UBytes)
+			buffer.copy(UntexBoundsOut, 0, StageUntexBounds, 0, UBBytes)
+		end
+
+		local TexTrisOut = EmptyPayload :: buffer
+		local TexBoundsOut = EmptyPayload :: buffer
+		if TexCount > 0 then
+			const TBytes = TexCount * TEXTURED_STRIDE :: number
+			const TBBytes = TexCount * 4 :: number
+			TexTrisOut = buffer.create(TBytes)
+			TexBoundsOut = buffer.create(TBBytes)
+			buffer.copy(TexTrisOut, 0, StageTexTris, 0, TBytes)
+			buffer.copy(TexBoundsOut, 0, StageTexBounds, 0, TBBytes)
+		end
+
+		if DiffBytes ~= CachedDiffBytes then
+			CachedDiffOut = buffer.create(DiffBytes)
+			CachedDiffBytes = DiffBytes
+		end
+		const DiffOut = CachedDiffOut
+		buffer.copy(DiffOut, 0, StageRowWorkDiff, 0, DiffBytes)
+		const StageElapsed = (os.clock() - StageStart) :: number
+
+		ControllerActor:SendMessage(
+			"Return Staged Geometry",
+			ChunkIdx,
+			FrameId,
+			UntexTrisOut,
+			UntexBoundsOut,
+			UntexCount,
+			TexTrisOut,
+			TexBoundsOut,
+			TexCount,
+			DiffOut,
+			StageElapsed
+		)
+	end
+)
+
+SelfActor:BindToMessageParallel(
 	"Execute Rendering",
 	function(
-		RenderBuffer: buffer,
-		ByteCount: number,
+		UntexBuf: buffer,
+		UntexBytes: number,
+		TexBuf: buffer,
+		TexBytes: number,
 		FrameId: number,
-		DynamicBandStartY: number?,
-		DynamicBandEndY: number?,
-		DynamicWidth: number?,
-		DynamicHeight: number?
+		BandStartY: number,
+		BandEndY: number,
+		DynamicWidth: number,
+		DynamicHeight: number
 	)
-		const WorkerStartClock = os.clock() :: number
-		const NextWidth = math.clamp(DynamicWidth or WIDTH, 1, WIDTH) :: number
-		const NextHeight = math.clamp(DynamicHeight or HEIGHT, 1, HEIGHT) :: number
-		if NextWidth ~= ActiveWidth or NextHeight ~= ActiveHeight then
-			BufferHelper.ClearBuffers(TOTAL_PIXELS, PixelBuffer, ZBuffer)
-			ActiveWidth = NextWidth
-			ActiveHeight = NextHeight
-			ActiveRowStride = NextWidth * 4
-			ActiveTotalPixels = NextWidth * NextHeight
-			PrevLocalDirtyMinY = NextHeight
-			PrevLocalDirtyMaxY = -1
-		elseif PrevLocalDirtyMinY <= PrevLocalDirtyMaxY then
-			BufferHelper.ClearDirtyRows(ActiveWidth, PrevLocalDirtyMinY, PrevLocalDirtyMaxY, ActiveTotalPixels, PixelBuffer, ZBuffer)
-			PrevLocalDirtyMinY = ActiveHeight
-			PrevLocalDirtyMaxY = -1
-		end
+		const WorkerStart = os.clock() :: number
+		const ActiveWidth = math.clamp(DynamicWidth, 1, MAX_WIDTH) :: number
+		const ActiveHeight = math.clamp(DynamicHeight, 1, MAX_HEIGHT) :: number
 
-		if DynamicBandStartY ~= nil and DynamicBandEndY ~= nil then
-			BandStartY = DynamicBandStartY
-			BandEndY = DynamicBandEndY
-		end
-
-		local DirtyMinY = ActiveHeight :: number
-		local DirtyMaxY = -1 :: number
-
-		if ByteCount > 0 and BandStartY <= BandEndY then
-			DirtyMinY, DirtyMaxY = RenderMath.DrawTriangleBatch(
-				RenderBuffer,
-				ByteCount,
-				TextureBuffers,
-				TextureWidth,
-				TextureHeight,
-				ActiveWidth,
-				ActiveHeight,
-				PixelBuffer,
-				ZBuffer,
-				BandStartY,
-				BandEndY
-			)
-		end
-
-		if DirtyMinY <= DirtyMaxY and BandStartY <= BandEndY then
-			const ClampedMinY = math.max(BandStartY, DirtyMinY) :: number
-			const ClampedMaxY = math.min(BandEndY, DirtyMaxY) :: number
-			PrevLocalDirtyMinY = ClampedMinY - BandStartY
-			PrevLocalDirtyMaxY = ClampedMaxY - BandStartY
-
-			const DirtyBytes = (ClampedMaxY - ClampedMinY + 1) * ActiveRowStride :: number
-			const CompactSlice = buffer.create(DirtyBytes) :: buffer
-			buffer.copy(CompactSlice, 0, PixelBuffer, PrevLocalDirtyMinY * ActiveRowStride, DirtyBytes)
-
-			const WorkerElapsed = (os.clock() - WorkerStartClock) :: number
-			ControllerActor:SendMessage(
-				"Return Render Calculations",
-				CompactSlice,
-				FrameId,
-				BandStartY,
-				BandEndY,
-				ClampedMinY,
-				ClampedMaxY,
-				WorkerElapsed
-			)
-		else
-			const WorkerElapsed = (os.clock() - WorkerStartClock) :: number
+		if BandStartY > BandEndY then
 			ControllerActor:SendMessage(
 				"Return Render Calculations",
 				EmptyPayload,
 				FrameId,
 				BandStartY,
 				BandEndY,
-				DirtyMinY,
-				DirtyMaxY,
-				WorkerElapsed
+				ActiveWidth,
+				os.clock() - WorkerStart
 			)
+			return
 		end
+
+		const BandHeight = BandEndY - BandStartY + 1 :: number
+		const BandBytes = BandHeight * ActiveWidth * 4 :: number
+		if BandBytes ~= CachedBandBytes then
+			CachedBandSlice = buffer.create(BandBytes)
+			CachedBandBytes = BandBytes
+		end
+		const BandPixelSlice = CachedBandSlice
+
+		TileRasterizerMath.RasterizeBandDual(
+			UntexBuf, UntexBytes,
+			TexBuf, TexBytes,
+			TextureBuffers, TextureWidth, TextureHeight,
+			ActiveWidth, ActiveHeight,
+			BandPixelSlice, BandStartY, BandEndY
+		)
+
+		ControllerActor:SendMessage(
+			"Return Render Calculations",
+			BandPixelSlice,
+			FrameId,
+			BandStartY,
+			BandEndY,
+			ActiveWidth,
+			os.clock() - WorkerStart
+		)
 	end
 )

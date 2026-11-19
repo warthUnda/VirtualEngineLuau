@@ -19,8 +19,8 @@ const STACK_CAPACITY = SystemsConfigs.BVHStackCapacity :: number
 const MUTATION_SCAN_BUDGET = SystemsConfigs.BVHMutationScanBudget :: number
 
 const NODE_STRIDE = 32 :: number
-const ITEM_BOUNDS_STRIDE = 36 :: number
-const CACHED_STATE_STRIDE = 28 :: number
+const ITEM_BOUNDS_STRIDE = 24 :: number
+const CACHED_STATE_STRIDE = 32 :: number
 const MAX_NODE_BYTES = MAX_ENTITIES * 2 * NODE_STRIDE :: number
 
 const FLAG_CAN_COLLIDE = bit32.lshift(1, 1) :: number
@@ -168,9 +168,6 @@ function BVHState.Rebuild(ProvidedStorage: ECSMain.ECSStorage?)
 		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 12, PositionX + WorldExtentX)
 		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 16, PositionY + WorldExtentY)
 		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 20, PositionZ + WorldExtentZ)
-		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 24, PositionX)
-		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 28, PositionY)
-		buffer.writef32(ItemBoundsBuffer, BoundsOffset + 32, PositionZ)
 
 		if not IsDynamic then
 			StaticItemCount += 1
@@ -239,10 +236,16 @@ function BVHState.EnsureFreshAndResolve(ProvidedStorage: ECSMain.ECSStorage?, Sk
 
 		if buffer.readu8(EntityIsDynamicBuffer, EntityId) == 0 then
 			const CompOffset, DirOffset, BoundsOffset = (EntityId - 1) * COMPONENT_STRIDE, (EntityId - 1) * DIRECTION_STRIDE, (EntityId - 1) * ITEM_BOUNDS_STRIDE
+			const PosX = buffer.readf32(PositionBuffer, CompOffset) :: number
+			const PosY = buffer.readf32(PositionBuffer, CompOffset + 4) :: number
+			const PosZ = buffer.readf32(PositionBuffer, CompOffset + 8) :: number
+			const CachedCenterX = (buffer.readf32(ItemBoundsBuffer, BoundsOffset) + buffer.readf32(ItemBoundsBuffer, BoundsOffset + 12)) * 0.5 :: number
+			const CachedCenterY = (buffer.readf32(ItemBoundsBuffer, BoundsOffset + 4) + buffer.readf32(ItemBoundsBuffer, BoundsOffset + 16)) * 0.5 :: number
+			const CachedCenterZ = (buffer.readf32(ItemBoundsBuffer, BoundsOffset + 8) + buffer.readf32(ItemBoundsBuffer, BoundsOffset + 20)) * 0.5 :: number
 			if
-				buffer.readf32(PositionBuffer, CompOffset) ~= buffer.readf32(ItemBoundsBuffer, BoundsOffset + 24)
-				or buffer.readf32(PositionBuffer, CompOffset + 4) ~= buffer.readf32(ItemBoundsBuffer, BoundsOffset + 28)
-				or buffer.readf32(PositionBuffer, CompOffset + 8) ~= buffer.readf32(ItemBoundsBuffer, BoundsOffset + 32)
+				math.abs(PosX - CachedCenterX) > 1e-4 * math.max(1, math.abs(PosX))
+				or math.abs(PosY - CachedCenterY) > 1e-4 * math.max(1, math.abs(PosY))
+				or math.abs(PosZ - CachedCenterZ) > 1e-4 * math.max(1, math.abs(PosZ))
 				or buffer.readf32(SizeBuffer, CompOffset) ~= buffer.readf32(CachedStateBuffer, StateOffset)
 				or buffer.readf32(SizeBuffer, CompOffset + 4) ~= buffer.readf32(CachedStateBuffer, StateOffset + 4)
 				or buffer.readf32(SizeBuffer, CompOffset + 8) ~= buffer.readf32(CachedStateBuffer, StateOffset + 8)

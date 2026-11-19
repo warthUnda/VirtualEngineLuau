@@ -29,15 +29,26 @@ const EventBus = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("
 const ClientRemotes = require(ReplicationFolder:WaitForChild("ClientRemotes"))
 const ReplicationSenderHelper = require(ReplicationFolder:WaitForChild("ReplicationSenderHelper"))
 
+-- Configs --
+const Events = EventBus.Events
+
 -- Tables --
 const SenderState = ReplicationSenderHelper.CreateSender(EventBus.DefaultBus)
 
 -- Functions --
 -- ============================================================================
--- 1. ATTACH RESOLVED REMOTES & FLUSH QUEUED DOMAIN EVENTS
+-- 1. ATTACH RESOLVED REMOTES & ROUTE OUTBOUND EVENTBUS TOPICS -> :FIRESERVER
 -- ============================================================================
 
 const Remotes = ClientRemotes.WaitForRemotes()
-const UntypedRemotes: any = Remotes
-const RemoteTargets = UntypedRemotes :: ReplicationSenderHelper.ClientRemoteTargets
-ReplicationSenderHelper.AttachRemotes(SenderState, RemoteTargets)
+ReplicationSenderHelper.AttachDispatcher(SenderState, function(Topic: string, Payload: buffer?)
+	if Topic == Events.RequestInitialSync then
+		Remotes.ReplicateEvent:FireServer()
+		Remotes.TextureSyncEvent:FireServer()
+		Remotes.PlayerRegistryEvent:FireServer()
+	elseif Topic == Events.SendObserverState and Payload then
+		Remotes.ObserverStateEvent:FireServer(Payload)
+	elseif Topic == Events.SendPlayerState and Payload then
+		Remotes.PlayerStateEvent:FireServer(Payload)
+	end
+end)

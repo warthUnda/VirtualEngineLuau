@@ -4,11 +4,11 @@
 
 --[=[
 	@class RenderResolutionHelper
-	Applies closed-loop dynamic viewport resolution scaling from ResourceController and
-	ControllerInterpreter onto an OOP RenderObject. Treats RenderConfig.RenderWidth and
-	RenderConfig.RenderHeight as pre-allocated maximum buffer ceilings and keeps the single
-	permanent EditableImage intact (updating ImageLabel.ImageRectSize atomically upon frame
-	upload) so scaling never flickers or invalidates buffers.
+	Applies closed-loop dynamic viewport resolution scaling from ControllerTheory's RenderingRep
+	onto an OOP RenderObject. Treats RenderConfig.RenderWidth and RenderConfig.RenderHeight as
+	pre-allocated maximum buffer ceilings and keeps the single permanent EditableImage intact
+	(updating ImageLabel.ImageRectSize atomically upon frame upload) so scaling never flickers
+	or invalidates buffers.
 ]=]
 
 -- Services --
@@ -21,10 +21,8 @@ const ControllerTheoryRoot = UtilitiesFolder:WaitForChild("ControllerTheory")
 
 -- Libraries --
 const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
-const ResourceController =
-	require(ControllerTheoryRoot:WaitForChild("Controller"):WaitForChild("ResourceController"))
-const ControllerInterpreter =
-	require(ControllerTheoryRoot:WaitForChild("Core"):WaitForChild("ControllerInterpreter"))
+const RenderingRep =
+	require(ControllerTheoryRoot:WaitForChild("ControllerReps"):WaitForChild("RenderingRep"))
 
 -- Configs --
 const MAX_RENDER_WIDTH = SystemsConfigs.RenderWidth :: number
@@ -68,8 +66,8 @@ function RenderResolutionHelper.ResizeRenderer(RendererObj: any, NewWidth: numbe
 end
 
 --[=[
-	Evaluates ResourceController's current 1..100 Renderer score through ControllerInterpreter
-	and applies viewport resolution steps with upward hysteresis when no worker frame is in flight.
+	Evaluates RenderingRep's current 1..100 Renderer score and applies viewport resolution
+	steps with upward hysteresis when no worker frame is in flight.
 	@param RendererObj any -- Target OOP RenderObject instance.
 ]=]
 function RenderResolutionHelper.SyncAdaptiveResolution(RendererObj: any)
@@ -79,9 +77,8 @@ function RenderResolutionHelper.SyncAdaptiveResolution(RendererObj: any)
 
 	const CeilingWidth = math.min(RendererObj.BaseWidth :: number, MAX_RENDER_WIDTH) :: number
 	const CeilingHeight = math.min(RendererObj.BaseHeight :: number, MAX_RENDER_HEIGHT) :: number
-	const RendererScore = ResourceController.GetRendererScore() :: number
 	const TargetWidth: number, TargetHeight: number =
-		ControllerInterpreter.InterpretRenderer(RendererScore, CeilingWidth, CeilingHeight)
+		RenderingRep.Interpret(CeilingWidth, CeilingHeight)
 
 	const CurrentWidth = RendererObj.Width :: number
 	const CurrentHeight = RendererObj.Height :: number

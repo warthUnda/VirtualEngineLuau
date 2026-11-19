@@ -4,8 +4,8 @@
 
 --[=[
 	@class RenderWorkerGateway
-	Roblox boundary gateway managing self-created ScreenGui/ImageLabel/EditableImage allocation,
-	parallel worker Actor messaging, texture broadcasting, and triangle batch dispatching.
+	Actor transport gateway for display GUI creation, worker message binding, weighted front-to-back
+	Pass-1 stage chunk dispatch (with slice buffer reuse), and Pass-2 tile band dispatch/upload.
 ]=]
 
 -- Services --
@@ -18,32 +18,35 @@ const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
 
 -- Libraries --
 const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
-const BufferHelper = require(SharedFolder:WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Core"):WaitForChild("BufferHelper"))
+const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
+const WorkerPartitionHelper = require(script.Parent:WaitForChild("WorkerPartitionHelper"))
 
 -- Configs --
-const ACTOR_COUNT = SystemsConfigs.ActorCount :: number
 const TEXTURE_SIZE = SystemsConfigs.TextureSize :: number
 const SCRIPTABLE_CAMERA_PARK_POSITION = SystemsConfigs.ScriptableCameraParkPosition :: Vector3
 const IMAGE_LABEL_NAME = SystemsConfigs.RendererImageLabelName :: string
-
--- Buffers
-const EmptyPayload = buffer.create(0) :: buffer
+const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
+const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
+const VISUAL_STRIDE = SystemsConfigs.ECSVisualStride :: number
+const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 
 -- Tables --
+const StageChunkCounts = table.create(16, 0) :: { number }
+const CachedStageChunkCap = table.create(16, 0) :: { number }
+const CachedPosSlices = {} :: { buffer }
+const CachedSizeSlices = {} :: { buffer }
+const CachedDirSlices = {} :: { buffer }
+const CachedVisSlices = {} :: { buffer }
+const CachedPropSlices = {} :: { buffer }
 local RenderWorkerGateway = {}
 
 -- Functions --
 -- ============================================================================
--- 1. SELF-CONTAINED SCREENGUI CREATION & PARALLEL WORKER ACTOR GATEWAY
+-- 1. DISPLAY GUI CREATION & PARALLEL WORKER ACTOR TRANSPORT
 -- ============================================================================
 
 --[=[
-	Creates a self-contained ScreenGui, full-screen ImageLabel, and bound EditableImage for a RenderService instance.
-	@param TargetParent Instance? -- Optional parent container (defaults to LocalPlayer.PlayerGui).
-	@param Width number -- Horizontal pixel resolution.
-	@param Height number -- Vertical pixel resolution.
-	@param GuiName string -- Name assigned to the created ScreenGui.
-	@return (ScreenGui, ImageLabel, EditableImage) -- Created ScreenGui, ImageLabel, and EditableImage.
+	Creates the renderer `ScreenGui`, `ImageLabel`, and `EditableImage` viewport target.
 ]=]
 function RenderWorkerGateway.CreateDisplayGui(
 	TargetParent: Instance?,
@@ -87,42 +90,26 @@ function RenderWorkerGateway.CreateDisplayGui(
 end
 
 --[=[
-	Initializes worker Actor command buffers, initial horizontal band ranges, and the pixel-return listener.
-	@param Width number -- Viewport width in pixels.
-	@param Height number -- Viewport height in pixels.
-	@param WorkerCapacity number -- Per-worker command buffer byte capacity.
-	@param FinalPixel buffer -- Full-screen RGBA destination buffer.
-	@param BufferTable { buffer } -- Per-worker triangle command buffers.
-	@param WorkerOffsets { number } -- Per-worker byte write offsets.
-	@param BandStarts { number } -- Per-worker dynamic band start Y array.
-	@param BandEnds { number } -- Per-worker dynamic band end Y array.
-	@param EditableImg EditableImage -- Bound EditableImage receiving composited frames.
-	@param BindWorkers boolean -- True to bind Controller Actor worker messaging; false for isolated GUI specs.
-	@param OnWorkerReturned (FrameId: number, WorkerCpuTime: number, CompositeCpuTime: number) -> () -- Frame-band completion callback.
-	@param GetCurrentFrameState () -> (number, number, buffer) -- Accessor returning live (FrameId, Width, FinalPixel).
-	@return { Actor } -- Resolved parallel worker Actors (empty when BindWorkers is false).
+	Binds `Controller` Actor message listeners for Pass-1 staged geometry and Pass-2 rendered bands.
 ]=]
 function RenderWorkerGateway.InitializeWorkers(
-	Width: number,
-	Height: number,
-	WorkerCapacity: number,
-	_FinalPixel: buffer,
-	BufferTable: { buffer },
-	WorkerOffsets: { number },
-	BandStarts: { number },
-	BandEnds: { number },
-	_EditableImg: EditableImage,
 	BindWorkers: boolean,
-	OnWorkerReturned: (FrameId: number, WorkerCpuTime: number, CompositeCpuTime: number) -> (),
-	GetCurrentFrameState: () -> (number, number, buffer)
+	OnStageReturned: (
+		ChunkIdx: number,
+		FrameId: number,
+		UntexTris: buffer,
+		UntexBounds: buffer,
+		UntexCount: number,
+		TexTris: buffer,
+		TexBounds: buffer,
+		TexCount: number,
+		RowWorkDiff: buffer,
+		StageElapsed: number
+	) -> (),
+	OnBandReturned: (FrameId: number, WorkerCpuTime: number, UploadCpuTime: number) -> (),
+	GetActiveFrameAndImage: () -> (number, EditableImage?)
 ): { Actor }
 	if not BindWorkers then
-		for i = 1, ACTOR_COUNT do
-			BufferTable[i] = buffer.create(WorkerCapacity)
-			WorkerOffsets[i] = 0
-			BandStarts[i] = 0
-			BandEnds[i] = Height - 1
-		end
 		return {}
 	end
 
@@ -130,23 +117,6 @@ function RenderWorkerGateway.InitializeWorkers(
 	const PlayerScripts = LocalPlayer:WaitForChild("PlayerScripts")
 	const SelfActor = PlayerScripts:WaitForChild("Controller") :: Actor
 	const WorkerActors = (PlayerScripts:WaitForChild("WorkerFolder"):GetChildren() :: any) :: { Actor }
-	const BandHeight = math.ceil(Height / math.max(1, ACTOR_COUNT)) :: number
-
-	const WorkerPoolSize = math.max(ACTOR_COUNT, #WorkerActors) :: number
-	for i = 1, WorkerPoolSize do
-		BufferTable[i] = buffer.create(WorkerCapacity)
-		WorkerOffsets[i] = 0
-		BandStarts[i] = 0
-		BandEnds[i] = Height - 1
-	end
-
-	for i, TargetActor: Actor in ipairs(WorkerActors) do
-		const BandStartY = (i - 1) * BandHeight :: number
-		const BandEndY = math.min(i * BandHeight - 1, Height - 1) :: number
-		BandStarts[i] = BandStartY
-		BandEnds[i] = BandEndY
-		TargetActor:SendMessage("Set Band Range", BandStartY, BandEndY)
-	end
 
 	task.spawn(function()
 		const ActiveCamera = workspace.CurrentCamera
@@ -156,35 +126,30 @@ function RenderWorkerGateway.InitializeWorkers(
 		end
 	end)
 
+	SelfActor:BindToMessage("Return Staged Geometry", OnStageReturned)
+
 	SelfActor:BindToMessage(
 		"Return Render Calculations",
 		function(
-			WorkerPixelBuffer: buffer,
+			BandPixelSlice: buffer,
 			FrameId: number,
 			BandStartY: number,
 			BandEndY: number,
-			DirtyMinY: number,
-			DirtyMaxY: number,
+			BandWidth: number,
 			WorkerComputeSeconds: number?
 		)
-			const ActiveFrameId: number, ActiveWidth: number, ActiveFinalPixel: buffer = GetCurrentFrameState()
+			const ActiveFrameId: number, ActiveImg: EditableImage? = GetActiveFrameAndImage()
 			if FrameId ~= ActiveFrameId then
 				return
 			end
 
-			const CompositeStart = os.clock() :: number
-			BufferHelper.CompositeWorkerBand(
-				ActiveFinalPixel,
-				WorkerPixelBuffer,
-				ActiveWidth,
-				BandStartY,
-				BandEndY,
-				DirtyMinY,
-				DirtyMaxY,
-				true
-			)
-			const CompositeElapsed = (os.clock() - CompositeStart) :: number
-			OnWorkerReturned(FrameId, (WorkerComputeSeconds or 0) :: number, CompositeElapsed)
+			const UploadStart = os.clock() :: number
+			if ActiveImg and BandStartY <= BandEndY and buffer.len(BandPixelSlice) > 0 then
+				const BandHeight = BandEndY - BandStartY + 1 :: number
+				ActiveImg:WritePixelsBuffer(Vector2.new(0, BandStartY), Vector2.new(BandWidth, BandHeight), BandPixelSlice)
+			end
+			const UploadElapsed = (os.clock() - UploadStart) :: number
+			OnBandReturned(FrameId, (WorkerComputeSeconds or 0) :: number, UploadElapsed)
 		end
 	)
 
@@ -192,9 +157,7 @@ function RenderWorkerGateway.InitializeWorkers(
 end
 
 --[=[
-	Broadcasts decoded 64x64 RGBA texture tables to all parallel worker Actors.
-	@param WorkerActors { Actor } -- Active worker Actor list.
-	@param LoadedTextureBuffers { [number]: buffer } -- Cached RGBA buffers keyed by TextureId.
+	Broadcasts decoded texture buffers to all parallel worker Actors.
 ]=]
 function RenderWorkerGateway.BroadcastTextures(
 	WorkerActors: { Actor },
@@ -206,45 +169,105 @@ function RenderWorkerGateway.BroadcastTextures(
 end
 
 --[=[
-	Dispatches compact triangle command slices and dynamic scanline band ranges to each worker Actor.
-	@param WorkerActors { Actor } -- Active worker Actor list.
-	@param BufferTable { buffer } -- Per-worker triangle command buffers.
-	@param WorkerOffsets { number } -- Per-worker active byte counts.
-	@param WorkerCapacity number -- Per-worker command buffer byte capacity.
-	@param BandStarts { number } -- Per-worker band start Y array.
-	@param BandEnds { number } -- Per-worker band end Y array.
-	@param FrameId number -- Monotonic render frame ID.
-	@param ActiveWidth number? -- Optional active viewport width override.
-	@param ActiveHeight number? -- Optional active viewport height override.
+	Dispatches weighted contiguous front-to-back ECS entity chunks across parallel workers for Pass 1.
 ]=]
-function RenderWorkerGateway.DispatchWorkerBatches(
+function RenderWorkerGateway.DispatchStageChunks(
 	WorkerActors: { Actor },
-	BufferTable: { buffer },
-	WorkerOffsets: { number },
-	WorkerCapacity: number,
+	Storage: ECSMain.ECSStorage,
+	EntityCount: number,
+	CamPosVec: vector,
+	CamRightVec: vector,
+	CamUpVec: vector,
+	CamLookVec: vector,
+	FocalLength: number,
+	GuardBandX: number,
+	GuardBandY: number,
+	PlaneLeft: vector,
+	PlaneRight: vector,
+	PlaneBottom: vector,
+	PlaneTop: vector,
+	ActiveWidth: number,
+	ActiveHeight: number,
+	FrameId: number
+): number
+	const WorkerCount = #WorkerActors :: number
+	if WorkerCount <= 0 or EntityCount <= 0 then
+		return 0
+	end
+
+	const PosBuf = Storage.PositionData.GetData() :: buffer
+	const SizeBuf = Storage.SizeData.GetData() :: buffer
+	const DirBuf = Storage.DirectionsData.GetData() :: buffer
+	const VisBuf = Storage.VisualData.GetData() :: buffer
+	const PropBuf = Storage.PropertiesData.GetData() :: buffer
+
+	const DispatchedChunks = WorkerPartitionHelper.ComputeStageChunkCounts(EntityCount, WorkerCount, StageChunkCounts) :: number
+	local StartIdx = 0 :: number
+
+	for i = 1, DispatchedChunks do
+		const ChunkCount = StageChunkCounts[i] :: number
+		const CompBytes = ChunkCount * COMPONENT_STRIDE :: number
+		const DirBytes = ChunkCount * DIRECTION_STRIDE :: number
+		const VisBytes = ChunkCount * VISUAL_STRIDE :: number
+		const PropBytes = ChunkCount * PROPERTIES_STRIDE :: number
+
+		if CachedStageChunkCap[i] ~= ChunkCount then
+			CachedStageChunkCap[i] = ChunkCount
+			CachedPosSlices[i] = buffer.create(CompBytes)
+			CachedSizeSlices[i] = buffer.create(CompBytes)
+			CachedDirSlices[i] = buffer.create(DirBytes)
+			CachedVisSlices[i] = buffer.create(VisBytes)
+			CachedPropSlices[i] = buffer.create(PropBytes)
+		end
+		const PosSlice = CachedPosSlices[i]
+		const SizeSlice = CachedSizeSlices[i]
+		const DirSlice = CachedDirSlices[i]
+		const VisSlice = CachedVisSlices[i]
+		const PropSlice = CachedPropSlices[i]
+
+		buffer.copy(PosSlice, 0, PosBuf, StartIdx * COMPONENT_STRIDE, CompBytes)
+		buffer.copy(SizeSlice, 0, SizeBuf, StartIdx * COMPONENT_STRIDE, CompBytes)
+		buffer.copy(DirSlice, 0, DirBuf, StartIdx * DIRECTION_STRIDE, DirBytes)
+		buffer.copy(VisSlice, 0, VisBuf, StartIdx * VISUAL_STRIDE, VisBytes)
+		buffer.copy(PropSlice, 0, PropBuf, StartIdx * PROPERTIES_STRIDE, PropBytes)
+
+		WorkerActors[i]:SendMessage(
+			"Stage Entities",
+			i,
+			PosSlice, SizeSlice, DirSlice, VisSlice, PropSlice, ChunkCount,
+			CamPosVec, CamRightVec, CamUpVec, CamLookVec,
+			FocalLength, GuardBandX, GuardBandY,
+			PlaneLeft, PlaneRight, PlaneBottom, PlaneTop,
+			ActiveWidth, ActiveHeight, FrameId
+		)
+		StartIdx += ChunkCount
+	end
+
+	return DispatchedChunks
+end
+
+--[=[
+	Dispatches scattered dual-stream triangle slices and equal-cost screen bands to parallel workers.
+]=]
+function RenderWorkerGateway.DispatchTileBands(
+	WorkerActors: { Actor },
+	UntexSlices: { buffer },
+	UntexBytes: { number },
+	TexSlices: { buffer },
+	TexBytes: { number },
 	BandStarts: { number },
 	BandEnds: { number },
 	FrameId: number,
-	ActiveWidth: number?,
-	ActiveHeight: number?
+	ActiveWidth: number,
+	ActiveHeight: number
 )
 	for i, TargetActor: Actor in ipairs(WorkerActors) do
-		const ByteCount = WorkerOffsets[i] :: number
-		local PayloadBuffer = EmptyPayload :: buffer
-		if ByteCount > 0 then
-			if ByteCount < WorkerCapacity then
-				const CompactSlice = buffer.create(ByteCount) :: buffer
-				buffer.copy(CompactSlice, 0, BufferTable[i], 0, ByteCount)
-				PayloadBuffer = CompactSlice
-			else
-				PayloadBuffer = BufferTable[i]
-			end
-		end
-
 		TargetActor:SendMessage(
 			"Execute Rendering",
-			PayloadBuffer,
-			ByteCount,
+			UntexSlices[i],
+			UntexBytes[i],
+			TexSlices[i],
+			TexBytes[i],
 			FrameId,
 			BandStarts[i],
 			BandEnds[i],

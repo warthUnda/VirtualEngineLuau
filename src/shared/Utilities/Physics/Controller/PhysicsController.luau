@@ -18,8 +18,7 @@ const RequireAny = require :: any
 -- Libraries --
 const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 const BVH = require(UtilitiesFolder:WaitForChild("BVH"))
-const ResourceController = require(ControllerTheoryFolder:WaitForChild("Controller"):WaitForChild("ResourceController"))
-const ControllerInterpreter = require(ControllerTheoryFolder:WaitForChild("Core"):WaitForChild("ControllerInterpreter"))
+const PhysicsRep = require(ControllerTheoryFolder:WaitForChild("ControllerReps"):WaitForChild("PhysicsRep"))
 const PhysicsMath = require(PhysicsFolder:WaitForChild("Core"):WaitForChild("PhysicsMath"))
 const PlayerPhysics = require(PhysicsFolder:WaitForChild("Core"):WaitForChild("PlayerPhysics"))
 const PhysicsControllerHelper = require(script.Parent.PhysicsControllerHelper)
@@ -177,13 +176,12 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 	if not PositionBuffer or not SizeBuffer or not DirectionsBuffer or EntityCount <= 0 then
 		PendingWishX, PendingWishZ, PendingMaxScale, PendingJumpRequested = 0, 0, 0, false
 		PhysicsAwakeState.FlushForces()
-		ResourceController.ReportPhysicsFeedback(os.clock() - PhysicsStartClock)
+		PhysicsRep.ReportFeedback(os.clock() - PhysicsStartClock)
 		return
 	end
 
 	PhysicsFrameTick += 1
-	const ActiveDutyPercent: number, _EffectiveStride: number, DtCompensationScale: number =
-		ControllerInterpreter.InterpretPhysics(ResourceController.GetPhysicsScore())
+	const ActiveDutyPercent: number, _EffectiveStride: number, DtCompensationScale: number = PhysicsRep.Interpret()
 
 	PendingWishX, PendingWishZ, PendingMaxScale, PendingJumpRequested =
 		PhysicsControllerHelper.SampleKeyboardInput(PendingWishX, PendingWishZ, PendingMaxScale, PendingJumpRequested)
@@ -226,7 +224,7 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 
 	PhysicsAwakeState.FlushForces()
 	if not IS_CLIENT then
-		ResourceController.ReportPhysicsFeedback(os.clock() - PhysicsStartClock)
+		PhysicsRep.ReportFeedback(os.clock() - PhysicsStartClock)
 		return
 	end
 
@@ -240,7 +238,7 @@ function PhysicsController.SimulatePhysicsFrame(DeltaTime: number?)
 	elseif HostRootPart then
 		HostRootPart = nil
 	end
-	ResourceController.ReportPhysicsFeedback(os.clock() - PhysicsStartClock)
+	PhysicsRep.ReportFeedback(os.clock() - PhysicsStartClock)
 end
 
 --[=[

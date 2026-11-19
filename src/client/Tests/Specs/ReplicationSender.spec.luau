@@ -71,35 +71,45 @@ return function()
 			Bus.Emit(Events.RequestInitialSync)
 			Bus.Emit(Events.SendPlayerState, PlrBuf)
 
-			const MockRemotes: ReplicationSenderHelper.ClientRemoteTargets = {
+			const MockRemotes = {
 				ReplicateEvent = {
 					FireServer = function(_Self: any)
 						ReplicateReadyCalls += 1
 					end,
-				} :: any,
+				},
 				TextureSyncEvent = {
 					FireServer = function(_Self: any)
 						TextureRequestCalls += 1
 					end,
-				} :: any,
+				},
 				PlayerRegistryEvent = {
 					FireServer = function(_Self: any)
 						RegistryRequestCalls += 1
 					end,
-				} :: any,
+				},
 				ObserverStateEvent = {
 					FireServer = function(_Self: any, Payload: buffer)
 						LastObserverBuf = Payload
 					end,
-				} :: any,
+				},
 				PlayerStateEvent = {
 					FireServer = function(_Self: any, Payload: buffer)
 						LastPlayerBuf = Payload
 					end,
-				} :: any,
+				},
 			}
 
-			ReplicationSenderHelper.AttachRemotes(Sender, MockRemotes)
+			ReplicationSenderHelper.AttachDispatcher(Sender, function(Topic: string, Payload: buffer?)
+				if Topic == Events.RequestInitialSync then
+					MockRemotes.ReplicateEvent:FireServer()
+					MockRemotes.TextureSyncEvent:FireServer()
+					MockRemotes.PlayerRegistryEvent:FireServer()
+				elseif Topic == Events.SendObserverState and Payload then
+					MockRemotes.ObserverStateEvent:FireServer(Payload)
+				elseif Topic == Events.SendPlayerState and Payload then
+					MockRemotes.PlayerStateEvent:FireServer(Payload)
+				end
+			end)
 			expect(ReplicateReadyCalls).to.equal(1)
 			expect(TextureRequestCalls).to.equal(1)
 			expect(RegistryRequestCalls).to.equal(1)
@@ -109,7 +119,7 @@ return function()
 				expect(buffer.readf32(LastPlayerBuf, 0)).to.equal(-42.0)
 			end
 
-			-- Emit after Remotes attach: must dispatch immediately
+			-- Emit after Dispatcher attaches: must dispatch immediately
 			Bus.Emit(Events.SendObserverState, ObsBuf)
 			expect(LastObserverBuf).to.equal(ObsBuf)
 

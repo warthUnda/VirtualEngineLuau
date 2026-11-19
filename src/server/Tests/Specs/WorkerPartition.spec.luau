@@ -20,6 +20,7 @@ return function()
 	const RenderRoot = SharedFolder:WaitForChild("Utilities"):WaitForChild("Render")
 
 	-- Libraries --
+	const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 	const BufferHelper = require(RenderRoot:WaitForChild("Core"):WaitForChild("BufferHelper"))
 	const RenderMath = require(RenderRoot:WaitForChild("Core"):WaitForChild("RenderMath"))
 	const WorkerPartitionHelper = require(RenderRoot:WaitForChild("Controller"):WaitForChild("WorkerPartitionHelper"))
@@ -28,7 +29,7 @@ return function()
 		it("should evenly split horizon-clustered triangles across all 3 workers instead of overloading 1 actor", function()
 			const Height = 100 :: number
 			const WorkerCount = 3 :: number
-			const Stride = 56 :: number
+			const Stride = SystemsConfigs.RenderBufferLayoutSize :: number
 			const TriangleCount = 60 :: number
 			const Capacity = TriangleCount * Stride :: number
 
@@ -95,7 +96,7 @@ return function()
 			const Width = 32 :: number
 			const Height = 32 :: number
 			const WorkerCount = 3 :: number
-			const Stride = 56 :: number
+			const Stride = SystemsConfigs.RenderBufferLayoutSize :: number
 			const TotalPixels = Width * Height :: number
 
 			const CheckerTex = buffer.create(4 * 4 * 4)

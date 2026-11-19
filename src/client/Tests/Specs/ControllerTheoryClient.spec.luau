@@ -5,7 +5,7 @@
 --[=[
 	@class ControllerTheoryClient.spec
 	Client TestEZ specifications verifying dynamic renderer resolution scaling driven by
-	ResourceController feedback and ControllerInterpreter on the client boundary.
+	RenderingRep and ResourceController on the client boundary.
 ]=]
 
 return function()
@@ -31,12 +31,15 @@ return function()
 	const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
 	const CameraLibrary = require(RenderRoot:WaitForChild("Camera"):WaitForChild("CameraLibrary"))
 	const RenderService = require(RenderRoot:WaitForChild("Core"):WaitForChild("RenderService"))
-	const ResourceController =
-		require(ControllerTheoryRoot:WaitForChild("Controller"):WaitForChild("ResourceController"))
+	const ControllerTheory = require(ControllerTheoryRoot)
+	const ResourceController = ControllerTheory.ResourceController
+	const PhysicsRep = ControllerTheory.PhysicsRep
+	const RenderingRep = ControllerTheory.RenderingRep
 
 	describe("1. Client Renderer Dynamic Resolution Scaling & Controller Feedback", function()
 		it("should dynamically lower RenderService resolution when controller score drops and restore at 100", function()
 			ResourceController.Reset()
+			ResourceController.SetEnabled(true)
 
 			const IsolatedStorage = ECSMain.CreateStorage(false)
 			const CustomCam = CameraLibrary.New(CFrame.new(0, 5, 20), 70)
@@ -56,13 +59,13 @@ return function()
 			const InitialRowToWorker = RendererObj.RowToWorker
 			const InitialStagedTriangles = RendererObj.StagedTriangles
 
-			-- Simulate 1 second (60 frames) of heavy render feedback to step RendererScore down gradually
+			-- Simulate 1 second (60 frames) of heavy render feedback via RenderingRep to step score down gradually
 			for _ = 1, 60 do
-				ResourceController.ReportRendererFeedback(0.025)
-				ResourceController.ReportPhysicsFeedback(0.001)
+				RenderingRep.ReportFeedback(0.025)
+				PhysicsRep.ReportFeedback(0.001)
 				ResourceController.StepController(0.028)
 			end
-			expect(ResourceController.GetRendererScore() < 100).to.equal(true)
+			expect(RenderingRep.GetScore() < 100).to.equal(true)
 
 			RendererObj:DrawFrame()
 			expect(RendererObj.Width < 320).to.equal(true)
@@ -92,6 +95,40 @@ return function()
 				expect(BoundLabel.ImageRectSize.X).to.equal(320)
 				expect(BoundLabel.ImageRectSize.Y).to.equal(240)
 			end
+
+			RendererObj:Destroy()
+			CustomCam:Destroy()
+			MountContainer:Destroy()
+			ResourceController.Reset()
+		end)
+
+		it("should keep native resolution when ResourceController is disabled", function()
+			ResourceController.Reset()
+			ResourceController.SetEnabled(false)
+
+			const IsolatedStorage = ECSMain.CreateStorage(false)
+			const CustomCam = CameraLibrary.New(CFrame.new(0, 5, 20), 70)
+			const MountContainer = Instance.new("Folder")
+
+			const RendererObj = RenderService.New({
+				Width = 320,
+				Height = 240,
+				Storage = IsolatedStorage,
+				Camera = CustomCam,
+				GuiName = "SpecDisabledControllerRendererGui",
+			})
+			RendererObj:Init(MountContainer, false)
+
+			for _ = 1, 30 do
+				RenderingRep.ReportFeedback(0.030)
+				PhysicsRep.ReportFeedback(0.005)
+				ResourceController.StepController(0.038)
+			end
+
+			RendererObj:DrawFrame()
+			expect(RenderingRep.GetScore()).to.equal(100)
+			expect(RendererObj.Width).to.equal(320)
+			expect(RendererObj.Height).to.equal(240)
 
 			RendererObj:Destroy()
 			CustomCam:Destroy()

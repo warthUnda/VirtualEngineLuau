@@ -4,8 +4,9 @@
 
 --[=[
 	@class RenderMath
-	Core software rasterizer math facade for camera-space OBB vertex transformation,
-	projection parameter calculation, polygon clipping, and scanline triangle batch dispatch.
+	Core software rasterizer math facade for camera-space OBB vertex transformation (with AllInside
+	fast-path detection), projection parameter calculation, outcode polygon clipping, and
+	legacy/tile-based triangle batch rasterization.
 ]=]
 
 -- Services --
@@ -13,9 +14,9 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
-const BufferHelper = require(script.Parent.BufferHelper)
 const RasterizerMath = require(script.Parent.RasterizerMath)
 const PolygonClipMath = require(script.Parent.PolygonClipMath)
+const TileRasterizerMath = require(script.Parent.TileRasterizerMath)
 
 -- Configs --
 const NEAR_CLIP = SystemsConfigs.RenderNearClip :: number
@@ -32,23 +33,9 @@ local RenderMath = {}
 -- ============================================================================
 
 --[=[
-	Transforms an arbitrary shape's unit local vertices into camera space and computes local camera/sun vectors.
-	@param PositionBuffer buffer -- Entity position component buffer.
-	@param DirectionsBuffer buffer -- Entity basis directions buffer.
-	@param SizeBuffer buffer -- Entity size component buffer.
-	@param ComponentOffset number -- Byte offset in position/size buffers.
-	@param DirectionOffset number -- Byte offset in directions buffer.
-	@param LocalVertices { vector } -- Unit local-space vertices from VerticeFile.
-	@param VertexCount number -- Number of vertices in LocalVertices.
-	@param CameraVertices buffer -- Output buffer for transformed camera-space vertices (12 bytes per vertex).
-	@param CamPos vector -- Camera world position.
-	@param CamRight vector -- Camera RightVector.
-	@param CamUp vector -- Camera UpVector.
-	@param CamLook vector -- Camera LookVector.
-	@param SunVec vector -- Normalized world-space sun direction vector.
-	@param GuardBandX number? -- Optional horizontal guardband slope factor.
-	@param GuardBandY number? -- Optional vertical guardband slope factor.
-	@return (boolean, vector, vector, vector) -- (IsVisible, LocalCameraPos, HalfSize, LocalSun).
+	Transforms an arbitrary shape's unit local vertices into camera space, computes local camera/sun vectors,
+	and returns AllInside = true when the entire OBB lies strictly inside Near/Far and GuardBandX/Y.
+	@return (boolean, vector, vector, vector, boolean) -- (IsVisible, LocalCameraPos, HalfSize, LocalSun, AllInside).
 ]=]
 function RenderMath.TransformShapeCameraVertices(
 	PositionBuffer: buffer,
@@ -66,15 +53,35 @@ function RenderMath.TransformShapeCameraVertices(
 	SunVec: vector,
 	GuardBandX: number?,
 	GuardBandY: number?
-): (boolean, vector, vector, vector)
-	const PartPosition = BufferHelper.ReadVec3(PositionBuffer, ComponentOffset)
-	const HalfSize = BufferHelper.ReadVec3(SizeBuffer, ComponentOffset) * 0.5
+): (boolean, vector, vector, vector, boolean)
+	const PartPosition = vector.create(
+		buffer.readf32(PositionBuffer, ComponentOffset),
+		buffer.readf32(PositionBuffer, ComponentOffset + 4),
+		buffer.readf32(PositionBuffer, ComponentOffset + 8)
+	)
+	const HalfSize = vector.create(
+		buffer.readf32(SizeBuffer, ComponentOffset) * 0.5,
+		buffer.readf32(SizeBuffer, ComponentOffset + 4) * 0.5,
+		buffer.readf32(SizeBuffer, ComponentOffset + 8) * 0.5
+	)
 	const RelativePosition = PartPosition - CamPos
 	const CameraSpaceCenterZ = vector.dot(RelativePosition, CamLook) :: number
 
-	const LookAxis = BufferHelper.ReadVec3(DirectionsBuffer, DirectionOffset)
-	const UpAxis = BufferHelper.ReadVec3(DirectionsBuffer, DirectionOffset + 12)
-	const RightAxis = BufferHelper.ReadVec3(DirectionsBuffer, DirectionOffset + 24)
+	const LookAxis = vector.create(
+		buffer.readf32(DirectionsBuffer, DirectionOffset),
+		buffer.readf32(DirectionsBuffer, DirectionOffset + 4),
+		buffer.readf32(DirectionsBuffer, DirectionOffset + 8)
+	)
+	const UpAxis = vector.create(
+		buffer.readf32(DirectionsBuffer, DirectionOffset + 12),
+		buffer.readf32(DirectionsBuffer, DirectionOffset + 16),
+		buffer.readf32(DirectionsBuffer, DirectionOffset + 20)
+	)
+	const RightAxis = vector.create(
+		buffer.readf32(DirectionsBuffer, DirectionOffset + 24),
+		buffer.readf32(DirectionsBuffer, DirectionOffset + 28),
+		buffer.readf32(DirectionsBuffer, DirectionOffset + 32)
+	)
 
 	const WorldRightAxis = RightAxis * HalfSize.x
 	const WorldUpAxis = UpAxis * HalfSize.y
@@ -85,54 +92,54 @@ function RenderMath.TransformShapeCameraVertices(
 	const LookAxisCameraZ = vector.dot(WorldLookAxis, CamLook) :: number
 	const CameraSpaceExtentZ = math.abs(RightAxisCameraZ) + math.abs(UpAxisCameraZ) + math.abs(LookAxisCameraZ) :: number
 
-	if CameraSpaceCenterZ + CameraSpaceExtentZ < NEAR_CLIP or CameraSpaceCenterZ - CameraSpaceExtentZ > FAR_CLIP then
-		return false, vector.zero, vector.zero, vector.zero
+	const MaxDepthZ = CameraSpaceCenterZ + CameraSpaceExtentZ :: number
+	const MinDepthZ = CameraSpaceCenterZ - CameraSpaceExtentZ :: number
+	if MaxDepthZ < NEAR_CLIP or MinDepthZ > FAR_CLIP then
+		return false, vector.zero, vector.zero, vector.zero, false
 	end
 
-	const CameraSpaceCenter = vector.create(
-		vector.dot(RelativePosition, CamRight),
-		vector.dot(RelativePosition, CamUp),
-		CameraSpaceCenterZ
-	)
-	const CameraSpaceRightAxis = vector.create(
-		vector.dot(WorldRightAxis, CamRight),
-		vector.dot(WorldRightAxis, CamUp),
-		RightAxisCameraZ
-	)
-	const CameraSpaceUpAxis = vector.create(
-		vector.dot(WorldUpAxis, CamRight),
-		vector.dot(WorldUpAxis, CamUp),
-		UpAxisCameraZ
-	)
-	const CameraSpaceLookAxis = vector.create(
-		vector.dot(WorldLookAxis, CamRight),
-		vector.dot(WorldLookAxis, CamUp),
-		LookAxisCameraZ
-	)
+	const CenterX = vector.dot(RelativePosition, CamRight) :: number
+	const CenterY = vector.dot(RelativePosition, CamUp) :: number
+	const CameraSpaceCenter = vector.create(CenterX, CenterY, CameraSpaceCenterZ)
+	const CameraSpaceRightAxis = vector.create(vector.dot(WorldRightAxis, CamRight), vector.dot(WorldRightAxis, CamUp), RightAxisCameraZ)
+	const CameraSpaceUpAxis = vector.create(vector.dot(WorldUpAxis, CamRight), vector.dot(WorldUpAxis, CamUp), UpAxisCameraZ)
+	const CameraSpaceLookAxis = vector.create(vector.dot(WorldLookAxis, CamRight), vector.dot(WorldLookAxis, CamUp), LookAxisCameraZ)
 
+	local AllInside = false :: boolean
 	if GuardBandX and GuardBandY then
-		const MaxDepth = math.max(CameraSpaceCenterZ + CameraSpaceExtentZ, NEAR_CLIP) :: number
-		const ExtentX = math.abs(CameraSpaceRightAxis.X) + math.abs(CameraSpaceUpAxis.X) + math.abs(CameraSpaceLookAxis.X) :: number
-		const HalfFrustumX = MaxDepth * GuardBandX :: number
-		if CameraSpaceCenter.X + ExtentX < -HalfFrustumX or CameraSpaceCenter.X - ExtentX > HalfFrustumX then
-			return false, vector.zero, vector.zero, vector.zero
+		const ClampedMaxDepth = math.max(MaxDepthZ, NEAR_CLIP) :: number
+		const ExtentX = math.abs(CameraSpaceRightAxis.x) + math.abs(CameraSpaceUpAxis.x) + math.abs(CameraSpaceLookAxis.x) :: number
+		const HalfFrustumX = ClampedMaxDepth * GuardBandX :: number
+		if CenterX + ExtentX < -HalfFrustumX or CenterX - ExtentX > HalfFrustumX then
+			return false, vector.zero, vector.zero, vector.zero, false
 		end
 
-		const ExtentY = math.abs(CameraSpaceRightAxis.Y) + math.abs(CameraSpaceUpAxis.Y) + math.abs(CameraSpaceLookAxis.Y) :: number
-		const HalfFrustumY = MaxDepth * GuardBandY :: number
-		if CameraSpaceCenter.Y + ExtentY < -HalfFrustumY or CameraSpaceCenter.Y - ExtentY > HalfFrustumY then
-			return false, vector.zero, vector.zero, vector.zero
+		const ExtentY = math.abs(CameraSpaceRightAxis.y) + math.abs(CameraSpaceUpAxis.y) + math.abs(CameraSpaceLookAxis.y) :: number
+		const HalfFrustumY = ClampedMaxDepth * GuardBandY :: number
+		if CenterY + ExtentY < -HalfFrustumY or CenterY - ExtentY > HalfFrustumY then
+			return false, vector.zero, vector.zero, vector.zero, false
+		end
+
+		if
+			MinDepthZ >= NEAR_CLIP
+			and MaxDepthZ <= FAR_CLIP
+			and (math.abs(CenterX) + ExtentX) <= MinDepthZ * GuardBandX
+			and (math.abs(CenterY) + ExtentY) <= MinDepthZ * GuardBandY
+		then
+			AllInside = true
 		end
 	end
 
 	for VertexIndex = 1, VertexCount do
 		const LocalVertex = LocalVertices[VertexIndex]
 		const VertexOffset = (VertexIndex - 1) * 12 :: number
-		BufferHelper.WriteVec3(
-			CameraVertices,
-			VertexOffset,
-			CameraSpaceCenter + CameraSpaceRightAxis * LocalVertex.x + CameraSpaceUpAxis * LocalVertex.y + CameraSpaceLookAxis * LocalVertex.z
-		)
+		const CamV = CameraSpaceCenter
+			+ CameraSpaceRightAxis * LocalVertex.x
+			+ CameraSpaceUpAxis * LocalVertex.y
+			+ CameraSpaceLookAxis * LocalVertex.z
+		buffer.writef32(CameraVertices, VertexOffset, CamV.x)
+		buffer.writef32(CameraVertices, VertexOffset + 4, CamV.y)
+		buffer.writef32(CameraVertices, VertexOffset + 8, CamV.z)
 	end
 
 	const LocalCameraPos = vector.create(
@@ -142,7 +149,7 @@ function RenderMath.TransformShapeCameraVertices(
 	)
 	const LocalSun = vector.create(vector.dot(RightAxis, SunVec), vector.dot(UpAxis, SunVec), vector.dot(LookAxis, SunVec))
 
-	return true, LocalCameraPos, HalfSize, LocalSun
+	return true, LocalCameraPos, HalfSize, LocalSun, AllInside
 end
 
 --[=[
@@ -161,20 +168,10 @@ end
 
 RenderMath.ClipAndProjectQuad = PolygonClipMath.ClipAndProjectQuad
 RenderMath.ClipAndProjectTriangleUV = PolygonClipMath.ClipAndProjectTriangleUV
+RenderMath.RasterizeBandDual = TileRasterizerMath.RasterizeBandDual
 
 --[=[
-	Iterates and rasterizes a packed batch of textured triangles from a render command buffer.
-	@param RenderBuffer buffer -- Source render command queue buffer.
-	@param ByteCount number -- Total byte length of queued commands.
-	@param TextureBuffers { [number]: buffer } -- Cached 64x64 RGBA texture buffers keyed by TextureId.
-	@param TextureWidth number -- Texture width in texels.
-	@param TextureHeight number -- Texture height in texels.
-	@param WIDTH number -- Screen width in pixels.
-	@param HEIGHT number -- Screen height in pixels.
-	@param PixelBuffer buffer -- Destination color pixel buffer.
-	@param ZBuffer buffer -- Destination 32-bit depth buffer.
-	@param BandStartY number? -- Optional inclusive scanline band start Y.
-	@param BandEndY number? -- Optional inclusive scanline band end Y.
+	Iterates and rasterizes a legacy packed batch of triangles (skipping UV reads for untextured commands).
 	@return (number, number) -- Modified scanline row range (DirtyMinY, DirtyMaxY).
 ]=]
 function RenderMath.DrawTriangleBatch(
@@ -200,34 +197,66 @@ function RenderMath.DrawTriangleBatch(
 		const TextureId = buffer.readu32(RenderBuffer, ReadOffset + 52) :: number
 		const TriangleTextureBuffer: buffer? = if TextureId > 0 then TextureBuffers[TextureId] else nil
 
-		const TriangleMinY: number, TriangleMaxY: number = RasterizeSpan(
-			buffer.readi16(RenderBuffer, ReadOffset),
-			buffer.readi16(RenderBuffer, ReadOffset + 2),
-			buffer.readf32(RenderBuffer, ReadOffset + 4),
-			buffer.readf32(RenderBuffer, ReadOffset + 8),
-			buffer.readf32(RenderBuffer, ReadOffset + 12),
-			buffer.readi16(RenderBuffer, ReadOffset + 16),
-			buffer.readi16(RenderBuffer, ReadOffset + 18),
-			buffer.readf32(RenderBuffer, ReadOffset + 20),
-			buffer.readf32(RenderBuffer, ReadOffset + 24),
-			buffer.readf32(RenderBuffer, ReadOffset + 28),
-			buffer.readi16(RenderBuffer, ReadOffset + 32),
-			buffer.readi16(RenderBuffer, ReadOffset + 34),
-			buffer.readf32(RenderBuffer, ReadOffset + 36),
-			buffer.readf32(RenderBuffer, ReadOffset + 40),
-			buffer.readf32(RenderBuffer, ReadOffset + 44),
-			buffer.readu32(RenderBuffer, ReadOffset + 48),
-			TriangleTextureBuffer,
-			TextureWidth,
-			TextureHeight,
-			WIDTH,
-			HEIGHT,
-			RowStride,
-			PixelBuffer,
-			ZBuffer,
-			BandStartY,
-			BandEndY
-		)
+		local TriangleMinY: number, TriangleMaxY: number
+		if TriangleTextureBuffer then
+			TriangleMinY, TriangleMaxY = RasterizeSpan(
+				buffer.readi16(RenderBuffer, ReadOffset),
+				buffer.readi16(RenderBuffer, ReadOffset + 2),
+				buffer.readf32(RenderBuffer, ReadOffset + 4),
+				buffer.readf32(RenderBuffer, ReadOffset + 8),
+				buffer.readf32(RenderBuffer, ReadOffset + 12),
+				buffer.readi16(RenderBuffer, ReadOffset + 16),
+				buffer.readi16(RenderBuffer, ReadOffset + 18),
+				buffer.readf32(RenderBuffer, ReadOffset + 20),
+				buffer.readf32(RenderBuffer, ReadOffset + 24),
+				buffer.readf32(RenderBuffer, ReadOffset + 28),
+				buffer.readi16(RenderBuffer, ReadOffset + 32),
+				buffer.readi16(RenderBuffer, ReadOffset + 34),
+				buffer.readf32(RenderBuffer, ReadOffset + 36),
+				buffer.readf32(RenderBuffer, ReadOffset + 40),
+				buffer.readf32(RenderBuffer, ReadOffset + 44),
+				buffer.readu32(RenderBuffer, ReadOffset + 48),
+				TriangleTextureBuffer,
+				TextureWidth,
+				TextureHeight,
+				WIDTH,
+				HEIGHT,
+				RowStride,
+				PixelBuffer,
+				ZBuffer,
+				BandStartY,
+				BandEndY
+			)
+		else
+			TriangleMinY, TriangleMaxY = RasterizeSpan(
+				buffer.readi16(RenderBuffer, ReadOffset),
+				buffer.readi16(RenderBuffer, ReadOffset + 2),
+				buffer.readf32(RenderBuffer, ReadOffset + 4),
+				0,
+				0,
+				buffer.readi16(RenderBuffer, ReadOffset + 16),
+				buffer.readi16(RenderBuffer, ReadOffset + 18),
+				buffer.readf32(RenderBuffer, ReadOffset + 20),
+				0,
+				0,
+				buffer.readi16(RenderBuffer, ReadOffset + 32),
+				buffer.readi16(RenderBuffer, ReadOffset + 34),
+				buffer.readf32(RenderBuffer, ReadOffset + 36),
+				0,
+				0,
+				buffer.readu32(RenderBuffer, ReadOffset + 48),
+				nil,
+				TextureWidth,
+				TextureHeight,
+				WIDTH,
+				HEIGHT,
+				RowStride,
+				PixelBuffer,
+				ZBuffer,
+				BandStartY,
+				BandEndY
+			)
+		end
 
 		if TriangleMinY < DirtyMinY then
 			DirtyMinY = TriangleMinY

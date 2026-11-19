@@ -10,6 +10,7 @@
 
 -- Services --
 const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStorage
+const RunService = game:GetService("RunService") :: RunService
 
 -- Static References --
 const SharedFolder = ReplicatedStorage:WaitForChild("Shared")
@@ -32,13 +33,11 @@ local ResourceControllerHelper = {}
 -- ============================================================================
 
 --[=[
-	Allocates a single mutable ChannelState table for either Physics or Renderer.
-	@param IsPhysics boolean -- True for Physics channel; false for Renderer channel.
+	Allocates a single mutable ChannelState table for a managed subsystem channel.
 	@return ControllerTheoryMath.ChannelState -- Initialized mutable channel record.
 ]=]
-function ResourceControllerHelper.CreateChannelState(IsPhysics: boolean): ControllerTheoryMath.ChannelState
+function ResourceControllerHelper.CreateChannelState(): ControllerTheoryMath.ChannelState
 	return {
-		IsPhysics = IsPhysics,
 		RawScore = INITIAL_SCORE,
 		Score = INITIAL_SCORE,
 		PreviousError = 0,
@@ -47,6 +46,8 @@ function ResourceControllerHelper.CreateChannelState(IsPhysics: boolean): Contro
 		StableFrames = 0,
 		HoldTargetFrames = BASE_HOLD_FRAMES,
 		ProbingCeiling = false,
+		GetLoadFraction = nil,
+		ScoreFromLoadFraction = nil,
 	}
 end
 
@@ -82,6 +83,69 @@ function ResourceControllerHelper.ResolveEffectiveFrameTime(
 		return math.max(SchedulerDeltaTime, ActiveWorkSpan)
 	end
 	return ActiveWorkSpan
+end
+
+--[=[
+	Applies a uniform target score and clears accumulated controller errors/feedback on SingletonState.
+	@param SingletonState any -- Target controller singleton state table.
+	@param TargetScore number -- Score value to assign across all score and ceiling registers.
+]=]
+function ResourceControllerHelper.ApplyScorePreset(SingletonState: any, TargetScore: number)
+	SingletonState.Scores.Renderer = TargetScore
+	SingletonState.Scores.Physics = TargetScore
+	SingletonState.RawScores.Renderer = TargetScore
+	SingletonState.RawScores.Physics = TargetScore
+	SingletonState.CeilingScores.Renderer = TargetScore
+	SingletonState.CeilingScores.Physics = TargetScore
+	SingletonState.Feedback.RendererFrameTime = 0
+	SingletonState.Feedback.PhysicsFrameTime = 0
+	SingletonState.PreviousErrors.Renderer = 0
+	SingletonState.PreviousErrors.Physics = 0
+	ResourceControllerHelper.ResetChannelState(SingletonState.RendererChannel)
+	ResourceControllerHelper.ResetChannelState(SingletonState.PhysicsChannel)
+end
+
+--[=[
+	Connects or disconnects the Server Heartbeat closed-loop step connection based on Enabled and Initialized state.
+	@param IsClient boolean -- True when running on the client VM.
+	@param CurrentConnection RBXScriptConnection? -- Active Heartbeat connection if bound.
+	@param SingletonState any -- Controller singleton state table.
+	@param StepControllerFn (number) -> () -- Callback stepping the controller once per Heartbeat.
+	@return RBXScriptConnection? -- Resulting Heartbeat connection or nil.
+]=]
+function ResourceControllerHelper.SyncServerHeartbeat(
+	IsClient: boolean,
+	CurrentConnection: RBXScriptConnection?,
+	SingletonState: any,
+	StepControllerFn: (number) -> ()
+): RBXScriptConnection?
+	if IsClient then
+		return CurrentConnection
+	end
+	if SingletonState.Enabled and SingletonState.Initialized then
+		if CurrentConnection then
+			return CurrentConnection
+		end
+		return RunService.Heartbeat:Connect(function(DeltaTime: number)
+			if not SingletonState.Enabled then
+				return
+			end
+			const PhysWork = math.max(SingletonState.Feedback.PhysicsFrameTime, 0.0005) :: number
+			const EffectiveServerDt = ResourceControllerHelper.ResolveEffectiveFrameTime(
+				DeltaTime,
+				PhysWork,
+				SingletonState.TargetFrameTime
+			)
+			SingletonState.WhereInFrame = EffectiveServerDt
+			StepControllerFn(EffectiveServerDt)
+			SingletonState.FrameStartClock = os.clock()
+			SingletonState.WhereInFrame = 0
+		end)
+	end
+	if CurrentConnection then
+		CurrentConnection:Disconnect()
+	end
+	return nil
 end
 
 return ResourceControllerHelper

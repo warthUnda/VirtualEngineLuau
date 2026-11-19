@@ -4,34 +4,39 @@
 
 --[=[
 	@class ControllerTheory
-	Public subsystem facade exposing the singleton ResourceController, ControllerInterpreter,
-	and ControllerTheoryMath for both Server and Client environments.
+	Public subsystem facade exposing the singleton ResourceController, ControllerTheoryMath,
+	and system ControllerReps (PhysicsRep, RenderingRep) for Server and Client environments.
 ]=]
 
 -- Static References --
 const CoreFolder = script:WaitForChild("Core")
 const ControllerFolder = script:WaitForChild("Controller")
+const ControllerRepsFolder = script:WaitForChild("ControllerReps")
 
 -- Libraries --
-const ControllerInterpreter = require(CoreFolder:WaitForChild("ControllerInterpreter"))
 const ControllerTheoryMath = require(CoreFolder:WaitForChild("ControllerTheoryMath"))
 const ResourceController = require(ControllerFolder:WaitForChild("ResourceController"))
+const PhysicsRep = require(ControllerRepsFolder:WaitForChild("PhysicsRep"))
+const RenderingRep = require(ControllerRepsFolder:WaitForChild("RenderingRep"))
 
 -- Tables --
 local ControllerTheory = {
 	State = ResourceController.State,
 	ResourceController = ResourceController,
-	ControllerInterpreter = ControllerInterpreter,
 	ControllerTheoryMath = ControllerTheoryMath,
+	PhysicsRep = PhysicsRep,
+	RenderingRep = RenderingRep,
+	ControllerReps = {
+		PhysicsRep = PhysicsRep,
+		RenderingRep = RenderingRep,
+	},
 	Initialize = ResourceController.Initialize,
+	IsEnabled = ResourceController.IsEnabled,
+	SetEnabled = ResourceController.SetEnabled,
 	BeginFrame = ResourceController.BeginFrame,
 	EndFrame = ResourceController.EndFrame,
 	StepController = ResourceController.StepController,
 	UpdateWhereInFrame = ResourceController.UpdateWhereInFrame,
-	ReportPhysicsFeedback = ResourceController.ReportPhysicsFeedback,
-	ReportRendererFeedback = ResourceController.ReportRendererFeedback,
-	GetRendererScore = ResourceController.GetRendererScore,
-	GetPhysicsScore = ResourceController.GetPhysicsScore,
 	SetWeights = ResourceController.SetWeights,
 	Reset = ResourceController.Reset,
 }

@@ -4,8 +4,8 @@
 
 --[=[
 	@class CleanerHelper
-	Synchronizes visible, unculled client entities from ObjectStorage into the renderer
-	culling ECS (RenderECSStorage) ordered strictly from largest part to smallest part.
+	Synchronizes visible, BVH frustum-culled client entities from ObjectStorage into RenderECSStorage
+	ordered strictly front-to-back (`ForwardZ - Radius` ascending) for Early-Z and Tile Hi-Z rejection.
 ]=]
 
 -- Services --
@@ -20,6 +20,7 @@ const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
 const ViewCulling = require(RenderRoot:WaitForChild("Core"):WaitForChild("ViewCulling"))
 const CleanerSortHelper = require(script.Parent:WaitForChild("CleanerSortHelper"))
+const RenderBVHHelper = require(script.Parent:WaitForChild("RenderBVHHelper"))
 
 -- Configs --
 const COMPONENT_STRIDE = SystemsConfigs.ECSComponentStride :: number
@@ -31,13 +32,20 @@ const SORT_STACK_BYTES = 64 * 8 :: number
 export type CleanerState = {
 	ObjectStorage: ECSMain.ECSStorage,
 	RenderStorage: ECSMain.ECSStorage,
+	RenderBVH: RenderBVHHelper.RenderBVHState,
 	MaxEntities: number,
 	PreviousVisibleCount: number,
 	RenderSlotByObjectId: buffer,
 	ObjectIdByRenderSlot: buffer,
+	CandidateIds: buffer,
 	SortedObjectIds: buffer,
-	SortedSizes: buffer,
+	SortedDepths: buffer,
 	SortStack: buffer,
+	LastCamCFrame: CFrame?,
+	LastCamFOV: number,
+	LastPlayerPos: Vector3,
+	LastEntityCount: number,
+	LastActiveCount: number,
 }
 
 -- Tables --
@@ -45,7 +53,7 @@ local CleanerHelper = {}
 
 -- Functions --
 -- ============================================================================
--- 1. RENDER ENTITY SLOT REMOVAL & DESCENDING-SIZE CULLING ECS SYNCHRONIZATION
+-- 1. RENDER ENTITY SLOT REMOVAL & BVH FRONT-TO-BACK CULLING SYNCHRONIZATION
 -- ============================================================================
 
 --[=[
@@ -71,7 +79,7 @@ function CleanerHelper.RemoveRenderEntity(
 end
 
 --[=[
-	Pre-allocates reusable mapping and sorting buffers for synchronizing ObjectStorage into RenderStorage.
+	Pre-allocates reusable BVH, mapping, and front-to-back sorting buffers for synchronizing ObjectStorage into RenderStorage.
 	@param ObjectStorage ECSMain.ECSStorage -- Source replicated client world ECS storage.
 	@param RenderStorage ECSMain.ECSStorage -- Target renderer culling ECS storage.
 	@return CleanerState -- Initialized zero-allocation cleaner state.
@@ -87,112 +95,72 @@ function CleanerHelper.CreateCleanerState(
 	return {
 		ObjectStorage = ObjectStorage,
 		RenderStorage = RenderStorage,
+		RenderBVH = RenderBVHHelper.CreateState(MaxEntities),
 		MaxEntities = MaxEntities,
 		PreviousVisibleCount = -1,
 		RenderSlotByObjectId = buffer.create((MaxEntities + 1) * 4),
 		ObjectIdByRenderSlot = buffer.create((MaxEntities + 1) * 4),
+		CandidateIds = buffer.create(MaxEntities * 4),
 		SortedObjectIds = buffer.create(MaxEntities * 4),
-		SortedSizes = buffer.create(MaxEntities * 4),
+		SortedDepths = buffer.create(MaxEntities * 4),
 		SortStack = buffer.create(SORT_STACK_BYTES),
+		LastCamCFrame = nil,
+		LastCamFOV = -1,
+		LastPlayerPos = Vector3.zero,
+		LastEntityCount = -1,
+		LastActiveCount = -1,
 	}
 end
 
 --[=[
-	Scans `1..ObjectEntityCount` in ObjectStorage, collecting visible unculled entities and tracking sort order.
-	@param State CleanerState -- Active cleaner state with pre-allocated scratch buffers.
-	@param ObjectEntityCount number -- Clamped source entity high-water count.
-	@return (number, boolean) -- Active visible entity count and true when descending-size sort is required.
+	Returns true when camera parameters, player offset, entity counts, dynamic parts, or dirty flags changed
+	since the previous cleaner pass, allowing stationary frames to skip culling completely.
+	@param State CleanerState -- Active cleaner state.
+	@param CamCFrame CFrame -- Current active camera CFrame.
+	@param CamFOV number -- Current active camera FOV.
+	@param PlayerPos Vector3 -- Current simulated player position.
+	@return boolean -- True if a culling/sync pass is required this tick.
 ]=]
-function CleanerHelper.GatherVisibleEntities(State: CleanerState, ObjectEntityCount: number): (number, boolean)
+function CleanerHelper.NeedsSync(
+	State: CleanerState,
+	CamCFrame: CFrame,
+	CamFOV: number,
+	PlayerPos: Vector3
+): boolean
 	const ObjectStorage = State.ObjectStorage
-	const ObjectActiveFlags = ObjectStorage.ECSData.GetActiveFlags() :: buffer
-	const ObjectPositions = ObjectStorage.PositionData.GetData() :: buffer
-	const ObjectSizes = ObjectStorage.SizeData.GetData() :: buffer
-	const ObjectProperties = ObjectStorage.PropertiesData.GetData() :: buffer
-	const SortedObjectIds = State.SortedObjectIds :: buffer
-	const SortedSizes = State.SortedSizes :: buffer
+	const Counts = ObjectStorage.ECSData.GetCounts()
+	const EntityCount = math.clamp(Counts.EntityECSCount :: number, 0, State.MaxEntities) :: number
+	const ActiveCount = Counts.ActiveEntityCount :: number
 
-	local VisibleCount = 0 :: number
-	local PreviousSizeScore = math.huge :: number
-	local NeedsSort = false :: boolean
-
-	for ObjectId = 1, ObjectEntityCount do
-		if buffer.readu8(ObjectActiveFlags, ObjectId - 1) == 0 then
-			continue
-		end
-
-		const PropReg = buffer.readu32(ObjectProperties, (ObjectId - 1) * PROPERTIES_STRIDE) :: number
-		if not ECSMain.IsEntityVisible(PropReg) or ViewCulling.IsEntityCulled(ObjectId, ObjectPositions, ObjectSizes) then
-			continue
-		end
-
-		const ComponentOffset = (ObjectId - 1) * COMPONENT_STRIDE :: number
-		const SizeScore = CleanerSortHelper.ComputeEntitySizeScore(ObjectSizes, ComponentOffset) :: number
-		if SizeScore > PreviousSizeScore then
-			NeedsSort = true
-		end
-		PreviousSizeScore = SizeScore
-
-		const WriteOffset = VisibleCount * 4 :: number
-		buffer.writeu32(SortedObjectIds, WriteOffset, ObjectId)
-		buffer.writef32(SortedSizes, WriteOffset, SizeScore)
-		VisibleCount += 1
+	if
+		State.LastCamCFrame ~= CamCFrame
+		or State.LastCamFOV ~= CamFOV
+		or (State.LastPlayerPos - PlayerPos).Magnitude > 1e-3
+		or State.LastEntityCount ~= EntityCount
+		or State.LastActiveCount ~= ActiveCount
+	then
+		State.LastCamCFrame = CamCFrame
+		State.LastCamFOV = CamFOV
+		State.LastPlayerPos = PlayerPos
+		State.LastEntityCount = EntityCount
+		State.LastActiveCount = ActiveCount
+		return true
 	end
 
-	return VisibleCount, NeedsSort
-end
+	const DirtyFlags = ObjectStorage.ECSData.GetDirtyFlags() :: buffer
+	const WordLimit = (EntityCount // 4) * 4 :: number
+	for WordOff = 0, WordLimit - 4, 4 do
+		if buffer.readu32(DirtyFlags, WordOff) ~= 0 then
+			return true
+		end
+	end
+	for Idx = WordLimit, EntityCount - 1 do
+		if buffer.readu8(DirtyFlags, Idx) ~= 0 then
+			return true
+		end
+	end
 
---[=[
-	Copies all 5 ECS component slices for `ObjectId` into `RenderSlot` and clears its source dirty flag.
-	@param State CleanerState -- Active cleaner state.
-	@param ObjectId number -- 1-based source entity slot in ObjectStorage.
-	@param RenderSlot number -- 1-based destination entity slot in RenderStorage.
-]=]
-function CleanerHelper.CopyEntityToRenderSlot(State: CleanerState, ObjectId: number, RenderSlot: number)
-	const ObjectStorage = State.ObjectStorage
-	const RenderStorage = State.RenderStorage
-
-	const SourceIndex = ObjectId - 1 :: number
-	const TargetIndex = RenderSlot - 1 :: number
-	const SourceCompOffset = SourceIndex * COMPONENT_STRIDE :: number
-	const TargetCompOffset = TargetIndex * COMPONENT_STRIDE :: number
-
-	buffer.copy(
-		RenderStorage.PositionData.GetData(),
-		TargetCompOffset,
-		ObjectStorage.PositionData.GetData(),
-		SourceCompOffset,
-		COMPONENT_STRIDE
-	)
-	buffer.copy(
-		RenderStorage.VisualData.GetData(),
-		TargetIndex * VISUAL_STRIDE,
-		ObjectStorage.VisualData.GetData(),
-		SourceIndex * VISUAL_STRIDE,
-		VISUAL_STRIDE
-	)
-	buffer.copy(
-		RenderStorage.SizeData.GetData(),
-		TargetCompOffset,
-		ObjectStorage.SizeData.GetData(),
-		SourceCompOffset,
-		COMPONENT_STRIDE
-	)
-	buffer.copy(
-		RenderStorage.DirectionsData.GetData(),
-		TargetIndex * DIRECTION_STRIDE,
-		ObjectStorage.DirectionsData.GetData(),
-		SourceIndex * DIRECTION_STRIDE,
-		DIRECTION_STRIDE
-	)
-	buffer.copy(
-		RenderStorage.PropertiesData.GetData(),
-		TargetIndex * PROPERTIES_STRIDE,
-		ObjectStorage.PropertiesData.GetData(),
-		SourceIndex * PROPERTIES_STRIDE,
-		PROPERTIES_STRIDE
-	)
-	ObjectStorage.ECSData.ClearDirty(ObjectId)
+	return false
 end
 
 --[=[
@@ -220,8 +188,9 @@ function CleanerHelper.ReleaseTrailingSlots(State: CleanerState, StartSlot: numb
 end
 
 --[=[
-	Culls ObjectStorage entities and synchronizes RenderStorage densely ordered from biggest part (slot 1)
-	down to smallest part (slot VisibleCount), skipping buffer copies for unchanged slot assignments.
+	Queries the visible-entity BVH with active frustum planes, runs candidate dominant-occluder prepass
+	and register-cached front-to-back filtering, sorts ascending by depth, and copies changed/dirty slots
+	using hoisted ECS buffer pointers.
 	@param State CleanerState -- Active cleaner state.
 	@return number -- Total visible entities written into RenderStorage (`1..VisibleCount`).
 ]=]
@@ -230,25 +199,33 @@ function CleanerHelper.SyncRenderStorage(State: CleanerState): number
 	const RenderStorage = State.RenderStorage
 	const ObjectEntityCount = math.clamp(ObjectStorage.ECSData.GetCounts().EntityECSCount, 0, State.MaxEntities) :: number
 
+	const ObjActiveFlags = ObjectStorage.ECSData.GetActiveFlags() :: buffer
+	const ObjDirtyFlags = ObjectStorage.ECSData.GetDirtyFlags() :: buffer
+	const ObjPositions = ObjectStorage.PositionData.GetData() :: buffer
+	const ObjSizes = ObjectStorage.SizeData.GetData() :: buffer
+	const ObjDirections = ObjectStorage.DirectionsData.GetData() :: buffer
+	const ObjVisuals = ObjectStorage.VisualData.GetData() :: buffer
+	const ObjProperties = ObjectStorage.PropertiesData.GetData() :: buffer
+
 	local VisibleCount = 0 :: number
 	local NeedsSort = false :: boolean
 	if ObjectEntityCount > 0 then
-		ViewCulling.PrepassDominantOccluder(
-			ObjectEntityCount,
-			ObjectStorage.PositionData.GetData(),
-			ObjectStorage.SizeData.GetData(),
-			ObjectStorage.PropertiesData.GetData()
-		)
-		VisibleCount, NeedsSort = CleanerHelper.GatherVisibleEntities(State, ObjectEntityCount)
+		RenderBVHHelper.EnsureFresh(State.RenderBVH, ObjectStorage)
+		const CandidateCount = RenderBVHHelper.QueryFrustumCandidates(State.RenderBVH, State.CandidateIds) :: number
+		if CandidateCount > 0 then
+			ViewCulling.PrepassDominantOccluderCandidates(
+				State.CandidateIds, CandidateCount, ObjPositions, ObjSizes, ObjProperties
+			)
+			VisibleCount, NeedsSort = ViewCulling.FilterCandidatesFrontToBack(
+				State.CandidateIds, CandidateCount, ObjActiveFlags,
+				ObjPositions, ObjSizes, ObjProperties,
+				State.SortedObjectIds, State.SortedDepths
+			)
+		end
 	end
 
 	if NeedsSort then
-		CleanerSortHelper.SortDescendingBySize(
-			State.SortedSizes,
-			State.SortedObjectIds,
-			VisibleCount,
-			State.SortStack
-		)
+		CleanerSortHelper.SortAscendingByDepth(State.SortedDepths, State.SortedObjectIds, VisibleCount, State.SortStack)
 	end
 
 	const PrevVisible = State.PreviousVisibleCount :: number
@@ -256,10 +233,14 @@ function CleanerHelper.SyncRenderStorage(State: CleanerState): number
 		RenderStorage.ECSData.SetEntityCount(VisibleCount)
 	end
 
+	const RenPositions = RenderStorage.PositionData.GetData() :: buffer
+	const RenSizes = RenderStorage.SizeData.GetData() :: buffer
+	const RenDirections = RenderStorage.DirectionsData.GetData() :: buffer
+	const RenVisuals = RenderStorage.VisualData.GetData() :: buffer
+	const RenProperties = RenderStorage.PropertiesData.GetData() :: buffer
 	const SortedObjectIds = State.SortedObjectIds :: buffer
 	const RenderSlotByObjectId = State.RenderSlotByObjectId :: buffer
 	const ObjectIdByRenderSlot = State.ObjectIdByRenderSlot :: buffer
-	const ObjectDirtyFlags = ObjectStorage.ECSData.GetDirtyFlags() :: buffer
 
 	for RenderSlot = 1, VisibleCount do
 		const ObjId = buffer.readu32(SortedObjectIds, (RenderSlot - 1) * 4) :: number
@@ -275,13 +256,25 @@ function CleanerHelper.SyncRenderStorage(State: CleanerState): number
 			buffer.writeu32(RenderSlotByObjectId, ObjId * 4, RenderSlot)
 		end
 
-		if SlotChanged or buffer.readu8(ObjectDirtyFlags, ObjId - 1) ~= 0 then
-			CleanerHelper.CopyEntityToRenderSlot(State, ObjId, RenderSlot)
+		if SlotChanged or buffer.readu8(ObjDirtyFlags, ObjId - 1) ~= 0 then
+			const SrcIdx = ObjId - 1 :: number
+			const DstIdx = RenderSlot - 1 :: number
+			const SrcComp = SrcIdx * COMPONENT_STRIDE :: number
+			const DstComp = DstIdx * COMPONENT_STRIDE :: number
+			buffer.copy(RenPositions, DstComp, ObjPositions, SrcComp, COMPONENT_STRIDE)
+			buffer.copy(RenSizes, DstComp, ObjSizes, SrcComp, COMPONENT_STRIDE)
+			buffer.copy(RenDirections, DstIdx * DIRECTION_STRIDE, ObjDirections, SrcIdx * DIRECTION_STRIDE, DIRECTION_STRIDE)
+			buffer.copy(RenVisuals, DstIdx * VISUAL_STRIDE, ObjVisuals, SrcIdx * VISUAL_STRIDE, VISUAL_STRIDE)
+			buffer.copy(RenProperties, DstIdx * PROPERTIES_STRIDE, ObjProperties, SrcIdx * PROPERTIES_STRIDE, PROPERTIES_STRIDE)
+			buffer.writeu8(ObjDirtyFlags, SrcIdx, 0)
 		end
 	end
 
 	if PrevVisible > VisibleCount then
 		CleanerHelper.ReleaseTrailingSlots(State, VisibleCount + 1, PrevVisible)
+	end
+	if ObjectEntityCount > 0 then
+		buffer.fill(ObjDirtyFlags, 0, 0, ObjectEntityCount)
 	end
 
 	State.PreviousVisibleCount = VisibleCount

@@ -13,6 +13,7 @@ const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
 const PlayerServiceHelper = require(script.PlayerServiceHelper)
 const PlayerRecordMethods = require(script.PlayerRecordMethods)
+const PlayerRecordAccessors = require(script.PlayerRecordAccessors)
 
 -- Configs --
 const DEFAULT_SPAWN = SystemsConfigs.PlayerDefaultSpawnPosition :: Vector3
@@ -72,10 +73,10 @@ local PlayerService = {
 	BindToStorage = PlayerRecordMethods.BindToStorage,
 	BindClientDynamicId = PlayerRecordMethods.BindClientDynamicId,
 	UpdateTransform = PlayerRecordMethods.UpdateTransform,
-	SetLocalVisibilityAndCollision = PlayerRecordMethods.SetLocalVisibilityAndCollision,
-	SetColor = PlayerRecordMethods.SetColor,
-	GetPosition = PlayerRecordMethods.GetPosition,
-	GetLookVector = PlayerRecordMethods.GetLookVector,
+	SetLocalVisibilityAndCollision = PlayerRecordAccessors.SetLocalVisibilityAndCollision,
+	SetColor = PlayerRecordAccessors.SetColor,
+	GetPosition = PlayerRecordAccessors.GetPosition,
+	GetLookVector = PlayerRecordAccessors.GetLookVector,
 	UnbindFromStorage = PlayerRecordMethods.UnbindFromStorage,
 }
 PlayerService.__index = PlayerService

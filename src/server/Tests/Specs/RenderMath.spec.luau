@@ -99,7 +99,30 @@ return function()
 			BufferHelper.WriteVec3(DirBuf, 12, vector.create(0, 1, 0))
 			BufferHelper.WriteVec3(DirBuf, 24, vector.create(1, 0, 0))
 
-			const OnScreen = RenderMath.TransformShapeCameraVertices(
+			const OnScreen: boolean, _LocalCam: vector, _Half: vector, _Sun: vector, AllInside: boolean =
+				RenderMath.TransformShapeCameraVertices(
+					PosBuf,
+					DirBuf,
+					SizeBuf,
+					0,
+					0,
+					CubeShape.LocalVertices,
+					VertexCount,
+					CamVertsBuf,
+					vector.create(0, 0, 0),
+					vector.create(1, 0, 0),
+					vector.create(0, 1, 0),
+					vector.create(0, 0, -1),
+					vector.create(0, 1, 0),
+					1.0,
+					1.0
+				)
+			expect(OnScreen).to.equal(true)
+			expect(AllInside).to.equal(true)
+
+			-- Near-straddling cube should be visible but NOT AllInside
+			BufferHelper.WriteVec3(PosBuf, 0, vector.create(0, 0, -0.8))
+			const StraddleVis: boolean, _, _, _, StraddleAllInside: boolean = RenderMath.TransformShapeCameraVertices(
 				PosBuf,
 				DirBuf,
 				SizeBuf,
@@ -116,7 +139,8 @@ return function()
 				1.0,
 				1.0
 			)
-			expect(OnScreen).to.equal(true)
+			expect(StraddleVis).to.equal(true)
+			expect(StraddleAllInside).to.equal(false)
 
 			BufferHelper.WriteVec3(PosBuf, 0, vector.create(100, 0, -20))
 			const OffScreenRight = RenderMath.TransformShapeCameraVertices(
@@ -142,12 +166,12 @@ return function()
 
 	describe("3. Sutherland-Hodgman Polygon Clipping", function()
 		it("should clip a triangle straddling a plane and produce a quad", function()
-			const InputBuf = buffer.create(3 * 20)
-			const OutputBuf = buffer.create(6 * 20)
+			const InputBuf = buffer.create(3 * 24)
+			const OutputBuf = buffer.create(6 * 24)
 
 			BufferHelper.WriteVec3(InputBuf, 0, vector.create(0, 0, 2))
-			BufferHelper.WriteVec3(InputBuf, 20, vector.create(2, 0, -2))
-			BufferHelper.WriteVec3(InputBuf, 40, vector.create(-2, 0, -2))
+			BufferHelper.WriteVec3(InputBuf, 24, vector.create(2, 0, -2))
+			BufferHelper.WriteVec3(InputBuf, 48, vector.create(-2, 0, -2))
 
 			const ClippedCount = MathModule.ClipPolygonUV(InputBuf, 3, OutputBuf, vector.create(0, 0, 1), 0)
 			expect(ClippedCount).to.equal(3)

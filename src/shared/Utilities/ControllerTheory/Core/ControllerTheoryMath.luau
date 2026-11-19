@@ -34,12 +34,11 @@ const BASE_HOLD_FRAMES = SystemsConfigs.ControllerBaseCeilingHoldFrames :: numbe
 const MAX_HOLD_FRAMES = SystemsConfigs.ControllerMaxCeilingHoldFrames :: number
 const CEILING_PROBE_STEP = SystemsConfigs.ControllerCeilingProbeStep :: number
 const CEILING_UNLOCK_RATIO = SystemsConfigs.ControllerCeilingUnlockRatio :: number
-const MIN_RES_SCALE = SystemsConfigs.ControllerMinResolutionScale :: number
-const MIN_AREA_FRACTION = MIN_RES_SCALE * MIN_RES_SCALE :: number
-const MIN_PHYSICS_DUTY = SystemsConfigs.ControllerMinPhysicsDutyPercent :: number
+
+export type LoadFractionFn = (RawScore: number) -> number
+export type ScoreFromLoadFn = (LoadFraction: number) -> number
 
 export type ChannelState = {
-	IsPhysics: boolean,
 	RawScore: number,
 	Score: number,
 	PreviousError: number,
@@ -48,6 +47,8 @@ export type ChannelState = {
 	StableFrames: number,
 	HoldTargetFrames: number,
 	ProbingCeiling: boolean,
+	GetLoadFraction: LoadFractionFn?,
+	ScoreFromLoadFraction: ScoreFromLoadFn?,
 }
 
 -- Tables --
@@ -55,37 +56,37 @@ local ControllerTheoryMath = {}
 
 -- Functions --
 -- ============================================================================
--- 1. PLANT LOAD MODEL, 2MS SPIKE RESERVE BUDGETS & ANTI-HUNTING CHANNEL STEP
+-- 1. SCORE CLAMPING, 2MS SPIKE RESERVE BUDGETS & ANTI-HUNTING CHANNEL STEP
 -- ============================================================================
 
 --[=[
-	Computes the active work fraction in (0, 1] corresponding to a subsystem's 1..100 score.
-	@param RawScore number -- Continuous subsystem score in [1, 100].
-	@param IsPhysics boolean -- True for physics duty fraction; false for renderer pixel area fraction.
-	@return number -- Active plant load fraction in (0, 1].
+	Clamps and rounds an arbitrary numeric resource value into an integer score in [MIN_SCORE, MAX_SCORE].
+	@param Score number -- Raw resource score.
+	@return number -- Clamped integer score in [1, 100].
 ]=]
-function ControllerTheoryMath.GetResourceLoadFraction(RawScore: number, IsPhysics: boolean): number
-	const Clamped = math.clamp(RawScore, MIN_SCORE, MAX_SCORE) :: number
-	if IsPhysics then
-		return math.clamp(Clamped, MIN_PHYSICS_DUTY, 100) * 0.01
+function ControllerTheoryMath.ClampScore(Score: number): number
+	if Score ~= Score then
+		return MAX_SCORE
 	end
-	const Unit = (Clamped - MIN_SCORE) / (MAX_SCORE - MIN_SCORE) :: number
-	return MIN_AREA_FRACTION + (1 - MIN_AREA_FRACTION) * Unit
+	return math.clamp(math.floor(Score + 0.5), MIN_SCORE, MAX_SCORE)
 end
 
 --[=[
-	Inverts an active work fraction back into the corresponding continuous 1..100 resource score.
+	Default linear load fraction fallback in [0.01, 1.0] when a channel has not bound a Rep curve.
+	@param RawScore number -- Continuous subsystem score in [1, 100].
+	@return number -- Normalized load fraction in [0.01, 1.0].
+]=]
+function ControllerTheoryMath.DefaultLoadFraction(RawScore: number): number
+	return math.clamp(RawScore, MIN_SCORE, MAX_SCORE) / MAX_SCORE
+end
+
+--[=[
+	Default linear score inversion fallback when a channel has not bound a Rep curve.
 	@param LoadFraction number -- Target plant load fraction.
-	@param IsPhysics boolean -- True for physics duty fraction; false for renderer pixel area fraction.
 	@return number -- Continuous resource score in [1, 100].
 ]=]
-function ControllerTheoryMath.ScoreFromLoadFraction(LoadFraction: number, IsPhysics: boolean): number
-	if IsPhysics then
-		return math.clamp(LoadFraction * 100, MIN_SCORE, MAX_SCORE)
-	end
-	const ClampedArea = math.clamp(LoadFraction, MIN_AREA_FRACTION, 1.0) :: number
-	const Unit = (ClampedArea - MIN_AREA_FRACTION) / (1 - MIN_AREA_FRACTION) :: number
-	return MIN_SCORE + (MAX_SCORE - MIN_SCORE) * Unit
+function ControllerTheoryMath.DefaultScoreFromLoad(LoadFraction: number): number
+	return math.clamp(LoadFraction * MAX_SCORE, MIN_SCORE, MAX_SCORE)
 end
 
 --[=[
@@ -159,7 +160,9 @@ function ControllerTheoryMath.StepChannel(
 )
 	const SafeTarget = math.max(1e-5, TargetFrameTime) :: number
 	const SafeMeasured = math.max(0, MeasuredTime) :: number
-	const LoadFraction = ControllerTheoryMath.GetResourceLoadFraction(Channel.RawScore, Channel.IsPhysics) :: number
+	const GetLoadFn = Channel.GetLoadFraction or ControllerTheoryMath.DefaultLoadFraction
+	const ScoreFromLoadFn = Channel.ScoreFromLoadFraction or ControllerTheoryMath.DefaultScoreFromLoad
+	const LoadFraction = GetLoadFn(Channel.RawScore) :: number
 	const UnitCost = SafeMeasured / math.max(0.05, LoadFraction) :: number
 	const NormalizedError = (AllocatedBudget - SafeMeasured) / SafeTarget :: number
 
@@ -174,8 +177,10 @@ function ControllerTheoryMath.StepChannel(
 		Channel.ProbingCeiling = false
 	end
 
-	if NormalizedError < -ERROR_DEADBAND then
-		const ErrorDrop = math.min(0, NormalizedError - Channel.PreviousError) :: number
+	if NormalizedError < 0 then
+		const ErrorDrop = if NormalizedError < -ERROR_DEADBAND
+			then math.min(0, NormalizedError - Channel.PreviousError)
+			else 0 :: number
 		const RawDown = DOWN_GAIN * NormalizedError + DERIVATIVE_GAIN * ErrorDrop :: number
 		const Delta = math.clamp(RawDown, -MAX_DROP_PER_FRAME, -0.005) :: number
 		const NextRaw = math.clamp(Channel.RawScore + Delta, MIN_SCORE, MAX_SCORE) :: number
@@ -194,7 +199,7 @@ function ControllerTheoryMath.StepChannel(
 			then (AllocatedBudget * EQUILIBRIUM_BUDGET_RATIO) / UnitCost
 			else 1.0 :: number
 		const EquilibriumScore = if UnitCost > 1e-6 and AllocatedBudget > 0
-			then ControllerTheoryMath.ScoreFromLoadFraction(TargetLoadFraction, Channel.IsPhysics)
+			then ScoreFromLoadFn(TargetLoadFraction)
 			else MAX_SCORE :: number
 
 		if Channel.CeilingScore < MAX_SCORE and Channel.StableFrames >= Channel.HoldTargetFrames then

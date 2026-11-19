@@ -7,7 +7,7 @@ description: Architecture invariants, 250-line modular decomposition, subagent d
 
 ## 1. Agent Roles & Delegation Protocol
 
-### If You Are the Primary Agent (e.g., Carbon / Argon / Pro)
+### If You Are the Primary Agent (e.g., Carbon / Argon / Neon)
 - **Your Responsibility:** Architecture, modular decomposition (`<= 250` non-comment lines per file), flat deterministic logic, TDD specs, zero-allocation performance, and strict type/syntax safety (Sections **1–4**).
 - **Post-Completion Cleaner Subagent Delegation:**
   - Spawn the cleaner/refactorer subagent (`Model: "hydrogen 4 low"`, write tools enabled) **only once AFTER you have completely finished all production and test file edits**—never while you are still editing files.
@@ -35,7 +35,7 @@ description: Architecture invariants, 250-line modular decomposition, subagent d
 - When a module approaches 250 non-comment lines, split responsibilities across smaller, single-purpose `.luau` files using:
   - **Facade Pattern:** Keep a thin public entry module (`init.luau` or `<System>Controller.luau`) that exposes a clean API and delegates implementation steps to focused internal modules.
   - **Gateway Pattern:** Isolate external Roblox boundaries (`RemoteEvent` / `UnreliableRemoteEvent` wiring, `Actor:SendMessage` / `BindToMessage` transport, `AssetService` / `Players` I/O) in a dedicated gateway module separate from pure domain/math logic.
-  - **Focused Sub-Modules:** Split distinct stages into dedicated sibling files (`*Helper.luau`, `*Math.luau`, `*Codec.luau`, `*Partition.luau`). Large TestEZ suites should likewise split by sub-feature (`<System><Topic>.spec.luau`), as test runners auto-discover all `*.spec.luau` files.
+  - **Focused Sub-Modules:** Split distinct stages into dedicated sibling files, use names that are accurate to what it will do, do not just name them "Helper.luau" or "codec.luau". Large TestEZ suites should likewise split by sub-feature (`<System><Topic>.spec.luau`), as test runners auto-discover all `*.spec.luau` files.
 
 ### Flat & Deterministic Code Architecture
 - Author all execution paths to be **flat, linear, and deterministic**:

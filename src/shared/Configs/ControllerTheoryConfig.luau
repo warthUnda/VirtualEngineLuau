@@ -13,6 +13,9 @@ local ControllerTheoryConfig = {}
 
 -- Frame Target & Runtime Resource Weights --
 
+ControllerTheoryConfig.ControllerEnabled = false :: boolean
+-- Enables or disables closed-loop ControllerTheory resource throttling; when false, scores stay locked at ControllerMaxScore.
+
 ControllerTheoryConfig.ControllerTargetFPS = 60 :: number
 -- Target frames per second maintained by the closed-loop resource controller.
 

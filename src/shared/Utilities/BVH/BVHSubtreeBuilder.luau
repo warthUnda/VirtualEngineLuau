@@ -12,7 +12,7 @@ const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForC
 const MAX_ENTITIES = SystemsConfigs.ECSMaxEntities :: number
 const STACK_CAPACITY = SystemsConfigs.BVHStackCapacity :: number
 const NODE_STRIDE = 32 :: number
-const ITEM_BOUNDS_STRIDE = 36 :: number
+const ITEM_BOUNDS_STRIDE = 24 :: number
 const MAX_NODE_BYTES = MAX_ENTITIES * 2 * NODE_STRIDE :: number
 const SAFE_BALANCED_DEPTH = math.max(16, STACK_CAPACITY - 16) :: number
 
@@ -55,9 +55,9 @@ function BVHSubtreeBuilder.BuildSubtree(
 		const ItemMaxX = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 12) :: number
 		const ItemMaxY = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 16) :: number
 		const ItemMaxZ = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 20) :: number
-		const ItemCenterX = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 24) :: number
-		const ItemCenterY = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 28) :: number
-		const ItemCenterZ = buffer.readf32(ItemBoundsBuffer, BoundsOffset + 32) :: number
+		const ItemCenterX = (ItemMinX + ItemMaxX) * 0.5 :: number
+		const ItemCenterY = (ItemMinY + ItemMaxY) * 0.5 :: number
+		const ItemCenterZ = (ItemMinZ + ItemMaxZ) * 0.5 :: number
 
 		MinX = math.min(MinX, ItemMinX)
 		MinY = math.min(MinY, ItemMinY)
@@ -90,17 +90,17 @@ function BVHSubtreeBuilder.BuildSubtree(
 	const ExtentY = CenterMaxY - CenterMinY :: number
 	const ExtentZ = CenterMaxZ - CenterMinZ :: number
 
-	local AxisOffset = 24 :: number
-	local SplitPosition = (CenterMinX + CenterMaxX) * 0.5 :: number
+	local AxisOffset = 0 :: number
+	local SplitDouble = CenterMinX + CenterMaxX :: number
 	local MaxExtent = ExtentX :: number
 	if ExtentY > MaxExtent then
-		AxisOffset = 28
-		SplitPosition = (CenterMinY + CenterMaxY) * 0.5
+		AxisOffset = 4
+		SplitDouble = CenterMinY + CenterMaxY
 		MaxExtent = ExtentY
 	end
 	if ExtentZ > MaxExtent then
-		AxisOffset = 32
-		SplitPosition = (CenterMinZ + CenterMaxZ) * 0.5
+		AxisOffset = 8
+		SplitDouble = CenterMinZ + CenterMaxZ
 		MaxExtent = ExtentZ
 	end
 
@@ -110,7 +110,8 @@ function BVHSubtreeBuilder.BuildSubtree(
 		local RightIndex = EndIdx :: number
 		while LeftIndex <= RightIndex do
 			const LeftEntity = buffer.readu32(ItemIndicesBuffer, (LeftIndex - 1) * 4) :: number
-			if buffer.readf32(ItemBoundsBuffer, (LeftEntity - 1) * ITEM_BOUNDS_STRIDE + AxisOffset) < SplitPosition then
+			const LeftBounds = (LeftEntity - 1) * ITEM_BOUNDS_STRIDE + AxisOffset :: number
+			if buffer.readf32(ItemBoundsBuffer, LeftBounds) + buffer.readf32(ItemBoundsBuffer, LeftBounds + 12) < SplitDouble then
 				LeftIndex += 1
 			else
 				const RightEntity = buffer.readu32(ItemIndicesBuffer, (RightIndex - 1) * 4) :: number

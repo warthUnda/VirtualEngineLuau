@@ -4,9 +4,8 @@
 
 --[=[
 	@class RenderControllerHelper
-	Helper module for RenderController.
-	Provides direction reading, packed shaded color calculation, polygon clipping,
-	and triangle face staging with scanline row work accumulation.
+	Helper module for RenderService/RenderController providing camera/guardband-plane caching,
+	color shading, and dual-stream (32B untextured / 64B textured) polygon clipping & face staging.
 ]=]
 
 -- Services --
@@ -14,16 +13,15 @@ const ReplicatedStorage = game:GetService("ReplicatedStorage") :: ReplicatedStor
 
 -- Libraries --
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
-const BufferHelper = require(ReplicatedStorage.Shared.Utilities.Render.Core.BufferHelper)
 const RenderMath = require(ReplicatedStorage.Shared.Utilities.Render.Core.RenderMath)
-const WorkerPartitionHelper = require(script.Parent.WorkerPartitionHelper)
 
 -- Configs --
 const WIDTH = SystemsConfigs.RenderWidth :: number
 const HEIGHT = SystemsConfigs.RenderHeight :: number
 const HALF_WIDTH = WIDTH * 0.5 :: number
 const HALF_HEIGHT = HEIGHT * 0.5 :: number
-const RENDER_BUFFER_LAYOUT_SIZE = BufferHelper.RenderBufferLayoutSize :: number
+const UNTEXTURED_STRIDE = (SystemsConfigs.UntexturedBufferLayoutSize or 32) :: number
+const TEXTURED_STRIDE = (SystemsConfigs.RenderBufferLayoutSize or 64) :: number
 const MIN_TRIANGLE_AREA = SystemsConfigs.MinTriangleArea :: number
 
 -- Tables --
@@ -31,14 +29,11 @@ local RenderControllerHelper = {}
 
 -- Functions --
 -- ============================================================================
--- 1. DIRECTION READING, COLOR SHADING & FACE STAGING
+-- 1. DIRECTION READING, COLOR SHADING & DUAL-STREAM FACE STAGING
 -- ============================================================================
 
 --[=[
 	Reads a 3-component float direction vector from the directions buffer into a SIMD vector.
-	@param DirectionsBuffer buffer -- Basis directions buffer.
-	@param Offset number -- Byte offset to read from.
-	@return vector -- Direction SIMD vector.
 ]=]
 function RenderControllerHelper.ReadDirectionVec(DirectionsBuffer: buffer, Offset: number): vector
 	return vector.create(
@@ -50,11 +45,6 @@ end
 
 --[=[
 	Packs shaded RGB channels and illumination into a 32-bit integer color.
-	@param RedChannel number -- Base red color channel (0-255).
-	@param GreenChannel number -- Base green color channel (0-255).
-	@param BlueChannel number -- Base blue color channel (0-255).
-	@param Illumination number -- Illumination scalar factor.
-	@return number -- Packed 32-bit RGBA color.
 ]=]
 function RenderControllerHelper.PackShadedColor(
 	RedChannel: number,
@@ -71,39 +61,23 @@ function RenderControllerHelper.PackShadedColor(
 end
 
 --[=[
-	Clips a face polygon, tessellates it into screen-space triangles, stages each 56-byte triangle once,
-	and records O(1) scanline row work into RowWorkDiff for dynamic worker band partitioning.
-	@param ScreenVertices buffer -- Camera-space vertex buffer.
-	@param ProjectedVertices buffer -- Scratch buffer for projected 2D coordinates.
-	@param ClipBufferA buffer -- First polygon clipping scratch buffer.
-	@param ClipBufferB buffer -- Second polygon clipping scratch buffer.
-	@param StagedTriangles buffer -- Contiguous staged 56-byte triangle command buffer.
-	@param StagedBounds buffer -- Contiguous 4-byte (u16 MinY, u16 MaxY) bounds buffer.
-	@param StagedTriangleCount number -- Current staged triangle count.
-	@param MaxStagedTriangles number -- Maximum triangle capacity in StagedTriangles.
-	@param RowWorkDiff buffer -- Scanline difference buffer of size (Height + 1) * 4.
-	@param V0ByteOffset number -- Byte offset for vertex 0.
-	@param V1ByteOffset number -- Byte offset for vertex 1.
-	@param V2ByteOffset number -- Byte offset for vertex 2.
-	@param V3ByteOffset number -- Byte offset for vertex 3 (-1 for triangle face).
-	@param ScaleU number -- Horizontal UV tile scale for the face.
-	@param ScaleV number -- Vertical UV tile scale for the face.
-	@param PackedColor number -- Shaded 32-bit RGBA color.
-	@param TextureId number -- TextureTable numeric ID.
-	@param FocalLength number -- Camera focal length.
-	@param GuardBandX number -- Horizontal guardband slope factor.
-	@param GuardBandY number -- Vertical guardband slope factor.
-	@return number -- Updated staged triangle count.
+	Clips a face polygon using outcode-masked frustum clipping and stages resulting triangles directly
+	into either the 32-byte untextured stream or the 64-byte textured stream with inline RowWorkDiff updates.
+	@return (number, number) -- Updated (UntexCount, TexCount).
 ]=]
-function RenderControllerHelper.SubmitFace(
+function RenderControllerHelper.SubmitFaceDual(
 	ScreenVertices: buffer,
 	ProjectedVertices: buffer,
 	ClipBufferA: buffer,
 	ClipBufferB: buffer,
-	StagedTriangles: buffer,
-	StagedBounds: buffer,
-	StagedTriangleCount: number,
-	MaxStagedTriangles: number,
+	UntexTris: buffer,
+	UntexBounds: buffer,
+	UntexCount: number,
+	MaxUntex: number,
+	TexTris: buffer,
+	TexBounds: buffer,
+	TexCount: number,
+	MaxTex: number,
 	RowWorkDiff: buffer,
 	V0ByteOffset: number,
 	V1ByteOffset: number,
@@ -117,10 +91,17 @@ function RenderControllerHelper.SubmitFace(
 	GuardBandX: number,
 	GuardBandY: number,
 	ViewportWidth: number?,
-	ViewportHeight: number?
-): number
-	if StagedTriangleCount >= MaxStagedTriangles then
-		return StagedTriangleCount
+	ViewportHeight: number?,
+	PlaneLeft: vector?,
+	PlaneRight: vector?,
+	PlaneBottom: vector?,
+	PlaneTop: vector?
+): (number, number)
+	if TextureId == 0 and UntexCount >= MaxUntex then
+		return UntexCount, TexCount
+	end
+	if TextureId > 0 and TexCount >= MaxTex then
+		return UntexCount, TexCount
 	end
 
 	const ActiveWidth = (ViewportWidth or WIDTH) :: number
@@ -130,127 +111,121 @@ function RenderControllerHelper.SubmitFace(
 
 	const ClippedVertexCount = if V3ByteOffset >= 0
 		then RenderMath.ClipAndProjectQuad(
-			ScreenVertices,
-			V0ByteOffset,
-			V1ByteOffset,
-			V2ByteOffset,
-			V3ByteOffset,
-			ScaleU,
-			ScaleV,
-			ProjectedVertices,
-			ClipBufferA,
-			ClipBufferB,
-			FocalLength,
-			GuardBandX,
-			GuardBandY,
-			ActiveHalfWidth,
-			ActiveHalfHeight
+			ScreenVertices, V0ByteOffset, V1ByteOffset, V2ByteOffset, V3ByteOffset,
+			ScaleU, ScaleV, ProjectedVertices, ClipBufferA, ClipBufferB,
+			FocalLength, GuardBandX, GuardBandY, ActiveHalfWidth, ActiveHalfHeight,
+			PlaneLeft, PlaneRight, PlaneBottom, PlaneTop
 		)
 		else RenderMath.ClipAndProjectTriangleUV(
-			ScreenVertices,
-			V0ByteOffset,
-			V1ByteOffset,
-			V2ByteOffset,
-			ScaleU,
-			ScaleV,
-			ProjectedVertices,
-			ClipBufferA,
-			ClipBufferB,
-			FocalLength,
-			GuardBandX,
-			GuardBandY,
-			ActiveHalfWidth,
-			ActiveHalfHeight
+			ScreenVertices, V0ByteOffset, V1ByteOffset, V2ByteOffset,
+			ScaleU, ScaleV, ProjectedVertices, ClipBufferA, ClipBufferB,
+			FocalLength, GuardBandX, GuardBandY, ActiveHalfWidth, ActiveHalfHeight,
+			PlaneLeft, PlaneRight, PlaneBottom, PlaneTop
 		) :: number
 
 	if ClippedVertexCount < 3 then
-		return StagedTriangleCount
+		return UntexCount, TexCount
 	end
 
-	local NextTriangleCount = StagedTriangleCount :: number
-	const Vertex0X = buffer.readf32(ProjectedVertices, 0) :: number
-	const Vertex0Y = buffer.readf32(ProjectedVertices, 4) :: number
-	const InverseZ0 = buffer.readf32(ProjectedVertices, 8) :: number
-	const TexCoordU0 = buffer.readf32(ProjectedVertices, 12) :: number
-	const TexCoordV0 = buffer.readf32(ProjectedVertices, 16) :: number
+	const MaxW = ActiveWidth - 1 :: number
+	const MaxH = ActiveHeight - 1 :: number
+	const V0X = buffer.readf32(ProjectedVertices, 0) :: number
+	const V0Y = buffer.readf32(ProjectedVertices, 4) :: number
+	const IZ0 = buffer.readf32(ProjectedVertices, 8) :: number
+	local NextUntex = UntexCount :: number
+	local NextTex = TexCount :: number
 
-	for ClippedTriangleIndex = 2, ClippedVertexCount - 1 do
-		if NextTriangleCount >= MaxStagedTriangles then
+	if TextureId == 0 then
+		for TriIdx = 2, ClippedVertexCount - 1 do
+			if NextUntex >= MaxUntex then
+				break
+			end
+			const V1Off = (TriIdx - 1) * 24 :: number
+			const V2Off = V1Off + 24 :: number
+			const V1X = buffer.readf32(ProjectedVertices, V1Off) :: number
+			const V1Y = buffer.readf32(ProjectedVertices, V1Off + 4) :: number
+			const V2X = buffer.readf32(ProjectedVertices, V2Off) :: number
+			const V2Y = buffer.readf32(ProjectedVertices, V2Off + 4) :: number
+
+			const Area = (V2X - V0X) * (V1Y - V0Y) - (V2Y - V0Y) * (V1X - V0X) :: number
+			if Area <= MIN_TRIANGLE_AREA then
+				continue
+			end
+			const MinX = math.max(0, math.min(V0X, V1X, V2X)) :: number
+			const MaxX = math.min(MaxW, math.max(V0X, V1X, V2X)) :: number
+			const MinY = math.max(0, math.min(V0Y, V1Y, V2Y)) :: number
+			const MaxY = math.min(MaxH, math.max(V0Y, V1Y, V2Y)) :: number
+			if MinX > MaxX or MinY > MaxY then
+				continue
+			end
+
+			const InvA = 1 / Area :: number
+			const Off = NextUntex * UNTEXTURED_STRIDE :: number
+			buffer.writei16(UntexTris, Off, V0X); buffer.writei16(UntexTris, Off + 2, V0Y); buffer.writef32(UntexTris, Off + 4, IZ0 * InvA)
+			buffer.writei16(UntexTris, Off + 8, V1X); buffer.writei16(UntexTris, Off + 10, V1Y); buffer.writef32(UntexTris, Off + 12, buffer.readf32(ProjectedVertices, V1Off + 8) * InvA)
+			buffer.writei16(UntexTris, Off + 16, V2X); buffer.writei16(UntexTris, Off + 18, V2Y); buffer.writef32(UntexTris, Off + 20, buffer.readf32(ProjectedVertices, V2Off + 8) * InvA)
+			buffer.writeu32(UntexTris, Off + 24, PackedColor)
+
+			const BOff = NextUntex * 4 :: number
+			buffer.writeu16(UntexBounds, BOff, MinY); buffer.writeu16(UntexBounds, BOff + 2, MaxY)
+			const Cost = math.floor((MaxX - MinX + 1) * 0.5 + 28) :: number
+			const SOff, EOff = MinY * 4, (MaxY + 1) * 4
+			buffer.writei32(RowWorkDiff, SOff, buffer.readi32(RowWorkDiff, SOff) + Cost)
+			buffer.writei32(RowWorkDiff, EOff, buffer.readi32(RowWorkDiff, EOff) - Cost)
+			NextUntex += 1
+		end
+		return NextUntex, NextTex
+	end
+
+	const U0 = buffer.readf32(ProjectedVertices, 12) :: number
+	const V0 = buffer.readf32(ProjectedVertices, 16) :: number
+	for TriIdx = 2, ClippedVertexCount - 1 do
+		if NextTex >= MaxTex then
 			break
 		end
+		const V1Off = (TriIdx - 1) * 24 :: number
+		const V2Off = V1Off + 24 :: number
+		const V1X = buffer.readf32(ProjectedVertices, V1Off) :: number
+		const V1Y = buffer.readf32(ProjectedVertices, V1Off + 4) :: number
+		const V2X = buffer.readf32(ProjectedVertices, V2Off) :: number
+		const V2Y = buffer.readf32(ProjectedVertices, V2Off + 4) :: number
 
-		const V1Offset = (ClippedTriangleIndex - 1) * 20 :: number
-		const V2Offset = V1Offset + 20 :: number
-		const Vertex1X = buffer.readf32(ProjectedVertices, V1Offset) :: number
-		const Vertex1Y = buffer.readf32(ProjectedVertices, V1Offset + 4) :: number
-		const InverseZ1 = buffer.readf32(ProjectedVertices, V1Offset + 8) :: number
-		const TexCoordU1 = buffer.readf32(ProjectedVertices, V1Offset + 12) :: number
-		const TexCoordV1 = buffer.readf32(ProjectedVertices, V1Offset + 16) :: number
-		const Vertex2X = buffer.readf32(ProjectedVertices, V2Offset) :: number
-		const Vertex2Y = buffer.readf32(ProjectedVertices, V2Offset + 4) :: number
-		const InverseZ2 = buffer.readf32(ProjectedVertices, V2Offset + 8) :: number
-		const TexCoordU2 = buffer.readf32(ProjectedVertices, V2Offset + 12) :: number
-		const TexCoordV2 = buffer.readf32(ProjectedVertices, V2Offset + 16) :: number
-
-		const SignedDoubleTriangleArea = (Vertex2X - Vertex0X) * (Vertex1Y - Vertex0Y)
-			- (Vertex2Y - Vertex0Y) * (Vertex1X - Vertex0X) :: number
-		if SignedDoubleTriangleArea <= MIN_TRIANGLE_AREA then
+		const Area = (V2X - V0X) * (V1Y - V0Y) - (V2Y - V0Y) * (V1X - V0X) :: number
+		if Area <= MIN_TRIANGLE_AREA then
 			continue
 		end
-
-		const MinX = math.max(0, math.min(Vertex0X, Vertex1X, Vertex2X)) :: number
-		const MaxX = math.min(ActiveWidth - 1, math.max(Vertex0X, Vertex1X, Vertex2X)) :: number
-		const MinY = math.max(0, math.min(Vertex0Y, Vertex1Y, Vertex2Y)) :: number
-		const MaxY = math.min(ActiveHeight - 1, math.max(Vertex0Y, Vertex1Y, Vertex2Y)) :: number
+		const MinX = math.max(0, math.min(V0X, V1X, V2X)) :: number
+		const MaxX = math.min(MaxW, math.max(V0X, V1X, V2X)) :: number
+		const MinY = math.max(0, math.min(V0Y, V1Y, V2Y)) :: number
+		const MaxY = math.min(MaxH, math.max(V0Y, V1Y, V2Y)) :: number
 		if MinX > MaxX or MinY > MaxY then
 			continue
 		end
 
-		const InverseTriangleArea = 1 / SignedDoubleTriangleArea :: number
-		const ScaledInverseZ0 = InverseZ0 * InverseTriangleArea :: number
-		const ScaledInverseZ1 = InverseZ1 * InverseTriangleArea :: number
-		const ScaledInverseZ2 = InverseZ2 * InverseTriangleArea :: number
+		const InvA = 1 / Area :: number
+		const SZ0 = IZ0 * InvA :: number
+		const SZ1 = buffer.readf32(ProjectedVertices, V1Off + 8) * InvA :: number
+		const SZ2 = buffer.readf32(ProjectedVertices, V2Off + 8) * InvA :: number
+		const Off = NextTex * TEXTURED_STRIDE :: number
+		buffer.writei16(TexTris, Off, V0X); buffer.writei16(TexTris, Off + 2, V0Y); buffer.writef32(TexTris, Off + 4, SZ0); buffer.writef32(TexTris, Off + 8, SZ0 * U0); buffer.writef32(TexTris, Off + 12, SZ0 * V0)
+		buffer.writei16(TexTris, Off + 16, V1X); buffer.writei16(TexTris, Off + 18, V1Y); buffer.writef32(TexTris, Off + 20, SZ1); buffer.writef32(TexTris, Off + 24, SZ1 * buffer.readf32(ProjectedVertices, V1Off + 12)); buffer.writef32(TexTris, Off + 28, SZ1 * buffer.readf32(ProjectedVertices, V1Off + 16))
+		buffer.writei16(TexTris, Off + 32, V2X); buffer.writei16(TexTris, Off + 34, V2Y); buffer.writef32(TexTris, Off + 36, SZ2); buffer.writef32(TexTris, Off + 40, SZ2 * buffer.readf32(ProjectedVertices, V2Off + 12)); buffer.writef32(TexTris, Off + 44, SZ2 * buffer.readf32(ProjectedVertices, V2Off + 16))
+		buffer.writeu32(TexTris, Off + 48, PackedColor); buffer.writeu32(TexTris, Off + 52, TextureId)
 
-		const StageOffset = NextTriangleCount * RENDER_BUFFER_LAYOUT_SIZE :: number
-		buffer.writei16(StagedTriangles, StageOffset, Vertex0X)
-		buffer.writei16(StagedTriangles, StageOffset + 2, Vertex0Y)
-		buffer.writef32(StagedTriangles, StageOffset + 4, ScaledInverseZ0)
-		buffer.writef32(StagedTriangles, StageOffset + 8, ScaledInverseZ0 * TexCoordU0)
-		buffer.writef32(StagedTriangles, StageOffset + 12, ScaledInverseZ0 * TexCoordV0)
-
-		buffer.writei16(StagedTriangles, StageOffset + 16, Vertex1X)
-		buffer.writei16(StagedTriangles, StageOffset + 18, Vertex1Y)
-		buffer.writef32(StagedTriangles, StageOffset + 20, ScaledInverseZ1)
-		buffer.writef32(StagedTriangles, StageOffset + 24, ScaledInverseZ1 * TexCoordU1)
-		buffer.writef32(StagedTriangles, StageOffset + 28, ScaledInverseZ1 * TexCoordV1)
-
-		buffer.writei16(StagedTriangles, StageOffset + 32, Vertex2X)
-		buffer.writei16(StagedTriangles, StageOffset + 34, Vertex2Y)
-		buffer.writef32(StagedTriangles, StageOffset + 36, ScaledInverseZ2)
-		buffer.writef32(StagedTriangles, StageOffset + 40, ScaledInverseZ2 * TexCoordU2)
-		buffer.writef32(StagedTriangles, StageOffset + 44, ScaledInverseZ2 * TexCoordV2)
-
-		buffer.writeu32(StagedTriangles, StageOffset + 48, PackedColor)
-		buffer.writeu32(StagedTriangles, StageOffset + 52, TextureId)
-
-		const BoundsOffset = NextTriangleCount * 4 :: number
-		buffer.writeu16(StagedBounds, BoundsOffset, MinY)
-		buffer.writeu16(StagedBounds, BoundsOffset + 2, MaxY)
-		WorkerPartitionHelper.RecordTriangleRowWork(RowWorkDiff, MinX, MaxX, MinY, MaxY, TextureId)
-		NextTriangleCount += 1
+		const BOff = NextTex * 4 :: number
+		buffer.writeu16(TexBounds, BOff, MinY); buffer.writeu16(TexBounds, BOff + 2, MaxY)
+		const Cost = math.floor((MaxX - MinX + 1) + 20) :: number
+		const SOff, EOff = MinY * 4, (MaxY + 1) * 4
+		buffer.writei32(RowWorkDiff, SOff, buffer.readi32(RowWorkDiff, SOff) + Cost)
+		buffer.writei32(RowWorkDiff, EOff, buffer.readi32(RowWorkDiff, EOff) - Cost)
+		NextTex += 1
 	end
 
-	return NextTriangleCount
+	return NextUntex, NextTex
 end
 
 --[=[
-	Updates the renderer's cached camera basis SIMD vectors and projection parameters
-	when the bound camera's CFrame, FOV, or viewport resolution has changed.
-	@param RendererObj any -- Target OOP RenderObject instance.
-	@param CamCF CFrame -- Current world-space CFrame of the bound camera.
-	@param CamFOV number -- Current vertical FOV in degrees of the bound camera.
-	@param Width number -- Renderer viewport width in pixels.
-	@param Height number -- Renderer viewport height in pixels.
+	Updates cached camera basis SIMD vectors, projection scalars, and precomputed guardband clip plane vectors.
 ]=]
 function RenderControllerHelper.SyncCameraCache(
 	RendererObj: any,
@@ -281,6 +256,10 @@ function RenderControllerHelper.SyncCameraCache(
 		RendererObj.CachedFocalLength = Focal
 		RendererObj.CachedGuardBandX = GuardX
 		RendererObj.CachedGuardBandY = GuardY
+		RendererObj.CachedPlaneLeft = vector.create(1, 0, GuardX)
+		RendererObj.CachedPlaneRight = vector.create(-1, 0, GuardX)
+		RendererObj.CachedPlaneBottom = vector.create(0, 1, GuardY)
+		RendererObj.CachedPlaneTop = vector.create(0, -1, GuardY)
 		RendererObj.CachedCameraFOV = CamFOV
 		RendererObj.CachedProjWidth = Width
 		RendererObj.CachedProjHeight = Height

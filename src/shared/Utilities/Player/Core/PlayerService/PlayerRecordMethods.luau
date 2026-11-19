@@ -23,9 +23,6 @@ const PLAYER_SIZE_X = PLAYER_RENDER_SIZE.X :: number
 const PLAYER_SIZE_Y = PLAYER_RENDER_SIZE.Y :: number
 const PLAYER_SIZE_Z = PLAYER_RENDER_SIZE.Z :: number
 const DEFAULT_CAN_COLLIDE = SystemsConfigs.PlayerCanCollide :: boolean
-const FLAG_CAN_COLLIDE = bit32.lshift(1, 1) :: number
-const FLAG_IS_VISIBLE = bit32.lshift(1, 2) :: number
-const VISIBILITY_COLLISION_MASK = bit32.bor(FLAG_CAN_COLLIDE, FLAG_IS_VISIBLE) :: number
 
 -- Tables --
 local PlayerRecordMethods = {}
@@ -179,63 +176,6 @@ function PlayerRecordMethods.UpdateTransform(
 	buffer.writef32(DirectionsBuffer, DirOffset + 32, UnitLookX)
 
 	Storage.ECSData.MarkDirty(EntityId)
-end
-
---[=[
-	Updates IsVisible and CanCollide flags in-place on the bound ECS entity without altering other bitfields.
-]=]
-function PlayerRecordMethods.SetLocalVisibilityAndCollision(
-	self: any,
-	Storage: ECSMain.ECSStorage,
-	IsVisible: boolean,
-	CanCollide: boolean
-)
-	const EntityId = self.EntityId :: number
-	if EntityId < 1 or EntityId > Storage.ECSData.GetCounts().EntityECSCount then
-		return
-	end
-
-	const PropOffset = (EntityId - 1) * PROPERTIES_STRIDE :: number
-	const PropertiesBuffer = Storage.PropertiesData.GetData() :: buffer
-	const CurrentReg = buffer.readu32(PropertiesBuffer, PropOffset) :: number
-	local NextReg = bit32.band(CurrentReg, bit32.bnot(VISIBILITY_COLLISION_MASK)) :: number
-	if CanCollide then
-		NextReg = bit32.bor(NextReg, FLAG_CAN_COLLIDE)
-	end
-	if IsVisible then
-		NextReg = bit32.bor(NextReg, FLAG_IS_VISIBLE)
-	end
-	if NextReg ~= CurrentReg then
-		buffer.writeu32(PropertiesBuffer, PropOffset, NextReg)
-		Storage.ECSData.MarkDirty(EntityId)
-	end
-end
-
---[=[
-	Updates the player's rendered RGB color in VisualData and marks the entity dirty.
-]=]
-function PlayerRecordMethods.SetColor(self: any, Storage: ECSMain.ECSStorage, Color: Color3)
-	const R = math.clamp(math.floor(Color.R * 255 + 0.5), 0, 255) :: number
-	const G = math.clamp(math.floor(Color.G * 255 + 0.5), 0, 255) :: number
-	const B = math.clamp(math.floor(Color.B * 255 + 0.5), 0, 255) :: number
-	self.ColorR = R
-	self.ColorG = G
-	self.ColorB = B
-
-	const EntityId = self.EntityId :: number
-	if EntityId < 1 or EntityId > Storage.ECSData.GetCounts().EntityECSCount then
-		return
-	end
-	Storage.VisualData.CreateLayout((EntityId - 1) * VISUAL_STRIDE, R, G, B)
-	Storage.ECSData.MarkDirty(EntityId)
-end
-
-function PlayerRecordMethods.GetPosition(self: any): Vector3
-	return Vector3.new(self.PositionX, self.PositionY, self.PositionZ)
-end
-
-function PlayerRecordMethods.GetLookVector(self: any): Vector3
-	return Vector3.new(self.LookX, self.LookY, self.LookZ)
 end
 
 --[=[

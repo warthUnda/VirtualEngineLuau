@@ -4,9 +4,8 @@
 
 --[=[
 	@class ControllerTheory.spec
-	Server TestEZ specifications verifying the ControllerTheory singleton, 60/40 runtime weights,
-	intra-frame timing and (OtherSystemsFrameTime - TargetFrameTime) budget math, deterministic
-	ControllerInterpreter physics part striding, and closed-loop feedback convergence.
+	Server TestEZ specifications verifying ResourceController budget allocation, channel score
+	control loops, PhysicsRep and RenderingRep interpretation, and ControllerEnabled guards.
 ]=]
 
 return function()
@@ -29,12 +28,11 @@ return function()
 
 	-- Libraries --
 	const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
-	const ResourceController =
-		require(ControllerTheoryRoot:WaitForChild("Controller"):WaitForChild("ResourceController"))
-	const ControllerInterpreter =
-		require(ControllerTheoryRoot:WaitForChild("Core"):WaitForChild("ControllerInterpreter"))
-	const ControllerTheoryMath =
-		require(ControllerTheoryRoot:WaitForChild("Core"):WaitForChild("ControllerTheoryMath"))
+	const ControllerTheory = require(ControllerTheoryRoot)
+	const ResourceController = ControllerTheory.ResourceController
+	const ControllerTheoryMath = ControllerTheory.ControllerTheoryMath
+	const PhysicsRep = ControllerTheory.PhysicsRep
+	const RenderingRep = ControllerTheory.RenderingRep
 
 	-- Configs --
 	const TARGET_FRAME_TIME = (1 / 60) :: number
@@ -49,8 +47,8 @@ return function()
 			expect(State.Weights.Renderer).to.be.near(SystemsConfigs.ControllerRendererWeight, 1e-4)
 			expect(State.Weights.Physics).to.be.near(SystemsConfigs.ControllerPhysicsWeight, 1e-4)
 			expect(State.FreeTimeReserve).to.be.near(FREE_TIME_RESERVE, 1e-5)
-			expect(ResourceController.GetRendererScore()).to.equal(100)
-			expect(ResourceController.GetPhysicsScore()).to.equal(100)
+			expect(RenderingRep.GetScore()).to.equal(100)
+			expect(PhysicsRep.GetScore()).to.equal(100)
 
 			ResourceController.Reset()
 		end)
@@ -89,15 +87,16 @@ return function()
 
 		it("should adaptively throttle down whenever free frame time drops below 2ms even before missing 60 FPS", function()
 			ResourceController.Reset()
+			ResourceController.SetEnabled(true)
 
 			-- Total frame = 15.8ms (< 16.67ms 60 FPS), leaving only ~0.87ms free (< 2.0ms required spike reserve)
 			for _ = 1, 60 do
-				ResourceController.ReportRendererFeedback(0.0138)
-				ResourceController.ReportPhysicsFeedback(0.001)
+				RenderingRep.ReportFeedback(0.0138)
+				PhysicsRep.ReportFeedback(0.001)
 				ResourceController.StepController(0.0158)
 			end
 
-			expect(ResourceController.GetRendererScore() < 100).to.equal(true)
+			expect(RenderingRep.GetScore() < 100).to.equal(true)
 			expect(ResourceController.State.FreeFrameTime < FREE_TIME_RESERVE).to.equal(true)
 
 			ResourceController.Reset()
@@ -105,49 +104,51 @@ return function()
 
 		it("should throttle scores down under frame overruns and naturally recover toward 100 when under budget", function()
 			ResourceController.Reset()
+			ResourceController.SetEnabled(true)
 
 			for _ = 1, 60 do
-				ResourceController.ReportRendererFeedback(0.018)
-				ResourceController.ReportPhysicsFeedback(0.001)
+				RenderingRep.ReportFeedback(0.018)
+				PhysicsRep.ReportFeedback(0.001)
 				ResourceController.StepController(0.021)
 			end
 
-			const ThrottledRenderer = ResourceController.GetRendererScore()
-			const UnaffectedPhysics = ResourceController.GetPhysicsScore()
+			const ThrottledRenderer = RenderingRep.GetScore()
+			const UnaffectedPhysics = PhysicsRep.GetScore()
 			expect(ThrottledRenderer < 100).to.equal(true)
 			expect(ThrottledRenderer >= 1).to.equal(true)
 			expect(UnaffectedPhysics).to.equal(100)
 
 			-- Overload from other systems eating > 16.67ms forces both systems down gradually within [1, 100]
 			for _ = 1, 90 do
-				ResourceController.ReportRendererFeedback(0.004)
-				ResourceController.ReportPhysicsFeedback(0.004)
+				RenderingRep.ReportFeedback(0.004)
+				PhysicsRep.ReportFeedback(0.004)
 				ResourceController.StepController(0.030)
 			end
 			expect(ResourceController.State.OtherMinusTargetFrameTime > 0).to.equal(true)
-			expect(ResourceController.GetPhysicsScore() < 100).to.equal(true)
-			expect(ResourceController.GetPhysicsScore() >= 1).to.equal(true)
-			expect(ResourceController.GetRendererScore() >= 1).to.equal(true)
+			expect(PhysicsRep.GetScore() < 100).to.equal(true)
+			expect(PhysicsRep.GetScore() >= 1).to.equal(true)
+			expect(RenderingRep.GetScore() >= 1).to.equal(true)
 
-			const LowRendererScore = ResourceController.GetRendererScore()
-			const LowPhysicsScore = ResourceController.GetPhysicsScore()
+			const LowRendererScore = RenderingRep.GetScore()
+			const LowPhysicsScore = PhysicsRep.GetScore()
 
 			-- Fast 60+ FPS frames naturally reward scores upward gradually
 			for _ = 1, 240 do
-				ResourceController.ReportRendererFeedback(0.002)
-				ResourceController.ReportPhysicsFeedback(0.001)
+				RenderingRep.ReportFeedback(0.002)
+				PhysicsRep.ReportFeedback(0.001)
 				ResourceController.StepController(0.005)
 			end
-			expect(ResourceController.GetRendererScore() > LowRendererScore).to.equal(true)
-			expect(ResourceController.GetPhysicsScore() > LowPhysicsScore).to.equal(true)
-			expect(ResourceController.GetRendererScore() <= 100).to.equal(true)
-			expect(ResourceController.GetPhysicsScore() <= 100).to.equal(true)
+			expect(RenderingRep.GetScore() > LowRendererScore).to.equal(true)
+			expect(PhysicsRep.GetScore() > LowPhysicsScore).to.equal(true)
+			expect(RenderingRep.GetScore() <= 100).to.equal(true)
+			expect(PhysicsRep.GetScore() <= 100).to.equal(true)
 
 			ResourceController.Reset()
 		end)
 
 		it("should lock onto a steady non-oscillating equilibrium under constant heavy scene load without hunting back into lag", function()
 			ResourceController.Reset()
+			ResourceController.SetEnabled(true)
 
 			local SettledMin = 100 :: number
 			local SettledMax = 1 :: number
@@ -155,20 +156,20 @@ return function()
 			const UsableLimit = (TARGET_FRAME_TIME - FREE_TIME_RESERVE) :: number
 
 			for Frame = 1, 2100 do
-				const CurrentScore = ResourceController.GetRendererScore()
+				const CurrentScore = RenderingRep.GetScore()
 				const _W: number, _H: number, LinearScale: number =
-					ControllerInterpreter.InterpretRenderer(CurrentScore, 340, 240)
+					RenderingRep.Interpret(340, 240, CurrentScore)
 				const AreaFraction = LinearScale * LinearScale :: number
 				const SimRenderTime = 0.004 + 0.018 * AreaFraction :: number
 				const SimPhysicsTime = 0.001 :: number
 				const SimTotalTime = SimRenderTime + SimPhysicsTime + 0.0005 :: number
 
-				ResourceController.ReportRendererFeedback(SimRenderTime)
-				ResourceController.ReportPhysicsFeedback(SimPhysicsTime)
+				RenderingRep.ReportFeedback(SimRenderTime)
+				PhysicsRep.ReportFeedback(SimPhysicsTime)
 				ResourceController.StepController(SimTotalTime)
 
 				if Frame >= 1800 then
-					const PostScore = ResourceController.GetRendererScore()
+					const PostScore = RenderingRep.GetScore()
 					if PostScore < SettledMin then
 						SettledMin = PostScore
 					end
@@ -189,19 +190,19 @@ return function()
 		end)
 	end)
 
-	describe("2. Deterministic ControllerInterpreter Formulas (Physics & Renderer)", function()
+	describe("2. Deterministic System Rep Formulas (PhysicsRep & RenderingRep)", function()
 		it("should deterministically step physics parts every frame at 100 and every 2 frames at 50 without math.random", function()
-			const Duty100: number, Stride100: number = ControllerInterpreter.InterpretPhysics(100)
+			const Duty100: number, Stride100: number = PhysicsRep.Interpret(100)
 			expect(Duty100).to.equal(100)
 			expect(Stride100).to.be.near(1.0, 1e-4)
 
 			for EntityId = 1, 16 do
 				for Tick = 1, 6 do
-					expect(ControllerInterpreter.ShouldStepPhysicsEntity(EntityId, Tick, 100)).to.equal(true)
+					expect(PhysicsRep.ShouldStepEntity(EntityId, Tick, 100)).to.equal(true)
 				end
 			end
 
-			const Duty50: number, Stride50: number = ControllerInterpreter.InterpretPhysics(50)
+			const Duty50: number, Stride50: number = PhysicsRep.Interpret(50)
 			expect(Duty50).to.equal(50)
 			expect(Stride50).to.be.near(2.0, 1e-4)
 
@@ -209,9 +210,9 @@ return function()
 			for Tick = 1, 8 do
 				local ActiveThisFrame = 0 :: number
 				for EntityId = 1, 20 do
-					const FirstEval = ControllerInterpreter.ShouldStepPhysicsEntity(EntityId, Tick, 50)
-					const SecondEval = ControllerInterpreter.ShouldStepPhysicsEntity(EntityId, Tick, 50)
-					const NextTickEval = ControllerInterpreter.ShouldStepPhysicsEntity(EntityId, Tick + 1, 50)
+					const FirstEval = PhysicsRep.ShouldStepEntity(EntityId, Tick, 50)
+					const SecondEval = PhysicsRep.ShouldStepEntity(EntityId, Tick, 50)
+					const NextTickEval = PhysicsRep.ShouldStepEntity(EntityId, Tick + 1, 50)
 					expect(FirstEval).to.equal(SecondEval)
 					expect(FirstEval ~= NextTickEval).to.equal(true)
 					if FirstEval then
@@ -223,9 +224,9 @@ return function()
 		end)
 
 		it("should map renderer 1..100 score monotonically into scaled viewport dimensions", function()
-			const W100: number, H100: number, Scale100: number = ControllerInterpreter.InterpretRenderer(100, 340, 240)
-			const W50: number, H50: number, Scale50: number = ControllerInterpreter.InterpretRenderer(50, 340, 240)
-			const W1: number, H1: number, Scale1: number = ControllerInterpreter.InterpretRenderer(1, 340, 240)
+			const W100: number, H100: number, Scale100: number = RenderingRep.Interpret(340, 240, 100)
+			const W50: number, H50: number, Scale50: number = RenderingRep.Interpret(340, 240, 50)
+			const W1: number, H1: number, Scale1: number = RenderingRep.Interpret(340, 240, 1)
 
 			expect(W100).to.equal(340)
 			expect(H100).to.equal(240)
@@ -235,6 +236,97 @@ return function()
 			expect(H50 < H100 and H50 > H1).to.equal(true)
 			expect(Scale50 < Scale100 and Scale50 > Scale1).to.equal(true)
 			expect(W1 >= 32 and H1 >= 32).to.equal(true)
+		end)
+	end)
+
+	describe("3. ControllerEnabled Config & Runtime Disable Bypass", function()
+		it("should expose SystemsConfigs.ControllerEnabled and lock scores at 100 when disabled", function()
+			expect(type(SystemsConfigs.ControllerEnabled)).to.equal("boolean")
+			expect(SystemsConfigs.ControllerTheory.ControllerEnabled).to.equal(SystemsConfigs.ControllerEnabled)
+
+			ResourceController.Reset()
+			expect(ResourceController.IsEnabled()).to.equal(SystemsConfigs.ControllerEnabled)
+
+			-- Throttle scores down while enabled
+			ResourceController.SetEnabled(true)
+			for _ = 1, 60 do
+				RenderingRep.ReportFeedback(0.025)
+				PhysicsRep.ReportFeedback(0.015)
+				ResourceController.StepController(0.042)
+			end
+			expect(RenderingRep.GetScore() < 100).to.equal(true)
+
+			-- Disabling immediately restores scores to 100 and ignores further frame-overrun steps
+			ResourceController.SetEnabled(false)
+			expect(ResourceController.IsEnabled()).to.equal(false)
+			expect(RenderingRep.GetScore()).to.equal(100)
+			expect(PhysicsRep.GetScore()).to.equal(100)
+
+			for _ = 1, 30 do
+				ResourceController.BeginFrame()
+				RenderingRep.ReportFeedback(0.030)
+				PhysicsRep.ReportFeedback(0.020)
+				ResourceController.StepController(0.055)
+				ResourceController.EndFrame(0.055)
+			end
+			expect(RenderingRep.GetScore()).to.equal(100)
+			expect(PhysicsRep.GetScore()).to.equal(100)
+
+			-- Reset restores default enabled state from config
+			ResourceController.Reset()
+			expect(ResourceController.IsEnabled()).to.equal(SystemsConfigs.ControllerEnabled)
+		end)
+	end)
+
+	describe("4. System ControllerReps (PhysicsRep & RenderingRep)", function()
+		it("should route physics feedback, scores, duty interpretation, and striding through PhysicsRep", function()
+			ResourceController.Reset()
+			ResourceController.SetEnabled(true)
+
+			expect(PhysicsRep.GetScore()).to.equal(100)
+			expect(ControllerTheoryMath.ClampScore(105.4)).to.equal(100)
+			const Duty100: number, Stride100: number, Scale100: number = PhysicsRep.Interpret()
+			expect(Duty100).to.equal(100)
+			expect(Stride100).to.be.near(1.0, 1e-4)
+			expect(Scale100).to.be.near(1.0, 1e-4)
+			expect(PhysicsRep.ShouldStepEntity(1, 1)).to.equal(true)
+
+			for _ = 1, 60 do
+				PhysicsRep.ReportFeedback(0.015)
+				RenderingRep.ReportFeedback(0.001)
+				ResourceController.StepController(0.025)
+			end
+			expect(PhysicsRep.GetScore() < 100).to.equal(true)
+
+			const DutyThrottled: number = PhysicsRep.Interpret()
+			expect(DutyThrottled < 100).to.equal(true)
+			expect(PhysicsRep.ShouldStepEntity(1, 1, 50) ~= PhysicsRep.ShouldStepEntity(1, 2, 50)).to.equal(true)
+
+			ResourceController.Reset()
+		end)
+
+		it("should route renderer feedback, scores, and resolution scaling through RenderingRep", function()
+			ResourceController.Reset()
+			ResourceController.SetEnabled(true)
+
+			expect(RenderingRep.GetScore()).to.equal(100)
+			const W100: number, H100: number, Scale100: number = RenderingRep.Interpret(320, 240)
+			expect(W100).to.equal(320)
+			expect(H100).to.equal(240)
+			expect(Scale100).to.be.near(1.0, 1e-4)
+
+			for _ = 1, 60 do
+				RenderingRep.ReportFeedback(0.025)
+				PhysicsRep.ReportFeedback(0.001)
+				ResourceController.StepController(0.028)
+			end
+			expect(RenderingRep.GetScore() < 100).to.equal(true)
+
+			const WScaled: number, HScaled: number, LinearScale: number = RenderingRep.Interpret(320, 240)
+			expect(WScaled < 320 and HScaled < 240).to.equal(true)
+			expect(LinearScale < 1.0).to.equal(true)
+
+			ResourceController.Reset()
 		end)
 	end)
 end

@@ -16,7 +16,11 @@ const ServerScriptService = game:GetService("ServerScriptService") :: ServerScri
 const SystemsConfigs = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SystemsConfigs"))
 const EventBus = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities"):WaitForChild("EventBus"))
 const TextureTable = require(
-	ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Utilities"):WaitForChild("Render"):WaitForChild("Texture"):WaitForChild("TextureTable")
+	ReplicatedStorage:WaitForChild("Shared")
+		:WaitForChild("Utilities")
+		:WaitForChild("Render")
+		:WaitForChild("Texture")
+		:WaitForChild("TextureTable")
 )
 const PlayerFunctions = require(ServerScriptService.Server.Objects.Replication.Core.PlayerFunctions)
 
@@ -88,13 +92,7 @@ end
 	@return ServerRemoteSet -- Active server replication remotes.
 ]=]
 function ServerReplicationGateway.InitializeGateway(): ServerRemoteSet
-	local CoreEvents = ReplicatedStorage:FindFirstChild(CORE_EVENTS_FOLDER_NAME) :: Folder?
-	if not CoreEvents then
-		const NewFolder = Instance.new("Folder")
-		NewFolder.Name = CORE_EVENTS_FOLDER_NAME
-		NewFolder.Parent = ReplicatedStorage
-		CoreEvents = NewFolder
-	end
+	local CoreEvents = ReplicatedStorage:FindFirstChild(CORE_EVENTS_FOLDER_NAME) :: Folder
 
 	const EventsFolder = CoreEvents :: Folder
 	const ReplicateRemote = ServerReplicationGateway.EnsureRemoteEvent(EventsFolder, REPLICATE_REMOTE_NAME)

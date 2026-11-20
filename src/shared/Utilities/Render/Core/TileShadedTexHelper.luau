@@ -20,6 +20,7 @@ const CACHE_SLOT_COUNT = 16 :: number
 
 -- Variables --
 local NextEvictSlot = 1 :: number
+local LastHitSlot = 1 :: number
 
 -- Buffers
 const InvStepsBuf = buffer.create(16 * 8) :: buffer
@@ -56,17 +57,27 @@ function TileShadedTexHelper.GetShadedTexture(
 	const TotalBytes = TexW * TexH * 4 :: number
 	const ShadeKey = bit32.band(PackedColor, 0x00FFFFFF) :: number
 
+	if
+		CachedSourceBufs[LastHitSlot] == ActiveTex
+		and CachedShadeKeys[LastHitSlot] == ShadeKey
+		and CachedByteLens[LastHitSlot] == TotalBytes
+	then
+		return CachedShadedBufs[LastHitSlot]
+	end
+
 	for SlotIdx = 1, CACHE_SLOT_COUNT do
 		if
 			CachedSourceBufs[SlotIdx] == ActiveTex
 			and CachedShadeKeys[SlotIdx] == ShadeKey
 			and CachedByteLens[SlotIdx] == TotalBytes
 		then
+			LastHitSlot = SlotIdx
 			return CachedShadedBufs[SlotIdx]
 		end
 	end
 
 	const TargetSlot = NextEvictSlot :: number
+	LastHitSlot = TargetSlot
 	NextEvictSlot = if TargetSlot >= CACHE_SLOT_COUNT then 1 else TargetSlot + 1
 
 	local OutBuf = CachedShadedBufs[TargetSlot] :: buffer
@@ -145,6 +156,7 @@ function TileShadedTexHelper.DrawPreShadedSpan(
 	const AbsZStep16 = math.abs(InvZStepX * 16) :: number
 	const SafeMaxW = TexW - 1e-3 :: number
 	const SafeMaxH = TexH - 1e-3 :: number
+	const TexRowBytes = TexW * 4 :: number
 
 	while BufferOffset <= EndOffset do
 		const Remaining = ((EndOffset - BufferOffset) // 4) + 1 :: number
@@ -194,7 +206,7 @@ function TileShadedTexHelper.DrawPreShadedSpan(
 
 		if SkipZTest and SkipZWrite and InBounds then
 			for PxOff = BufferOffset, ChunkEndOffset, 4 do
-				const TexOff = (math.floor(CurV) * TexW + math.floor(CurU)) * 4 :: number
+				const TexOff = math.floor(CurV) * TexRowBytes + math.floor(CurU) * 4 :: number
 				buffer.writeu32(PixelBuf, PxOff, buffer.readu32(ShadedTex, TexOff))
 				CurU += StepU
 				CurV += StepV
@@ -203,14 +215,14 @@ function TileShadedTexHelper.DrawPreShadedSpan(
 			for PxOff = BufferOffset, ChunkEndOffset, 4 do
 				const TexX = math.clamp(math.floor(CurU), 0, TexWMask) :: number
 				const TexY = math.clamp(math.floor(CurV), 0, TexHMask) :: number
-				buffer.writeu32(PixelBuf, PxOff, buffer.readu32(ShadedTex, (TexY * TexW + TexX) * 4))
+				buffer.writeu32(PixelBuf, PxOff, buffer.readu32(ShadedTex, TexY * TexRowBytes + TexX * 4))
 				CurU += StepU
 				CurV += StepV
 			end
 		elseif SkipZTest and InBounds then
 			for PxOff = BufferOffset, ChunkEndOffset, 4 do
 				buffer.writef32(ZBuf, PxOff, CurInvZ)
-				const TexOff = (math.floor(CurV) * TexW + math.floor(CurU)) * 4 :: number
+				const TexOff = math.floor(CurV) * TexRowBytes + math.floor(CurU) * 4 :: number
 				buffer.writeu32(PixelBuf, PxOff, buffer.readu32(ShadedTex, TexOff))
 				CurInvZ += InvZStepX
 				CurU += StepU
@@ -221,7 +233,7 @@ function TileShadedTexHelper.DrawPreShadedSpan(
 				buffer.writef32(ZBuf, PxOff, CurInvZ)
 				const TexX = math.clamp(math.floor(CurU), 0, TexWMask) :: number
 				const TexY = math.clamp(math.floor(CurV), 0, TexHMask) :: number
-				buffer.writeu32(PixelBuf, PxOff, buffer.readu32(ShadedTex, (TexY * TexW + TexX) * 4))
+				buffer.writeu32(PixelBuf, PxOff, buffer.readu32(ShadedTex, TexY * TexRowBytes + TexX * 4))
 				CurInvZ += InvZStepX
 				CurU += StepU
 				CurV += StepV
@@ -229,7 +241,7 @@ function TileShadedTexHelper.DrawPreShadedSpan(
 		elseif SkipZWrite and InBounds then
 			for PxOff = BufferOffset, ChunkEndOffset, 4 do
 				if CurInvZ > buffer.readf32(ZBuf, PxOff) then
-					const TexOff = (math.floor(CurV) * TexW + math.floor(CurU)) * 4 :: number
+					const TexOff = math.floor(CurV) * TexRowBytes + math.floor(CurU) * 4 :: number
 					buffer.writeu32(PixelBuf, PxOff, buffer.readu32(ShadedTex, TexOff))
 				end
 				CurInvZ += InvZStepX
@@ -240,7 +252,7 @@ function TileShadedTexHelper.DrawPreShadedSpan(
 			for PxOff = BufferOffset, ChunkEndOffset, 4 do
 				if CurInvZ > buffer.readf32(ZBuf, PxOff) then
 					buffer.writef32(ZBuf, PxOff, CurInvZ)
-					const TexOff = (math.floor(CurV) * TexW + math.floor(CurU)) * 4 :: number
+					const TexOff = math.floor(CurV) * TexRowBytes + math.floor(CurU) * 4 :: number
 					buffer.writeu32(PixelBuf, PxOff, buffer.readu32(ShadedTex, TexOff))
 				end
 				CurInvZ += InvZStepX
@@ -253,7 +265,7 @@ function TileShadedTexHelper.DrawPreShadedSpan(
 					if not SkipZWrite then buffer.writef32(ZBuf, PxOff, CurInvZ) end
 					const TexX = math.clamp(math.floor(CurU), 0, TexWMask) :: number
 					const TexY = math.clamp(math.floor(CurV), 0, TexHMask) :: number
-					buffer.writeu32(PixelBuf, PxOff, buffer.readu32(ShadedTex, (TexY * TexW + TexX) * 4))
+					buffer.writeu32(PixelBuf, PxOff, buffer.readu32(ShadedTex, TexY * TexRowBytes + TexX * 4))
 				end
 				CurInvZ += InvZStepX
 				CurU += StepU

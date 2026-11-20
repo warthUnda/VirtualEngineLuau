@@ -5,7 +5,7 @@
 --[=[
 	@class TileRasterizerMath
 	2D 32x32 L1-tile binner and conservative Hi-Z dual-stream rasterizer with lazy tile/Z-buffer
-	initialization and single-triangle / final-triangle `SkipZWrite` bypass.
+	initialization, empty-tile-only clear coalescing, and AABB FullCover short-circuiting.
 ]=]
 
 -- Services --
@@ -64,18 +64,9 @@ local TileRasterizerMath = {
 	directly into BandPixelBuf (`(BandEndY - BandStartY + 1) * ActiveWidth * 4`).
 ]=]
 function TileRasterizerMath.RasterizeBandDual(
-	UntexBuf: buffer,
-	UntexBytes: number,
-	TexBuf: buffer,
-	TexBytes: number,
-	TextureBuffers: { [number]: buffer },
-	TextureWidth: number,
-	TextureHeight: number,
-	ActiveWidth: number,
-	ActiveHeight: number,
-	BandPixelBuf: buffer,
-	BandStartY: number,
-	BandEndY: number
+	UntexBuf: buffer, UntexBytes: number, TexBuf: buffer, TexBytes: number,
+	TextureBuffers: { [number]: buffer }, TextureWidth: number, TextureHeight: number,
+	ActiveWidth: number, ActiveHeight: number, BandPixelBuf: buffer, BandStartY: number, BandEndY: number
 )
 	if BandStartY > BandEndY or ActiveWidth <= 0 or ActiveHeight <= 0 then
 		return
@@ -84,10 +75,10 @@ function TileRasterizerMath.RasterizeBandDual(
 	const BandHeight = BandEndY - BandStartY + 1 :: number
 	const BandRowStride = ActiveWidth * 4 :: number
 	const BandByteLength = BandHeight * BandRowStride :: number
-	const ClearBandTemplate = BufferHelper.EnsureClearTemplate(BandByteLength)
-	buffer.copy(BandPixelBuf, 0, ClearBandTemplate, 0, BandByteLength)
 
 	if UntexBytes <= 0 and TexBytes <= 0 then
+		const ClearBandTemplate = BufferHelper.EnsureClearTemplate(BandByteLength)
+		buffer.copy(BandPixelBuf, 0, ClearBandTemplate, 0, BandByteLength)
 		return
 	end
 
@@ -114,6 +105,8 @@ function TileRasterizerMath.RasterizeBandDual(
 		)
 	end
 	if BinCursor <= 0 then
+		const ClearBandTemplate = BufferHelper.EnsureClearTemplate(BandByteLength)
+		buffer.copy(BandPixelBuf, 0, ClearBandTemplate, 0, BandByteLength)
 		return
 	end
 
@@ -121,28 +114,49 @@ function TileRasterizerMath.RasterizeBandDual(
 	const TexHMask = TextureHeight - 1 :: number
 	const RasterUntex = TileSpanHelper.RasterizeUntexturedTile
 	const RasterTex = TileTexturedSpanHelper.RasterizeTexturedTile
+	const ClearStripTemplate = BufferHelper.EnsureClearTemplate(TILE_SIZE * BandRowStride)
 
 	for Ty = 0, BandTilesY - 1 do
 		const TileY0 = BandStartY + Ty * TILE_SIZE :: number
 		const TileH = math.min(TILE_SIZE, BandEndY - TileY0 + 1) :: number
+		const DyMax = TileH - 1 :: number
+		const TileY1 = TileY0 + DyMax :: number
 		const RowTileBase = Ty * TilesX :: number
+		const BandStripOff = (TileY0 - BandStartY) * BandRowStride :: number
+
+		-- Fast check: if entire tile row has zero binned triangles, clear whole strip in 1 copy
+		local RowAnyEntry = false :: boolean
+		for Tx = 0, TilesX - 1 do
+			if buffer.readi32(TileHead, (RowTileBase + Tx) * 4) >= 0 then
+				RowAnyEntry = true
+				break
+			end
+		end
+		if not RowAnyEntry then
+			buffer.copy(BandPixelBuf, BandStripOff, ClearStripTemplate, 0, TileH * BandRowStride)
+			continue
+		end
 
 		for Tx = 0, TilesX - 1 do
-			const FirstEntry = buffer.readi32(TileHead, (RowTileBase + Tx) * 4) :: number
-			if FirstEntry < 0 then
-				continue
-			end
-
 			const TileX0 = Tx * TILE_SIZE :: number
 			const TileW = math.min(TILE_SIZE, ActiveWidth - TileX0) :: number
 			const TileRowBytes = TileW * 4 :: number
-			const TileBytes = TileRowBytes * TileH :: number
+			const FirstEntry = buffer.readi32(TileHead, (RowTileBase + Tx) * 4) :: number
+			if FirstEntry < 0 then
+				local DstOff = BandStripOff + TileX0 * 4 :: number
+				for _ = 0, TileH - 1 do
+					buffer.copy(BandPixelBuf, DstOff, TileClearTemplate, 0, TileRowBytes)
+					DstOff += BandRowStride
+				end
+				continue
+			end
 
+			const DxMax = TileW - 1 :: number
+			const TileX1 = TileX0 + DxMax :: number
+			const TileBytes = TileRowBytes * TileH :: number
 			local HasDrawnInTile = false :: boolean
 			local TileMinZ = 0 :: number
 			local TileMaxZ = 0 :: number
-			const DxMax = TileW - 1 :: number
-			const DyMax = TileH - 1 :: number
 			local EntryIdx = FirstEntry :: number
 
 			while EntryIdx >= 0 do
@@ -187,15 +201,23 @@ function TileRasterizerMath.RasterizeBandDual(
 					continue
 				end
 
-				const MinE0 = E0 + (if E0StepX < 0 then DxMax * E0StepX else 0) + (if E0StepY < 0 then DyMax * E0StepY else 0) :: number
-				const MinE1 = E1 + (if E1StepX < 0 then DxMax * E1StepX else 0) + (if E1StepY < 0 then DyMax * E1StepY else 0) :: number
-				const MinE2 = E2 + (if E2StepX < 0 then DxMax * E2StepX else 0) + (if E2StepY < 0 then DyMax * E2StepY else 0) :: number
-				const FullCover = (MinE0 >= 0 and MinE1 >= 0 and MinE2 >= 0) :: boolean
-				const TriTileMinZ = InvZOrigin
-					+ (if InvZStepX < 0 then DxMax * InvZStepX else 0)
-					+ (if InvZStepY < 0 then DyMax * InvZStepY else 0) :: number
+				const TriMinX = math.min(V0X, V1X, V2X) :: number
+				const TriMaxX = math.max(V0X, V1X, V2X) :: number
+				const TriMinY = math.min(V0Y, V1Y, V2Y) :: number
+				const TriMaxY = math.max(V0Y, V1Y, V2Y) :: number
+				local FullCover = false :: boolean
+				if TriMinX <= TileX0 and TriMaxX >= TileX1 and TriMinY <= TileY0 and TriMaxY >= TileY1 then
+					const MinE0 = E0 + (if E0StepX < 0 then DxMax * E0StepX else 0) + (if E0StepY < 0 then DyMax * E0StepY else 0) :: number
+					const MinE1 = E1 + (if E1StepX < 0 then DxMax * E1StepX else 0) + (if E1StepY < 0 then DyMax * E1StepY else 0) :: number
+					const MinE2 = E2 + (if E2StepX < 0 then DxMax * E2StepX else 0) + (if E2StepY < 0 then DyMax * E2StepY else 0) :: number
+					FullCover = (MinE0 >= 0 and MinE1 >= 0 and MinE2 >= 0)
+				end
+
 				const HasMoreEntries = (EntryIdx >= 0) :: boolean
-				local SkipZTest: boolean
+				const TriTileMinZ = if HasDrawnInTile or FullCover
+					then (InvZOrigin + (if InvZStepX < 0 then DxMax * InvZStepX else 0) + (if InvZStepY < 0 then DyMax * InvZStepY else 0))
+					else 0 :: number
+				const SkipZTest: boolean = if not HasDrawnInTile then true else (TriTileMinZ > TileMaxZ)
 				if not HasDrawnInTile then
 					if not FullCover then
 						buffer.copy(TilePixelBuf, 0, TileClearTemplate, 0, TileBytes)
@@ -203,19 +225,21 @@ function TileRasterizerMath.RasterizeBandDual(
 					if HasMoreEntries and not FullCover then
 						buffer.fill(TileZBuf, 0, 0, TileBytes)
 					end
-					SkipZTest = true
 					HasDrawnInTile = true
-				else
-					SkipZTest = (FullCover and TriTileMinZ > TileMaxZ) :: boolean
 				end
 				const SkipZWrite = not HasMoreEntries :: boolean
+				const LocalMinY = math.max(0, TriMinY - TileY0) :: number
+				const LocalMaxY = math.min(DyMax, TriMaxY - TileY0) :: number
+				const LocalMinX = math.max(0, TriMinX - TileX0) :: number
+				const LocalMaxX = math.min(DxMax, TriMaxX - TileX0) :: number
 
 				if not IsTex then
 					RasterUntex(
 						TileW, TileH, FullCover, SkipZTest,
 						E0, E1, E2, E0StepX, E1StepX, E2StepX, E0StepY, E1StepY, E2StepY,
 						SInvZ0, SInvZ1, SInvZ2, InvZStepX,
-						buffer.readu32(UntexBuf, TriOff + 24), TilePixelBuf, TileZBuf, SkipZWrite
+						buffer.readu32(UntexBuf, TriOff + 24), TilePixelBuf, TileZBuf, SkipZWrite,
+						InvZOrigin, InvZStepY, LocalMinY, LocalMaxY, LocalMinX, LocalMaxX
 					)
 				else
 					const ActiveTex = TextureBuffers[buffer.readu32(TexBuf, TriOff + 52)]
@@ -231,14 +255,16 @@ function TileRasterizerMath.RasterizeBandDual(
 							buffer.readf32(TexBuf, TriOff + 28) * TextureHeight,
 							buffer.readf32(TexBuf, TriOff + 40) * TextureWidth,
 							buffer.readf32(TexBuf, TriOff + 44) * TextureHeight,
-							PackedColor, ActiveTex, TextureWidth, TexWMask, TexHMask, TilePixelBuf, TileZBuf, SkipZWrite
+							PackedColor, ActiveTex, TextureWidth, TexWMask, TexHMask, TilePixelBuf, TileZBuf, SkipZWrite,
+							InvZOrigin, InvZStepY, LocalMinY, LocalMaxY, LocalMinX, LocalMaxX
 						)
 					else
 						RasterUntex(
 							TileW, TileH, FullCover, SkipZTest,
 							E0, E1, E2, E0StepX, E1StepX, E2StepX, E0StepY, E1StepY, E2StepY,
 							SInvZ0, SInvZ1, SInvZ2, InvZStepX,
-							PackedColor, TilePixelBuf, TileZBuf, SkipZWrite
+							PackedColor, TilePixelBuf, TileZBuf, SkipZWrite,
+							InvZOrigin, InvZStepY, LocalMinY, LocalMaxY, LocalMinX, LocalMaxX
 						)
 					end
 				end
@@ -247,12 +273,17 @@ function TileRasterizerMath.RasterizeBandDual(
 				if FullCover and TriTileMinZ > TileMinZ then TileMinZ = TriTileMinZ end
 			end
 
+			local DstOff = BandStripOff + TileX0 * 4 :: number
 			if HasDrawnInTile then
 				local SrcOff = 0 :: number
-				local DstOff = (TileY0 - BandStartY) * BandRowStride + TileX0 * 4 :: number
 				for _ = 0, TileH - 1 do
 					buffer.copy(BandPixelBuf, DstOff, TilePixelBuf, SrcOff, TileRowBytes)
 					SrcOff += TileRowBytes
+					DstOff += BandRowStride
+				end
+			else
+				for _ = 0, TileH - 1 do
+					buffer.copy(BandPixelBuf, DstOff, TileClearTemplate, 0, TileRowBytes)
 					DstOff += BandRowStride
 				end
 			end

@@ -106,7 +106,7 @@ function RenderWorkerGateway.InitializeWorkers(
 		RowWorkDiff: buffer,
 		StageElapsed: number
 	) -> (),
-	OnBandReturned: (FrameId: number, WorkerCpuTime: number, UploadCpuTime: number) -> (),
+	OnBandReturned: (FrameId: number, WorkerCpuTime: number, UploadCpuTime: number, BandStartY: number?, BandEndY: number?) -> (),
 	GetActiveFrameAndImage: () -> (number, EditableImage?)
 ): { Actor }
 	if not BindWorkers then
@@ -149,7 +149,7 @@ function RenderWorkerGateway.InitializeWorkers(
 				ActiveImg:WritePixelsBuffer(Vector2.new(0, BandStartY), Vector2.new(BandWidth, BandHeight), BandPixelSlice)
 			end
 			const UploadElapsed = (os.clock() - UploadStart) :: number
-			OnBandReturned(FrameId, (WorkerComputeSeconds or 0) :: number, UploadElapsed)
+			OnBandReturned(FrameId, (WorkerComputeSeconds or 0) :: number, UploadElapsed, BandStartY, BandEndY)
 		end
 	)
 

@@ -101,5 +101,15 @@ return function()
 			)
 			expect(OutUSlices[1]).to.equal(FirstSliceRef)
 		end)
+
+		it("should adaptively reduce target work share for overloaded workers and expand underloaded workers", function()
+			const Weights = { 1 / 3, 1 / 3, 1 / 3 } :: { number }
+			const CpuTimes = { 0.0015, 0.0024, 0.0009 } :: { number }
+			WorkerPartitionHelper.UpdateAdaptiveBandWeights(Weights, CpuTimes, 3)
+
+			expect(Weights[2] < 1 / 3).to.equal(true)
+			expect(Weights[3] > 1 / 3).to.equal(true)
+			expect(Weights[1] + Weights[2] + Weights[3]).to.be.near(1.0, 1e-5)
+		end)
 	end)
 end

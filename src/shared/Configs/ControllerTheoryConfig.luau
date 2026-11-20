@@ -8,12 +8,15 @@
 	weighting, PI/PD feedback gains, dynamic renderer resolution bounds, and deterministic physics striding.
 ]=]
 
+-- yo can you fix this my screen is not working!
+-- here are the tests, now fix it
+
 -- Tables --
 local ControllerTheoryConfig = {}
 
 -- Frame Target & Runtime Resource Weights --
 
-ControllerTheoryConfig.ControllerEnabled = false :: boolean
+ControllerTheoryConfig.ControllerEnabled = true :: boolean
 -- Enables or disables closed-loop ControllerTheory resource throttling; when false, scores stay locked at ControllerMaxScore.
 
 ControllerTheoryConfig.ControllerTargetFPS = 60 :: number
@@ -22,14 +25,14 @@ ControllerTheoryConfig.ControllerTargetFPS = 60 :: number
 ControllerTheoryConfig.ControllerTargetFrameTime = (1 / ControllerTheoryConfig.ControllerTargetFPS) :: number
 -- Target frame duration in seconds (1 / 60 = 0.0166667s).
 
-ControllerTheoryConfig.ControllerFreeTimeReserve = 0.002 :: number
--- Mandatory unused free frame time in seconds (2.0 ms) reserved every frame to absorb spikes without missing 60 FPS.
+ControllerTheoryConfig.ControllerFreeTimeReserve = 0.011 :: number
+-- Mandatory unused free frame time in seconds (11.0 ms) reserved every frame to absorb spikes without missing 60 FPS.
 
-ControllerTheoryConfig.ControllerRendererWeight = 0.60 :: number
--- Runtime frame-budget weight assigned to the software renderer (60%).
+ControllerTheoryConfig.ControllerRendererWeight = 0.90 :: number
+-- Runtime frame-budget weight assigned to the software renderer (90%).
 
-ControllerTheoryConfig.ControllerPhysicsWeight = 0.40 :: number
--- Runtime frame-budget weight assigned to the physics engine (40%).
+ControllerTheoryConfig.ControllerPhysicsWeight = 0.10 :: number
+-- Runtime frame-budget weight assigned to the physics engine (10%).
 
 ControllerTheoryConfig.ControllerMinScore = 1 :: number
 -- Minimum resource allocation score output by the controller (1 out of 100).

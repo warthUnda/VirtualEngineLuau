@@ -74,8 +74,8 @@ function RenderInstanceMethods.Init(self: any, TargetParent: Instance?, BindWork
 				ChunkRowDiff, StageElapsed
 			)
 		end,
-		function(FrameId: number, WorkerCpuTime: number, UploadCpuTime: number)
-			RenderFrameDispatchHelper.HandleBandReturned(self, FrameId, WorkerCpuTime, UploadCpuTime)
+		function(FrameId: number, WorkerCpuTime: number, UploadCpuTime: number, BandStartY: number?, BandEndY: number?)
+			RenderFrameDispatchHelper.HandleBandReturned(self, FrameId, WorkerCpuTime, UploadCpuTime, BandStartY, BandEndY)
 		end,
 		function(): (number, EditableImage?)
 			return self.CurrentFrame :: number, self.EditableImage :: EditableImage?

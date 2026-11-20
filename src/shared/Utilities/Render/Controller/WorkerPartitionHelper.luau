@@ -69,7 +69,7 @@ function WorkerPartitionHelper.ComputeStageChunkCounts(
 		return 0
 	end
 	if WorkerCount == 3 and EntityCount >= 9 then
-		const FirstCount = math.max(1, math.floor(EntityCount * 0.17)) :: number
+		const FirstCount = math.max(1, math.floor(EntityCount * 0.30)) :: number
 		const Remaining = EntityCount - FirstCount :: number
 		const SecondCount = math.ceil(Remaining * 0.5) :: number
 		OutCounts[1] = FirstCount
@@ -94,6 +94,41 @@ function WorkerPartitionHelper.ComputeStageChunkCounts(
 end
 
 --[=[
+	Adjusts normalized per-worker band work shares using prior-frame measured raster CPU times so overloaded
+	workers receive slightly smaller work shares and underloaded workers absorb more rows next frame.
+]=]
+function WorkerPartitionHelper.UpdateAdaptiveBandWeights(
+	Weights: { number },
+	WorkerCpuTimes: { number },
+	WorkerCount: number
+)
+	if WorkerCount <= 1 then
+		return
+	end
+	local TotalTime = 0 :: number
+	for w = 1, WorkerCount do
+		TotalTime += WorkerCpuTimes[w] or 0
+	end
+	const MeanTime = TotalTime / WorkerCount :: number
+	if MeanTime <= 1e-6 then
+		return
+	end
+	const InvMean = 1 / MeanTime :: number
+	local WeightSum = 0 :: number
+	for w = 1, WorkerCount do
+		const CpuTime = WorkerCpuTimes[w] or MeanTime :: number
+		const RatioErr = math.clamp((MeanTime - CpuTime) * InvMean, -0.5, 0.5) :: number
+		const NextWeight = math.clamp((Weights[w] or (1 / WorkerCount)) * (1 + 0.15 * RatioErr), 0.12, 0.65) :: number
+		Weights[w] = NextWeight
+		WeightSum += NextWeight
+	end
+	const InvWeightSum = 1 / WeightSum :: number
+	for w = 1, WorkerCount do
+		Weights[w] *= InvWeightSum
+	end
+end
+
+--[=[
 	Integrates RowWorkDiff into CumulativeWork (zeroing RowWorkDiff for the next frame), partitions `[0..Height - 1]`
 	into WorkerCount contiguous equal-cost bands, and populates the O(1) RowToWorker lookup buffer.
 ]=]
@@ -104,7 +139,8 @@ function WorkerPartitionHelper.PartitionWorkerBands(
 	Height: number,
 	WorkerCount: number,
 	BandStarts: { number },
-	BandEnds: { number }
+	BandEnds: { number },
+	WorkerWeights: { number }?
 )
 	if Height <= 0 or WorkerCount <= 0 then
 		return
@@ -153,7 +189,7 @@ function WorkerPartitionHelper.PartitionWorkerBands(
 	end
 
 	-- Account for baseline per-row clear, slice copy, and GPU upload cost across empty sky rows
-	const BaseRowCost = math.max(1, TotalTriWork // (Height * 5)) :: number
+	const BaseRowCost = math.max(1, TotalTriWork // (Height * 8)) :: number
 	local TotalWork = 0 :: number
 	for RowY = 0, Height - 1 do
 		const ByteOffset = RowY * 4 :: number
@@ -162,6 +198,7 @@ function WorkerPartitionHelper.PartitionWorkerBands(
 	end
 
 	local CurrentRow = 0 :: number
+	local CumulativeShare = 0 :: number
 	for WorkerIdx = 1, WorkerCount - 1 do
 		if CurrentRow >= Height then
 			BandStarts[WorkerIdx] = Height
@@ -170,7 +207,13 @@ function WorkerPartitionHelper.PartitionWorkerBands(
 		end
 		const RemainingWorkers = WorkerCount - WorkerIdx :: number
 		const MaxEndRow = math.max(CurrentRow, Height - 1 - RemainingWorkers) :: number
-		const TargetWork = (TotalWork * WorkerIdx) / WorkerCount :: number
+		local TargetWork: number
+		if WorkerWeights ~= nil then
+			CumulativeShare += WorkerWeights[WorkerIdx] or (1 / WorkerCount)
+			TargetWork = TotalWork * CumulativeShare
+		else
+			TargetWork = (TotalWork * WorkerIdx) / WorkerCount
+		end
 
 		local SplitRow = CurrentRow :: number
 		while SplitRow < MaxEndRow and buffer.readu32(CumulativeWork, SplitRow * 4) < TargetWork do

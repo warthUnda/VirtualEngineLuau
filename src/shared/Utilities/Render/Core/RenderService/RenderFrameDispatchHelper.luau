@@ -83,7 +83,7 @@ function RenderFrameDispatchHelper.HandleStageChunkReturned(
 	const BandEnds = self.BandEnds :: { number }
 
 	WorkerPartitionHelper.PartitionWorkerBands(
-		MasterDiff, self.CumulativeWork, self.RowToWorker, ActiveHeight, WorkerCount, BandStarts, BandEnds
+		MasterDiff, self.CumulativeWork, self.RowToWorker, ActiveHeight, WorkerCount, BandStarts, BandEnds, self.WorkerBandWeights
 	)
 	WorkerPartitionHelper.ScatterDualChunksToWorkers(
 		self.ChunkUntexTris, self.ChunkUntexBounds, self.ChunkUntexCounts,
@@ -107,16 +107,33 @@ function RenderFrameDispatchHelper.HandleBandReturned(
 	self: any,
 	_FrameId: number,
 	WorkerCpuTime: number,
-	UploadCpuTime: number
+	UploadCpuTime: number,
+	BandStartY: number?,
+	BandEndY: number?
 )
 	if WorkerCpuTime > (self.MaxWorkerCpuTime :: number) then
 		self.MaxWorkerCpuTime = WorkerCpuTime
+	end
+	if BandStartY ~= nil then
+		const Starts = self.BandStarts :: { number }
+		const Ends = self.BandEnds :: { number }
+		const RasterTimes = self.WorkerRasterCpuTimes :: { number }
+		for w = 1, (self.ExpectedWorkers :: number) do
+			if Starts[w] == BandStartY and Ends[w] == BandEndY then
+				RasterTimes[w] = WorkerCpuTime
+				break
+			end
+		end
 	end
 	self.UploadCpuTime = (self.UploadCpuTime :: number) + UploadCpuTime
 	self.Received = (self.Received :: number) + 1
 	if self.Received < self.ExpectedWorkers then
 		return
 	end
+
+	WorkerPartitionHelper.UpdateAdaptiveBandWeights(
+		self.WorkerBandWeights, self.WorkerRasterCpuTimes, self.ExpectedWorkers
+	)
 
 	const ActiveLabel = self.ImageLabel :: ImageLabel?
 	const ActiveImageSize = self.ImageSize :: Vector2

@@ -20,6 +20,7 @@ const SystemsConfigs = require(SharedFolder:WaitForChild("SystemsConfigs"))
 const ECSMain = require(SharedFolder:WaitForChild("ECSMain"))
 const ViewCulling = require(RenderRoot:WaitForChild("Core"):WaitForChild("ViewCulling"))
 const CleanerSortHelper = require(script.Parent:WaitForChild("CleanerSortHelper"))
+const CleanerSubdivideHelper = require(script.Parent:WaitForChild("CleanerSubdivideHelper"))
 const RenderBVHHelper = require(script.Parent:WaitForChild("RenderBVHHelper"))
 
 -- Configs --
@@ -28,11 +29,13 @@ const DIRECTION_STRIDE = SystemsConfigs.ECSDirectionStride :: number
 const VISUAL_STRIDE = SystemsConfigs.ECSVisualStride :: number
 const PROPERTIES_STRIDE = SystemsConfigs.ECSPropertiesStride :: number
 const SORT_STACK_BYTES = 64 * 8 :: number
+const VIRTUAL_SUB_BIT = CleanerSubdivideHelper.VirtualSubBit :: number
 
 export type CleanerState = {
 	ObjectStorage: ECSMain.ECSStorage,
 	RenderStorage: ECSMain.ECSStorage,
 	RenderBVH: RenderBVHHelper.RenderBVHState,
+	Subdivide: CleanerSubdivideHelper.SubdivideState,
 	MaxEntities: number,
 	PreviousVisibleCount: number,
 	RenderSlotByObjectId: buffer,
@@ -96,6 +99,7 @@ function CleanerHelper.CreateCleanerState(
 		ObjectStorage = ObjectStorage,
 		RenderStorage = RenderStorage,
 		RenderBVH = RenderBVHHelper.CreateState(MaxEntities),
+		Subdivide = CleanerSubdivideHelper.CreateState(MaxEntities),
 		MaxEntities = MaxEntities,
 		PreviousVisibleCount = -1,
 		RenderSlotByObjectId = buffer.create((MaxEntities + 1) * 4),
@@ -221,6 +225,12 @@ function CleanerHelper.SyncRenderStorage(State: CleanerState): number
 				ObjPositions, ObjSizes, ObjProperties,
 				State.SortedObjectIds, State.SortedDepths
 			)
+			if VisibleCount > 0 then
+				VisibleCount, NeedsSort = CleanerSubdivideHelper.ExpandMassiveCandidates(
+					State.Subdivide, ObjectStorage, VisibleCount, NeedsSort,
+					State.SortedObjectIds, State.SortedDepths, State.CandidateIds, State.MaxEntities
+				)
+			end
 		end
 	end
 
@@ -242,8 +252,21 @@ function CleanerHelper.SyncRenderStorage(State: CleanerState): number
 	const RenderSlotByObjectId = State.RenderSlotByObjectId :: buffer
 	const ObjectIdByRenderSlot = State.ObjectIdByRenderSlot :: buffer
 
+	const SubdivideState = State.Subdivide
+	const WriteVirtualSlot = CleanerSubdivideHelper.WriteVirtualRenderSlot
+
 	for RenderSlot = 1, VisibleCount do
 		const ObjId = buffer.readu32(SortedObjectIds, (RenderSlot - 1) * 4) :: number
+		if bit32.btest(ObjId, VIRTUAL_SUB_BIT) then
+			WriteVirtualSlot(
+				SubdivideState, ObjId, RenderSlot,
+				RenderSlotByObjectId, ObjectIdByRenderSlot,
+				ObjDirections, ObjVisuals, ObjProperties,
+				RenPositions, RenSizes, RenDirections, RenVisuals, RenProperties
+			)
+			continue
+		end
+
 		const SlotMapOffset = RenderSlot * 4 :: number
 		const PrevObjId = buffer.readu32(ObjectIdByRenderSlot, SlotMapOffset) :: number
 		const SlotChanged = (PrevObjId ~= ObjId) :: boolean

@@ -4,7 +4,8 @@
 
 --[=[
 	@class TileTexturedSpanHelper
-	Perspective-correct adaptive 16px/8px textured span and 32x32 tile rasterizer.
+	Perspective-correct adaptive 16px/8px textured span and 32x32 tile rasterizer with
+	vertical/horizontal bounds clamping, hoisted branchless linear edge-X stepping, and linear attribute stepping.
 ]=]
 
 -- Libraries --
@@ -92,68 +93,129 @@ function TileTexturedSpanHelper.RasterizeTexturedTile(
 	TexHMask: number,
 	TilePixelBuf: buffer,
 	TileZBuf: buffer,
-	SkipZWrite: boolean?
+	SkipZWrite: boolean?,
+	InvZOrigin: number?,
+	InvZStepY: number?,
+	RowMinIn: number?,
+	RowMaxIn: number?,
+	ColMinIn: number?,
+	ColMaxIn: number?
 )
 	const UStepX = E0StepX * SU0 + E1StepX * SU1 + E2StepX * SU2 :: number
 	const VStepX = E0StepX * SV0 + E1StepX * SV1 + E2StepX * SV2 :: number
+	const UStepY = E0StepY * SU0 + E1StepY * SU1 + E2StepY * SU2 :: number
+	const VStepY = E0StepY * SV0 + E1StepY * SV1 + E2StepY * SV2 :: number
+	const ZOrigin = if InvZOrigin ~= nil then InvZOrigin else (E0Start * SInvZ0 + E1Start * SInvZ1 + E2Start * SInvZ2) :: number
+	const ZStepY = if InvZStepY ~= nil then InvZStepY else (E0StepY * SInvZ0 + E1StepY * SInvZ1 + E2StepY * SInvZ2) :: number
+	const UOrigin = E0Start * SU0 + E1Start * SU1 + E2Start * SU2 :: number
+	const VOrigin = E0Start * SV0 + E1Start * SV1 + E2Start * SV2 :: number
+
 	const TileRowBytes = TileW * 4 :: number
 	const DxMax = TileW - 1 :: number
 	const TextureHeight = TexHMask + 1 :: number
 	const ShadedTex = TileShadedTexHelper.GetShadedTexture(ActiveTex, PackedColor, TextureWidth, TextureHeight)
-
 	const DrawPreShaded = TileShadedTexHelper.DrawPreShadedSpan
-	local RowE0, RowE1, RowE2 = E0Start, E1Start, E2Start
-	local TileRowOff = 0 :: number
 
-	for _ = 0, TileH - 1 do
-		local SpanS = 0 :: number
-		local SpanE = DxMax :: number
-		if not FullCover then
-			if E0StepX > 0 then
-				if RowE0 < 0 then
-					const q = (-RowE0 + E0StepX - 1) // E0StepX :: number
-					if q > SpanS then SpanS = q end
-				end
-			elseif E0StepX < 0 then
-				if RowE0 < 0 then SpanS, SpanE = 1, 0 else
-					const q = RowE0 // -E0StepX :: number
-					if q < SpanE then SpanE = q end
-				end
-			elseif RowE0 < 0 then SpanS, SpanE = 1, 0 end
-
-			if SpanS <= SpanE then
-				if E1StepX > 0 then
-					if RowE1 < 0 then
-						const q = (-RowE1 + E1StepX - 1) // E1StepX :: number
-						if q > SpanS then SpanS = q end
-					end
-				elseif E1StepX < 0 then
-					if RowE1 < 0 then SpanS, SpanE = 1, 0 else
-						const q = RowE1 // -E1StepX :: number
-						if q < SpanE then SpanE = q end
-					end
-				elseif RowE1 < 0 then SpanS, SpanE = 1, 0 end
-			end
-
-			if SpanS <= SpanE then
-				if E2StepX > 0 then
-					if RowE2 < 0 then
-						const q = (-RowE2 + E2StepX - 1) // E2StepX :: number
-						if q > SpanS then SpanS = q end
-					end
-				elseif E2StepX < 0 then
-					if RowE2 < 0 then SpanS, SpanE = 1, 0 else
-						const q = RowE2 // -E2StepX :: number
-						if q < SpanE then SpanE = q end
-					end
-				elseif RowE2 < 0 then SpanS, SpanE = 1, 0 end
-			end
+	if FullCover then
+		local RowInvZ, RowU, RowV = ZOrigin, UOrigin, VOrigin
+		local TileRowOff = 0 :: number
+		const EndDelta = DxMax * 4 :: number
+		for _ = 0, TileH - 1 do
+			DrawPreShaded(
+				TileRowOff, TileRowOff + EndDelta,
+				RowInvZ, RowU, RowV,
+				InvZStepX, UStepX, VStepX,
+				ShadedTex, TextureWidth, TextureHeight, TexWMask, TexHMask, SkipZTest,
+				TilePixelBuf, TileZBuf, SkipZWrite
+			)
+			RowInvZ += ZStepY; RowU += UStepY; RowV += VStepY
+			TileRowOff += TileRowBytes
 		end
+		return
+	end
 
+	local RowStart = if RowMinIn ~= nil then RowMinIn else 0 :: number
+	local RowEnd = if RowMaxIn ~= nil then RowMaxIn else (TileH - 1) :: number
+	const ColMin = if ColMinIn ~= nil then ColMinIn else 0 :: number
+	const ColMax = if ColMaxIn ~= nil then ColMaxIn else DxMax :: number
+
+	if RowMinIn == nil then
+		if E0StepX == 0 then
+			const EVal = E0Start + RowStart * E0StepY :: number
+			if E0StepY > 0 then
+				if EVal < 0 then RowStart += (-EVal + E0StepY - 1) // E0StepY end
+			elseif E0StepY < 0 then
+				if EVal < 0 then return end
+				const Lim = RowStart + EVal // -E0StepY :: number
+				if Lim < RowEnd then RowEnd = Lim end
+			elseif EVal < 0 then return end
+		end
+		if E1StepX == 0 then
+			const EVal = E1Start + RowStart * E1StepY :: number
+			if E1StepY > 0 then
+				if EVal < 0 then RowStart += (-EVal + E1StepY - 1) // E1StepY end
+			elseif E1StepY < 0 then
+				if EVal < 0 then return end
+				const Lim = RowStart + EVal // -E1StepY :: number
+				if Lim < RowEnd then RowEnd = Lim end
+			elseif EVal < 0 then return end
+		end
+		if E2StepX == 0 then
+			const EVal = E2Start + RowStart * E2StepY :: number
+			if E2StepY > 0 then
+				if EVal < 0 then RowStart += (-EVal + E2StepY - 1) // E2StepY end
+			elseif E2StepY < 0 then
+				if EVal < 0 then return end
+				const Lim = RowStart + EVal // -E2StepY :: number
+				if Lim < RowEnd then RowEnd = Lim end
+			elseif EVal < 0 then return end
+		end
+		if RowStart > RowEnd then
+			return
+		end
+	end
+
+	local LX0, LStep0, LX1, LStep1 = ColMin, 0, ColMin, 0
+	local RX0, RStep0, RX1, RStep1 = ColMax, 0, ColMax, 0
+	local HasL0, HasR0 = false, false
+
+	if E0StepX > 0 then
+		const Inv = 1 / E0StepX :: number
+		LX0, LStep0, HasL0 = -(E0Start + RowStart * E0StepY) * Inv - 1e-9, -E0StepY * Inv, true
+	elseif E0StepX < 0 then
+		const Inv = 1 / E0StepX :: number
+		RX0, RStep0, HasR0 = -(E0Start + RowStart * E0StepY) * Inv + 1e-9, -E0StepY * Inv, true
+	end
+	if E1StepX > 0 then
+		const Inv = 1 / E1StepX :: number
+		const XVal, XStep = -(E1Start + RowStart * E1StepY) * Inv - 1e-9, -E1StepY * Inv
+		if not HasL0 then LX0, LStep0, HasL0 = XVal, XStep, true else LX1, LStep1 = XVal, XStep end
+	elseif E1StepX < 0 then
+		const Inv = 1 / E1StepX :: number
+		const XVal, XStep = -(E1Start + RowStart * E1StepY) * Inv + 1e-9, -E1StepY * Inv
+		if not HasR0 then RX0, RStep0, HasR0 = XVal, XStep, true else RX1, RStep1 = XVal, XStep end
+	end
+	if E2StepX > 0 then
+		const Inv = 1 / E2StepX :: number
+		const XVal, XStep = -(E2Start + RowStart * E2StepY) * Inv - 1e-9, -E2StepY * Inv
+		if not HasL0 then LX0, LStep0 = XVal, XStep else LX1, LStep1 = XVal, XStep end
+	elseif E2StepX < 0 then
+		const Inv = 1 / E2StepX :: number
+		const XVal, XStep = -(E2Start + RowStart * E2StepY) * Inv + 1e-9, -E2StepY * Inv
+		if not HasR0 then RX0, RStep0 = XVal, XStep else RX1, RStep1 = XVal, XStep end
+	end
+
+	local TileRowOff = RowStart * TileRowBytes :: number
+	local RowInvZ = ZOrigin + RowStart * ZStepY :: number
+	local RowU = UOrigin + RowStart * UStepY :: number
+	local RowV = VOrigin + RowStart * VStepY :: number
+
+	for _ = RowStart, RowEnd do
+		const RawS = math.ceil(if LX0 > LX1 then LX0 else LX1) :: number
+		const RawE = math.floor(if RX0 < RX1 then RX0 else RX1) :: number
+		const SpanS = if RawS > ColMin then RawS else ColMin :: number
+		const SpanE = if RawE < ColMax then RawE else ColMax :: number
 		if SpanS <= SpanE then
-			const RowInvZ = RowE0 * SInvZ0 + RowE1 * SInvZ1 + RowE2 * SInvZ2 :: number
-			const RowU = RowE0 * SU0 + RowE1 * SU1 + RowE2 * SU2 :: number
-			const RowV = RowE0 * SV0 + RowE1 * SV1 + RowE2 * SV2 :: number
 			DrawPreShaded(
 				TileRowOff + SpanS * 4, TileRowOff + SpanE * 4,
 				RowInvZ + SpanS * InvZStepX, RowU + SpanS * UStepX, RowV + SpanS * VStepX,
@@ -162,10 +224,8 @@ function TileTexturedSpanHelper.RasterizeTexturedTile(
 				TilePixelBuf, TileZBuf, SkipZWrite
 			)
 		end
-
-		RowE0 += E0StepY
-		RowE1 += E1StepY
-		RowE2 += E2StepY
+		LX0 += LStep0; LX1 += LStep1; RX0 += RStep0; RX1 += RStep1
+		RowInvZ += ZStepY; RowU += UStepY; RowV += VStepY
 		TileRowOff += TileRowBytes
 	end
 end
